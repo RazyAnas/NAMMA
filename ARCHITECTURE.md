@@ -189,7 +189,7 @@ Do not assume pip `gsplat` replaces MODP's `gsplats` dependency. Do not mix curr
 PyTorch with upstream MODP pins without checking native extension compatibility.
 Use a subprocess adapter to connect the research environment to the application.
 
-Detected on 2026-10-08: Windows, Python 3.11 and 3.14, RTX 5060-series laptop GPU
+Initially detected on 2026-10-08: Windows, Python 3.11 and 3.14, RTX 5060-series laptop GPU
 with approximately 8 GB VRAM, NVIDIA driver 592.00. WSL is not installed. `nvcc`,
 `colmap`, `ffmpeg` and `cmake` were not found on PATH; Node.js is available.
 The CUDA version displayed by nvidia-smi is driver capability, not an installed
@@ -198,6 +198,11 @@ Its legacy setup is not a validated configuration for this newer GPU. First veri
 a compatible PyTorch CUDA tensor operation, then compile/test each extension in
 an isolated environment. Another compatible university Linux GPU machine is an
 alternative if porting blocks progress. WSL alone does not solve GPU compatibility.
+
+Updated on 2026-10-14: the official COLMAP 4.2.1 Windows CUDA distribution is
+installed locally under the ignored `tools/colmap` directory. Its CLI reports a
+CUDA-enabled build, and a GPU SIFT smoke test completed successfully on device 0.
+The PyCOLMAP Windows wheel remains CPU-only and is retained only as a fallback.
 
 Local installation (PowerShell, from project root):
 

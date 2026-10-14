@@ -49,7 +49,13 @@ The adapter uses the first available backend:
 2. `tools/colmap/COLMAP.bat` from the official portable Windows CUDA distribution.
 3. The official `pycolmap` Python package, using CPU feature extraction and sequential matching.
 
-On this laptop, `pycolmap` 4.2.1 is installed but Windows Application Control currently blocks its native `_core` extension. The health endpoint therefore reports `"colmap": null`. Do not disable security policy blindly. The supported resolution is to allow the official COLMAP binary/package through the institution or device policy, or run reconstruction in an approved Linux/WSL environment and set `COLMAP_BIN` accordingly.
+For CUDA acceleration on Windows, install the official portable build into the ignored `tools/` directory:
+
+```powershell
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\scripts\install_colmap_cuda.ps1
+```
+
+The installer downloads COLMAP 4.2.1 from the official GitHub release in verified byte ranges, validates the final archive size and ZIP structure, and extracts it to `tools/colmap`. The application detects `tools/colmap/COLMAP.bat` automatically. To make the selection explicit, set `COLMAP_BIN=./tools/colmap/COLMAP.bat` in the private `.env` file.
 
 ## Validation
 
@@ -59,4 +65,4 @@ On this laptop, `pycolmap` 4.2.1 is installed but Windows Application Control cu
 .\.venv\Scripts\python.exe scripts\verify_environment.py
 ```
 
-The first two checks currently pass. The environment verifier intentionally reports the unavailable native COLMAP backend until Windows policy permits it.
+The checks pass on the reference laptop. The official COLMAP 4.2.1 Windows CUDA build was validated with GPU SIFT feature extraction; PyCOLMAP remains a CPU-only fallback on Windows.
