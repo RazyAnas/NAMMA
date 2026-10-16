@@ -4,7 +4,10 @@ This repository now contains the first local pipeline for a laptop-only video-to
 
 1. A FastAPI service with SQLite-backed project and job records.
 2. Safe, size-limited video upload plus FFmpeg frame extraction.
-3. A COLMAP sparse-reconstruction adapter that prefers the Windows CLI and falls back to PyCOLMAP.
+3. An offline CUDA COLMAP pipeline for feature extraction, sequential matching and sparse mapping.
+4. Reconstruction quality scoring with explicit coverage, point-count, reprojection and fragmentation gates.
+5. Export of the strongest model as a portable COLMAP + `transforms.json` Gaussian-training dataset.
+6. A configurable, quality-gated Gaussian trainer job interface.
 
 The photorealistic MODP mapper, dense collision geometry, NavMesh and viewer are later milestones.
 
@@ -39,7 +42,31 @@ $job = Invoke-RestMethod -Method Post -Uri "http://127.0.0.1:8000/api/v1/project
 Invoke-RestMethod -Uri "http://127.0.0.1:8000/api/v1/jobs/$($job.id)"
 ```
 
-Artifacts are stored under `data/projects/<project-id>/`. The SQLite database is `data/namma.db`.
+Inspect quality and the exported training dataset:
+
+```powershell
+Invoke-RestMethod -Uri "http://127.0.0.1:8000/api/v1/projects/$($project.id)/quality"
+Invoke-RestMethod -Uri "http://127.0.0.1:8000/api/v1/projects/$($project.id)/training-dataset"
+```
+
+Start Gaussian training after the quality report passes:
+
+```powershell
+$job = Invoke-RestMethod -Method Post -Uri "http://127.0.0.1:8000/api/v1/projects/$($project.id)/train-gaussian"
+```
+
+Configure the trainer in the private `.env` file. The command is executed without a shell and supports
+`{dataset}` and `{output}` placeholders. For example:
+
+```dotenv
+GAUSSIAN_TRAINER_COMMAND=ns-train splatfacto --data {dataset} --output-dir {output}
+```
+
+If quality fails, the backend returns HTTP 409 instead of spending GPU time on an unusable training run.
+
+Artifacts are stored under `data/projects/<project-id>/`. Quality reports and trained outputs are under
+`artifacts/`; exported images, camera poses and COLMAP data are under `training/dataset/`. The SQLite
+database is `data/namma.db`.
 
 ## COLMAP backend
 

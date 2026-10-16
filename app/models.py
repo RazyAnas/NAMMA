@@ -16,6 +16,10 @@ class ProjectStatus(StrEnum):
     IMPORTED = "imported"
     PREPROCESSING = "preprocessing"
     TRACKING = "tracking"
+    QUALITY_CHECK = "quality_check"
+    QUALITY_FAILED = "quality_failed"
+    DATASET_READY = "dataset_ready"
+    TRAINING = "training"
     READY = "ready"
     FAILED = "failed"
 

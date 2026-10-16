@@ -27,6 +27,8 @@ def ensure_project_dirs(settings: Settings, project_id: str) -> dict[str, Path]:
         "source": root / "source",
         "frames": root / "frames",
         "tracking": root / "tracking",
+        "training": root / "training",
+        "artifacts": root / "artifacts",
         "logs": root / "logs",
     }
     for path in paths.values():

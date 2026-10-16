@@ -32,6 +32,11 @@ class Settings(BaseSettings):
     colmap_bin: str = "colmap"
     ffmpeg_bin: str = "ffmpeg"
     colmap_use_gpu: bool = True
+    quality_min_registered_images: int = 20
+    quality_min_registered_ratio: float = 0.5
+    quality_min_sparse_points: int = 1000
+    quality_max_reprojection_error: float = 2.0
+    gaussian_trainer_command: str | None = None
 
     def absolute_data_dir(self) -> Path:
         return self.data_dir if self.data_dir.is_absolute() else PROJECT_ROOT / self.data_dir
@@ -51,12 +56,22 @@ class Settings(BaseSettings):
     def resolve_colmap(self) -> str | None:
         configured = shutil.which(self.colmap_bin)
         if configured:
-            return configured
+            return self._prefer_colmap_executable(Path(configured))
         configured_path = Path(self.colmap_bin)
         if configured_path.is_file():
-            return str(configured_path.resolve())
+            return self._prefer_colmap_executable(configured_path)
         bundled = PROJECT_ROOT / "tools" / "colmap" / "COLMAP.bat"
-        return str(bundled) if bundled.is_file() else None
+        return self._prefer_colmap_executable(bundled) if bundled.is_file() else None
+
+    @staticmethod
+    def _prefer_colmap_executable(path: Path) -> str:
+        """Avoid fragile cmd.exe quoting when using the official Windows bundle."""
+        resolved = path.resolve()
+        if resolved.suffix.lower() in {".bat", ".cmd"}:
+            native_executable = resolved.parent / "bin" / "colmap.exe"
+            if native_executable.is_file():
+                return str(native_executable)
+        return str(resolved)
 
     def colmap_status(self) -> str | None:
         executable = self.resolve_colmap()

@@ -10,6 +10,7 @@ from app.database import get_db
 from app.models import Job, Project
 from app.schemas import HealthRead, JobRead, ProjectRead
 from app.services.jobs import submit_job
+from app.services.quality import read_quality_report
 from app.services.storage import ensure_project_dirs, safe_filename, save_upload
 
 
@@ -97,6 +98,61 @@ async def start_frame_extraction(project_id: str, db: Session = Depends(get_db))
 @router.post("/projects/{project_id}/reconstruct", response_model=JobRead, status_code=202)
 async def start_reconstruction(project_id: str, db: Session = Depends(get_db)) -> Job:
     return _start_job(project_id, "reconstruct", db)
+
+
+@router.get("/projects/{project_id}/quality")
+async def get_reconstruction_quality(
+    project_id: str,
+    db: Session = Depends(get_db),
+    settings: Settings = Depends(settings_dependency),
+) -> dict:
+    if db.get(Project, project_id) is None:
+        raise HTTPException(status_code=404, detail="Project not found.")
+    try:
+        return read_quality_report(
+            ensure_project_dirs(settings, project_id)["artifacts"] / "quality-report.json"
+        )
+    except FileNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+
+@router.get("/projects/{project_id}/training-dataset")
+async def get_training_dataset_manifest(
+    project_id: str,
+    db: Session = Depends(get_db),
+    settings: Settings = Depends(settings_dependency),
+) -> dict:
+    if db.get(Project, project_id) is None:
+        raise HTTPException(status_code=404, detail="Project not found.")
+    manifest = ensure_project_dirs(settings, project_id)["training"] / "dataset" / "manifest.json"
+    if not manifest.is_file():
+        raise HTTPException(status_code=404, detail="Gaussian training dataset is not available.")
+    import json
+
+    return json.loads(manifest.read_text(encoding="utf-8"))
+
+
+@router.post("/projects/{project_id}/train-gaussian", response_model=JobRead, status_code=202)
+async def start_gaussian_training(
+    project_id: str,
+    db: Session = Depends(get_db),
+    settings: Settings = Depends(settings_dependency),
+) -> Job:
+    project = db.get(Project, project_id)
+    if project is None:
+        raise HTTPException(status_code=404, detail="Project not found.")
+    try:
+        report = read_quality_report(
+            ensure_project_dirs(settings, project_id)["artifacts"] / "quality-report.json"
+        )
+    except FileNotFoundError as exc:
+        raise HTTPException(status_code=409, detail="Run reconstruction before Gaussian training.") from exc
+    if not report["passed"]:
+        raise HTTPException(
+            status_code=409,
+            detail={"message": "Reconstruction did not pass the training quality gate.", "warnings": report["warnings"]},
+        )
+    return _start_job(project_id, "train_gaussian", db)
 
 
 @router.get("/jobs/{job_id}", response_model=JobRead)

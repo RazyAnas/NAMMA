@@ -5,11 +5,13 @@ from fastapi import FastAPI
 from app.api import router
 from app.config import get_settings
 from app.database import init_db
+from app.services.jobs import recover_interrupted_jobs
 
 
 @asynccontextmanager
 async def lifespan(_: FastAPI):
     init_db()
+    recover_interrupted_jobs()
     yield
 
 

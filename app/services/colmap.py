@@ -1,6 +1,7 @@
 from pathlib import Path
 import contextlib
 import io
+import shutil
 import subprocess
 
 from app.config import Settings
@@ -27,44 +28,73 @@ def _run_colmap_cli(
 
     workspace = tracking_dir / "colmap"
     workspace.mkdir(parents=True, exist_ok=True)
-    arguments = [
-        executable,
-        "automatic_reconstructor",
-        "--workspace_path",
-        str(workspace),
-        "--image_path",
-        str(frames_dir),
-        "--data_type",
-        "video",
-        "--quality",
-        "medium",
-        "--camera_model",
-        "SIMPLE_RADIAL",
-        "--single_camera",
-        "1",
-        "--sparse",
-        "1",
-        "--dense",
-        "0",
-        "--use_gpu",
-        "1" if settings.colmap_use_gpu else "0",
+    database_path = workspace / "database.db"
+    sparse_root = workspace / "sparse"
+    if database_path.exists():
+        database_path.unlink()
+    if sparse_root.exists():
+        shutil.rmtree(sparse_root)
+    sparse_root.mkdir(parents=True)
+
+    gpu = "1" if settings.colmap_use_gpu else "0"
+    commands = [
+        [
+            executable,
+            "feature_extractor",
+            "--database_path",
+            str(database_path),
+            "--image_path",
+            str(frames_dir),
+            "--ImageReader.camera_model",
+            "SIMPLE_RADIAL",
+            "--ImageReader.single_camera",
+            "1",
+            "--FeatureExtraction.use_gpu",
+            gpu,
+        ],
+        [
+            executable,
+            "sequential_matcher",
+            "--database_path",
+            str(database_path),
+            "--FeatureMatching.use_gpu",
+            gpu,
+            "--SequentialMatching.loop_detection",
+            "0",
+            "--SequentialMatching.overlap",
+            "30",
+        ],
+        [
+            executable,
+            "mapper",
+            "--database_path",
+            str(database_path),
+            "--image_path",
+            str(frames_dir),
+            "--output_path",
+            str(sparse_root),
+        ],
     ]
-    command = ["cmd.exe", "/d", "/s", "/c", *arguments] if executable.lower().endswith((".bat", ".cmd")) else arguments
 
     log_path.parent.mkdir(parents=True, exist_ok=True)
     with log_path.open("w", encoding="utf-8", errors="replace") as log_file:
-        result = subprocess.run(
-            command,
-            stdout=log_file,
-            stderr=subprocess.STDOUT,
-            text=True,
-            check=False,
-        )
-    if result.returncode != 0:
-        tail = log_path.read_text(encoding="utf-8", errors="replace")[-3000:]
-        raise ColmapError(f"COLMAP failed with exit code {result.returncode}. Log tail: {tail}")
+        for arguments in commands:
+            command = ["cmd.exe", "/d", "/s", "/c", *arguments] if executable.lower().endswith((".bat", ".cmd")) else arguments
+            log_file.write(f"\n=== {arguments[1]} ===\n")
+            log_file.flush()
+            result = subprocess.run(
+                command,
+                stdout=log_file,
+                stderr=subprocess.STDOUT,
+                text=True,
+                check=False,
+            )
+            if result.returncode != 0:
+                tail = log_path.read_text(encoding="utf-8", errors="replace")[-3000:]
+                raise ColmapError(
+                    f"COLMAP {arguments[1]} failed with exit code {result.returncode}. Log tail: {tail}"
+                )
 
-    sparse_root = workspace / "sparse"
     models = [path for path in sparse_root.iterdir() if path.is_dir()] if sparse_root.exists() else []
     if not models:
         raise ColmapError("COLMAP finished but produced no sparse reconstruction model.")
