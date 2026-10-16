@@ -11,7 +11,7 @@ from app.services.dataset import export_gaussian_dataset
 from app.services.gaussian import run_gaussian_training
 from app.services.geometry import run_dense_geometry
 from app.services.monocular import run_monocular_geometry
-from app.services.navigation import build_navigation_mesh
+from app.services.navigation import build_navigation_mesh, invalidate_navigation_artifacts
 from app.services.quality import read_quality_report, score_reconstruction, write_quality_report
 from app.services.storage import ensure_project_dirs
 from app.services.video import extract_frames
@@ -125,6 +125,11 @@ def _run_job(job_id: str) -> None:
                 project.status = ProjectStatus.READY
             elif job.kind == "build_collision":
                 project.status = ProjectStatus.GEOMETRY
+                invalidate_navigation_artifacts(
+                    paths["artifacts"] / "geometry",
+                    "Collision geometry was rebuilt; rerun floor preparation and NavMesh generation.",
+                    include_preparation=True,
+                )
                 job.stage = "dense_stereo"
                 job.log_path = str(paths["logs"] / "dense-geometry.log")
                 job.progress = 0.1

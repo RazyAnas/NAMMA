@@ -20,8 +20,10 @@ from app.services.navigation import (
     approve_navigation_mesh,
     calibrate_collision_scale,
     prepare_navigation_geometry,
+    validate_navigation_mesh,
 )
 from app.services.quality import read_quality_report
+from app.services.readiness import project_readiness
 from app.services.storage import ensure_project_dirs, safe_filename, save_upload
 
 
@@ -82,6 +84,18 @@ async def get_project(project_id: str, db: Session = Depends(get_db)) -> Project
     if project is None:
         raise HTTPException(status_code=404, detail="Project not found.")
     return project
+
+
+@router.get("/projects/{project_id}/readiness")
+async def get_project_readiness(
+    project_id: str,
+    db: Session = Depends(get_db),
+    settings: Settings = Depends(settings_dependency),
+) -> dict:
+    project = db.get(Project, project_id)
+    if project is None:
+        raise HTTPException(status_code=404, detail="Project not found.")
+    return project_readiness(ensure_project_dirs(settings, project_id), project)
 
 
 def _start_job(project_id: str, kind: str, db: Session) -> Job:
@@ -297,6 +311,22 @@ async def approve_project_navigation(
         raise HTTPException(status_code=409, detail=str(exc)) from exc
 
 
+@router.get("/projects/{project_id}/navigation-validation")
+async def get_navigation_validation(
+    project_id: str,
+    db: Session = Depends(get_db),
+    settings: Settings = Depends(settings_dependency),
+) -> dict:
+    if db.get(Project, project_id) is None:
+        raise HTTPException(status_code=404, detail="Project not found.")
+    try:
+        return validate_navigation_mesh(
+            ensure_project_dirs(settings, project_id)["artifacts"] / "geometry"
+        )
+    except (FileNotFoundError, GeometryError, NavigationPreparationError) as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+
+
 @router.post("/projects/{project_id}/build-collision", response_model=JobRead, status_code=202)
 async def start_collision_build(
     project_id: str,
@@ -342,6 +372,8 @@ async def start_navigation_mesh_build(
         preparation_data = json.loads(preparation.read_text(encoding="utf-8"))
     except json.JSONDecodeError as exc:
         raise HTTPException(status_code=409, detail="Navigation preparation artifact is invalid.") from exc
+    if preparation_data.get("status") == "stale":
+        raise HTTPException(status_code=409, detail="Navigation preparation is stale; run it again.")
     if not preparation_data.get("plane", {}).get("accepted", False):
         raise HTTPException(status_code=409, detail="Floor candidate requires review before NavMesh generation.")
     try:

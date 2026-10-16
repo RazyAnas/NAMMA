@@ -113,7 +113,12 @@ async function loadModel() {
     renderer.setClearColor(0x07110f, 1);
 
     camera = new THREE.PerspectiveCamera(62, window.innerWidth / window.innerHeight, 0.03, 500);
-    camera.position.set(0, 0, 3);
+    const spawn = navigation?.spawn?.source_world;
+    if (navigation?.navmesh_ready && Array.isArray(spawn) && spawn.length === 3) {
+      camera.position.fromArray(spawn);
+    } else {
+      camera.position.set(0, 0, 3);
+    }
     camera.rotation.order = 'YXZ';
 
     viewer = new GaussianSplats3D.Viewer({
@@ -191,14 +196,15 @@ function updateMovement(delta) {
   direction.applyQuaternion(camera.quaternion);
   direction.y += vertical;
   if (direction.lengthSq() > 0) direction.normalize();
-  velocity.copy(direction).multiplyScalar(speed * multiplier * delta);
+  const sourceUnitsToMeters = navigation?.navmesh_ready ? navigation.source_units_to_meters : 1;
+  velocity.copy(direction).multiplyScalar((speed * multiplier * delta) / sourceUnitsToMeters);
   if (!navigation?.navmesh_ready) {
     camera.position.add(velocity);
     return;
   }
   // Substep movement to prevent a fast sprint from tunnelling through a wall.
-  const distance = velocity.length();
-  const steps = Math.max(1, Math.ceil(distance / (navigation.cell_size_m * 0.5)));
+  const distanceMeters = velocity.length() * sourceUnitsToMeters;
+  const steps = Math.max(1, Math.ceil(distanceMeters / (navigation.cell_size_m * 0.5)));
   const step = velocity.clone().multiplyScalar(1 / steps);
   for (let index = 0; index < steps; index += 1) {
     const candidate = camera.position.clone().add(step);
@@ -209,21 +215,14 @@ function updateMovement(delta) {
 
 function isWalkable(position) {
   const basis = navigation.basis;
-  const x = position.x * basis.axis_x[0] + position.y * basis.axis_x[1] + position.z * basis.axis_x[2];
-  const y = position.x * basis.axis_y[0] + position.y * basis.axis_y[1] + position.z * basis.axis_y[2];
+  const scale = navigation.source_units_to_meters;
+  const x = scale * (position.x * basis.axis_x[0] + position.y * basis.axis_x[1] + position.z * basis.axis_x[2]);
+  const y = scale * (position.x * basis.axis_y[0] + position.y * basis.axis_y[1] + position.z * basis.axis_y[2]);
   const gx = Math.floor((x - navigation.origin_floor_coordinates[0]) / navigation.cell_size_m);
   const gy = Math.floor((y - navigation.origin_floor_coordinates[1]) / navigation.cell_size_m);
-  const radius = Math.ceil((navigation.agent_radius_m + navigation.safety_margin_m) / navigation.cell_size_m);
-  for (let row = gy - radius; row <= gy + radius; row += 1) {
-    for (let column = gx - radius; column <= gx + radius; column += 1) {
-      if (column < 0 || column >= navigation.width || row < 0 || row >= navigation.height) return false;
-      const dx = column - gx;
-      const dy = row - gy;
-      if (dx * dx + dy * dy > radius * radius) continue;
-      if (navigation.walkable[row * navigation.width + column] === 0) return false;
-    }
-  }
-  return true;
+  if (gx < 0 || gx >= navigation.width || gy < 0 || gy >= navigation.height) return false;
+  // Obstacles are already inflated by radius + safety margin in the backend.
+  return navigation.walkable[gy * navigation.width + gx] === 1;
 }
 
 function lockPointer() {

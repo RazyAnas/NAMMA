@@ -18,6 +18,11 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from app.config import get_settings
 from app.services.geometry import build_collision_candidate
+from app.services.navigation import (
+    build_navigation_mesh,
+    detect_floor_plane_from_observations,
+    validate_navigation_mesh,
+)
 
 
 def read_index(path: Path) -> list[tuple[float, Path]]:
@@ -62,6 +67,9 @@ def main() -> None:
     parser.add_argument("--video-fps", type=float, default=30.0)
     parser.add_argument("--sample-fps", type=float, default=2.0)
     parser.add_argument("--voxel-size", type=float, default=0.015)
+    parser.add_argument("--navigation-agent-radius", type=float, default=0.15)
+    parser.add_argument("--navigation-safety-margin", type=float, default=0.05)
+    parser.add_argument("--navigation-min-component-cells", type=int, default=5)
     args = parser.parse_args()
 
     rgb_rows = read_index(args.dataset / "rgb.txt")
@@ -77,6 +85,8 @@ def main() -> None:
     )
     intrinsic = o3d.camera.PinholeCameraIntrinsic(640, 480, 517.3, 516.5, 318.6, 255.3)
     associations = []
+    camera_centers = []
+    camera_ups = []
     for output_index in range(args.sample_count):
         video_time = output_index / args.sample_fps
         source_index = min(round(video_time * args.video_fps), len(rgb_rows) - 1)
@@ -88,8 +98,11 @@ def main() -> None:
         color = o3d.io.read_image(str(args.dataset / rgb_relative))
         depth = o3d.io.read_image(str(args.dataset / depth_rows[depth_index][1]))
         rgbd = o3d.geometry.RGBDImage.create_from_tum_format(color, depth, convert_rgb_to_intensity=False)
-        extrinsic = np.linalg.inv(pose_matrix(poses[pose_index]))
+        camera_to_world = pose_matrix(poses[pose_index])
+        extrinsic = np.linalg.inv(camera_to_world)
         volume.integrate(rgbd, intrinsic, extrinsic)
+        camera_centers.append(camera_to_world[:3, 3])
+        camera_ups.append(camera_to_world[:3, :3] @ np.asarray([0.0, -1.0, 0.0]))
         associations.append(
             {"rgb_timestamp": rgb_timestamp, "depth_timestamp": depth_timestamps[depth_index]}
         )
@@ -102,6 +115,13 @@ def main() -> None:
     fused_path = dense_dir / "fused-rgbd.ply"
     o3d.io.write_point_cloud(str(fused_path), cloud, write_ascii=False)
     settings = get_settings()
+    # The Freiburg desk sequence observes only a narrow floor region. Keep this
+    # benchmark profile explicit and separate from the production adult-agent
+    # defaults used by the API.
+    settings.agent_radius_meters = args.navigation_agent_radius
+    settings.safety_margin_meters = args.navigation_safety_margin
+    settings.navigation_min_floor_points_per_cell = 1
+    settings.navigation_component_min_cells = args.navigation_min_component_cells
     manifest = build_collision_candidate(
         fused_path,
         args.output / "collision",
@@ -118,7 +138,53 @@ def main() -> None:
     (args.output / "associations.json").write_text(
         json.dumps(associations, indent=2), encoding="utf-8"
     )
-    print(json.dumps(manifest, indent=2))
+    scene_up = np.mean(np.asarray(camera_ups), axis=0)
+    scene_up /= np.linalg.norm(scene_up)
+    preparation = detect_floor_plane_from_observations(
+        fused_path, np.asarray(camera_centers), scene_up, settings
+    )
+    preparation.update(
+        {
+            "schema_version": 1,
+            "status": "floor_review_required",
+            "scale_calibrated": True,
+            "unknown_space_policy": "block_unknown",
+            "navmesh_ready": False,
+            "source": "TUM RGB-D metric benchmark",
+        }
+    )
+    navigation_dir = args.output / "navigation"
+    navigation_dir.mkdir(parents=True, exist_ok=True)
+    (navigation_dir / "preparation.json").write_text(
+        json.dumps(preparation, indent=2), encoding="utf-8"
+    )
+    navmesh = build_navigation_mesh(
+        args.output,
+        Path("unused-for-tum-benchmark"),
+        settings,
+        camera_centers_source=np.asarray(camera_centers),
+    )
+    validation = validate_navigation_mesh(args.output)
+    benchmark = {
+        "collision": manifest,
+        "navigation": {
+            "width": navmesh["width"],
+            "height": navmesh["height"],
+            "walkable_count": navmesh["walkable_count"],
+            "blocked_obstacle_count": navmesh["blocked_obstacle_count"],
+        },
+        "validation": validation,
+        "benchmark_navigation_profile": {
+            "agent_radius_m": settings.agent_radius_meters,
+            "safety_margin_m": settings.safety_margin_meters,
+            "minimum_component_cells": settings.navigation_component_min_cells,
+            "note": "TUM Freiburg desk has limited visible floor and is not the production adult-agent profile.",
+        },
+    }
+    (args.output / "benchmark-report.json").write_text(
+        json.dumps(benchmark, indent=2), encoding="utf-8"
+    )
+    print(json.dumps(benchmark, indent=2))
 
 
 if __name__ == "__main__":

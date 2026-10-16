@@ -123,6 +123,19 @@ The artifact remains `navmesh_ready: false` until a human reviewer approves the 
 boundary. The laptop viewer reads this artifact and performs sub-stepped collision-constrained movement only
 when that explicit approval flag is enabled; otherwise it remains visual-only. Record that review explicitly with
 `POST /api/v1/projects/{project_id}/approve-navigation` and a JSON body containing `reviewer` and optional `notes`.
+Approval now runs an integrity check first: compressed-grid length and hash, binary cell values, spawn validity,
+single-component connectivity, metric scale and the `block_unknown` policy must all pass. Inspect the same check
+without approving through `GET /api/v1/projects/{project_id}/navigation-validation`.
+
+Use `GET /api/v1/projects/{project_id}/readiness` as the application integration contract. It reports every
+ordered gate, whether visual roaming is ready, whether obstacle-aware roaming is ready, and the exact next action.
+This keeps the separate roaming application from guessing readiness from the project status alone.
+
+The metric TUM RGB-D benchmark utility now exercises collision generation, floor detection, navigation-grid
+generation and validation. On the downloaded Freiburg desk sequence it integrated 39 frames, generated a
+100,000-triangle collision mesh, blocked 1,302 obstacle cells and produced a connected 52-cell walkable region
+whose integrity validation passed. Its intentionally smaller benchmark-agent profile is recorded in the report;
+production API defaults remain a 0.30 m radius plus 0.10 m safety margin.
 
 Artifacts are stored under `data/projects/<project-id>/`. Quality reports and trained outputs are under
 `artifacts/`; exported images, camera poses and COLMAP data are under `training/dataset/`. The SQLite

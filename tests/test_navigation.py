@@ -1,4 +1,5 @@
 import json
+from hashlib import sha256
 from pathlib import Path
 
 import pytest
@@ -49,10 +50,18 @@ def test_scale_calibration_updates_glb_and_manifest(tmp_path: Path) -> None:
         ),
         encoding="utf-8",
     )
+    navigation = tmp_path / "navigation"
+    navigation.mkdir()
+    (navigation / "navmesh.json").write_text(
+        json.dumps({"status": "approved", "navmesh_ready": True}), encoding="utf-8"
+    )
     result = calibrate_collision_scale(tmp_path, 4.0, 2.0, "door width")
     assert result["scale_calibrated"] is True
     assert result["scale_factor_meters_per_unit"] == 2.0
     assert result["coordinate_units"] == "meters"
+    stale = json.loads((navigation / "navmesh.json").read_text(encoding="utf-8"))
+    assert stale["status"] == "stale"
+    assert stale["navmesh_ready"] is False
 
 
 def test_navmesh_requires_metric_scale(tmp_path: Path) -> None:
@@ -98,7 +107,22 @@ def test_navigation_approval_marks_artifact_ready(tmp_path: Path) -> None:
         encoding="utf-8",
     )
     (navigation / "navmesh.json").write_text(
-        json.dumps({"status": "review_required", "navmesh_ready": False}), encoding="utf-8"
+        json.dumps(
+            {
+                "status": "review_required",
+                "navmesh_ready": False,
+                "unknown_space_policy": "block_unknown",
+                "walkable_encoding": "zlib_uint8_row_major_base64",
+                "walkable_grid_base64": encode_walkable_grid(np.asarray([[True]])),
+                "walkable_sha256": sha256(bytes([1])).hexdigest(),
+                "walkable_count": 1,
+                "width": 1,
+                "height": 1,
+                "source_units_to_meters": 1.0,
+                "spawn": {"grid": [0, 0]},
+            }
+        ),
+        encoding="utf-8",
     )
     result = approve_navigation_mesh(geometry, "student-reviewer", "floor and walls checked")
     assert result["navmesh_ready"] is True
@@ -155,3 +179,29 @@ def test_navmesh_builds_floor_grid_and_inflates_wall(tmp_path: Path, monkeypatch
     assert result["walkable_count"] > 0
     assert result["blocked_obstacle_count"] > 0
     assert result["navmesh_ready"] is False
+    assert result["source_units_to_meters"] == 1.0
+    assert len(result["spawn"]["source_world"]) == 3
+
+
+def test_scale_recalibration_uses_absolute_target_scale(tmp_path: Path) -> None:
+    collision = tmp_path / "collision"
+    collision.mkdir()
+    mesh = trimesh.creation.box(extents=[2.0, 1.0, 1.0])
+    mesh.export(collision / "collision.glb")
+    (collision / "manifest.json").write_text(
+        json.dumps(
+            {
+                "model_path": "collision.glb",
+                "preview_path": "missing.ply",
+                "size_bytes": (collision / "collision.glb").stat().st_size,
+                "voxel_size": 0.1,
+                "scale_calibrated": False,
+            }
+        ),
+        encoding="utf-8",
+    )
+    calibrate_collision_scale(tmp_path, 4.0, 2.0, "first")
+    result = calibrate_collision_scale(tmp_path, 6.0, 2.0, "corrected")
+    calibrated = trimesh.load(collision / "collision.glb", force="mesh")
+    assert result["scale_factor_meters_per_unit"] == 3.0
+    assert calibrated.extents[0] == pytest.approx(6.0)

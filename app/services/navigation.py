@@ -21,6 +21,31 @@ class NavigationPreparationError(RuntimeError):
     pass
 
 
+def invalidate_navigation_artifacts(
+    geometry_dir: Path, reason: str, *, include_preparation: bool = False
+) -> None:
+    names = ["navmesh.json"]
+    if include_preparation:
+        names.append("preparation.json")
+    for name in names:
+        path = geometry_dir / "navigation" / name
+        if not path.is_file():
+            continue
+        try:
+            payload = json.loads(path.read_text(encoding="utf-8"))
+        except json.JSONDecodeError:
+            continue
+        payload.update(
+            {
+                "status": "stale",
+                "navmesh_ready": False,
+                "invalidated_reason": reason,
+                "invalidated_at": datetime.now(timezone.utc).isoformat(),
+            }
+        )
+        path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+
+
 def _resolve_fused_source(geometry_dir: Path, manifest: dict) -> Path:
     source = (geometry_dir / manifest["source_dense_cloud"]).resolve()
     # Older manifests used ../dense/... even though dense artifacts are stored
@@ -37,6 +62,72 @@ def _resolve_fused_source(geometry_dir: Path, manifest: dict) -> Path:
 def encode_walkable_grid(grid: np.ndarray) -> str:
     """Encode a boolean grid compactly for the browser viewer."""
     return base64.b64encode(zlib.compress(np.asarray(grid, dtype=np.uint8).tobytes(), 6)).decode("ascii")
+
+
+def decode_walkable_grid(encoded: str, width: int, height: int) -> np.ndarray:
+    try:
+        raw = zlib.decompress(base64.b64decode(encoded, validate=True))
+    except (ValueError, zlib.error) as exc:
+        raise NavigationPreparationError("Navigation grid encoding is invalid.") from exc
+    expected = int(width) * int(height)
+    if expected <= 0 or len(raw) != expected:
+        raise NavigationPreparationError("Navigation grid dimensions do not match its payload.")
+    grid = np.frombuffer(raw, dtype=np.uint8)
+    if np.any(grid > 1):
+        raise NavigationPreparationError("Navigation grid contains non-binary cells.")
+    return grid.reshape((int(height), int(width))).astype(bool)
+
+
+def validate_navigation_mesh(geometry_dir: Path) -> dict:
+    path = geometry_dir / "navigation" / "navmesh.json"
+    if not path.is_file():
+        raise NavigationPreparationError("Navigation mesh has not been generated.")
+    navmesh = json.loads(path.read_text(encoding="utf-8"))
+    errors = []
+    if navmesh.get("status") == "stale":
+        errors.append("Navigation mesh is stale and must be regenerated.")
+    if navmesh.get("unknown_space_policy") != "block_unknown":
+        errors.append("Unknown-space policy must block unknown cells.")
+    if navmesh.get("walkable_encoding") != "zlib_uint8_row_major_base64":
+        errors.append("Unsupported walkability encoding.")
+    try:
+        grid = decode_walkable_grid(
+            navmesh.get("walkable_grid_base64", ""), navmesh.get("width", 0), navmesh.get("height", 0)
+        )
+    except NavigationPreparationError as exc:
+        errors.append(str(exc))
+        grid = np.zeros((0, 0), dtype=bool)
+    if grid.size:
+        actual_walkable = int(np.count_nonzero(grid))
+        if actual_walkable != int(navmesh.get("walkable_count", -1)):
+            errors.append("Walkable cell count does not match the grid payload.")
+        expected_hash = navmesh.get("walkable_sha256")
+        actual_hash = sha256(grid.astype(np.uint8).tobytes()).hexdigest()
+        if expected_hash != actual_hash:
+            errors.append("Walkable grid integrity hash does not match.")
+        spawn = navmesh.get("spawn", {}).get("grid", [-1, -1])
+        if len(spawn) != 2:
+            errors.append("Spawn cell is missing.")
+        else:
+            spawn_x, spawn_y = int(spawn[0]), int(spawn[1])
+            if not (0 <= spawn_x < grid.shape[1] and 0 <= spawn_y < grid.shape[0]):
+                errors.append("Spawn cell is outside the navigation grid.")
+            elif not grid[spawn_y, spawn_x]:
+                errors.append("Spawn cell is not walkable.")
+        _, components = ndimage.label(grid, structure=np.ones((3, 3), dtype=np.uint8))
+        if components != 1:
+            errors.append("Approved walkability grid must contain exactly one connected component.")
+    manifest = read_collision_manifest(geometry_dir)
+    if not manifest.get("scale_calibrated", False):
+        errors.append("Collision geometry scale is not calibrated.")
+    if float(navmesh.get("source_units_to_meters", 0.0)) <= 0:
+        errors.append("Source-to-meter scale is missing.")
+    return {
+        "passed": not errors,
+        "errors": errors,
+        "checked_at": datetime.now(timezone.utc).isoformat(),
+        "walkable_count": int(np.count_nonzero(grid)),
+    }
 
 
 def _floor_basis(up: np.ndarray) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
@@ -63,6 +154,7 @@ def build_navigation_mesh(
     geometry_dir: Path,
     sparse_model_dir: Path,
     settings: Settings,
+    camera_centers_source: np.ndarray | None = None,
 ) -> dict:
     """Build a conservative 2-D walkability grid from calibrated fused points.
 
@@ -76,18 +168,24 @@ def build_navigation_mesh(
     if not preparation_path.is_file():
         raise NavigationPreparationError("Run navigation preparation and review the floor candidate first.")
     preparation = json.loads(preparation_path.read_text(encoding="utf-8"))
+    if preparation.get("status") == "stale":
+        raise NavigationPreparationError("Navigation preparation is stale; run floor preparation again.")
     plane = preparation.get("plane", {})
     if not plane.get("accepted", False):
         raise NavigationPreparationError("Floor candidate did not pass confidence review.")
 
     source = _resolve_fused_source(geometry_dir, manifest)
     cloud = o3d.io.read_point_cloud(str(source), remove_nan_points=True, remove_infinite_points=True)
-    points = np.asarray(cloud.points, dtype=np.float64)
+    source_points = np.asarray(cloud.points, dtype=np.float64)
+    scale = float(manifest.get("scale_factor_meters_per_unit", 1.0))
+    if not np.isfinite(scale) or scale <= 0:
+        raise NavigationPreparationError("Collision scale factor is invalid.")
+    points = source_points * scale
     if len(points) < settings.navigation_min_floor_points:
         raise NavigationPreparationError("Fused geometry has too few points for NavMesh generation.")
     normal = np.asarray(plane["normal"], dtype=float)
     normal /= max(np.linalg.norm(normal), 1e-9)
-    offset = float(plane["offset"])
+    offset = float(plane["offset"]) * scale
     axis_x, axis_y, up = _floor_basis(normal)
     horizontal_x = points @ axis_x
     horizontal_y = points @ axis_y
@@ -128,8 +226,14 @@ def build_navigation_mesh(
     inflated_obstacles = ndimage.binary_dilation(obstacle_cells, structure=_disk_structure(inflation_cells))
     walkable = floor_support & ~inflated_obstacles
 
-    reconstruction = pycolmap.Reconstruction(str(sparse_model_dir))
-    camera_centers, _ = _camera_centers_and_up(reconstruction)
+    if camera_centers_source is None:
+        reconstruction = pycolmap.Reconstruction(str(sparse_model_dir))
+        camera_centers, _ = _camera_centers_and_up(reconstruction)
+    else:
+        camera_centers = np.asarray(camera_centers_source, dtype=float)
+        if len(camera_centers) < 3:
+            raise NavigationPreparationError("At least three camera centers are required for spawn selection.")
+    camera_centers *= scale
     camera_mean = camera_centers.mean(axis=0)
     camera_mean -= (float(camera_mean @ up) + offset) * up
     spawn_x = int(np.clip(np.floor((camera_mean @ axis_x - min_x) / cell_size), 0, width - 1))
@@ -147,6 +251,11 @@ def build_navigation_mesh(
     if component_size < settings.navigation_component_min_cells:
         raise NavigationPreparationError("Largest walkable component is too small for safe roaming.")
     walkable = labels == component_id
+    spawn_floor_x = min_x + (int(spawn_x) + 0.5) * cell_size
+    spawn_floor_y = min_y + (int(spawn_y) + 0.5) * cell_size
+    eye_height_m = min(1.6, max(0.5, settings.agent_height_meters - 0.1))
+    spawn_world_m = axis_x * spawn_floor_x + axis_y * spawn_floor_y - up * offset + up * eye_height_m
+    walkable_bytes = walkable.astype(np.uint8).tobytes()
 
     result = {
         "schema_version": 1,
@@ -154,8 +263,9 @@ def build_navigation_mesh(
         "navmesh_ready": False,
         "coordinate_system": "colmap_world_floor_basis",
         "units": "meters",
+        "source_units_to_meters": scale,
         "unknown_space_policy": "block_unknown",
-        "source_dense_cloud": str(source.relative_to(geometry_dir)).replace("\\", "/"),
+        "source_dense_cloud": str(source.relative_to(geometry_dir.resolve())).replace("\\", "/"),
         "cell_size_m": cell_size,
         "origin_floor_coordinates": [min_x, min_y],
         "width": width,
@@ -175,9 +285,14 @@ def build_navigation_mesh(
             "up": up.tolist(),
             "plane_offset": offset,
         },
-        "spawn": {"grid": [int(spawn_x), int(spawn_y)]},
+        "spawn": {
+            "grid": [int(spawn_x), int(spawn_y)],
+            "source_world": (spawn_world_m / scale).tolist(),
+            "eye_height_m": eye_height_m,
+        },
         "walkable_encoding": "zlib_uint8_row_major_base64",
         "walkable_grid_base64": encode_walkable_grid(walkable),
+        "walkable_sha256": sha256(walkable_bytes).hexdigest(),
         "reason": "Generated conservatively; human review must approve floor, scale, and unknown-space boundaries before enabling movement collision.",
         "created_at": datetime.now(timezone.utc).isoformat(),
     }
@@ -196,6 +311,9 @@ def approve_navigation_mesh(geometry_dir: Path, reviewer: str, notes: str = "") 
     result = json.loads(path.read_text(encoding="utf-8"))
     if result.get("status") not in {"review_required", "approved"}:
         raise NavigationPreparationError("Navigation mesh is not in a reviewable state.")
+    validation = validate_navigation_mesh(geometry_dir)
+    if not validation["passed"]:
+        raise NavigationPreparationError("Navigation validation failed: " + "; ".join(validation["errors"]))
     result.update(
         {
             "status": "approved",
@@ -203,6 +321,7 @@ def approve_navigation_mesh(geometry_dir: Path, reviewer: str, notes: str = "") 
             "approved_by": reviewer.strip(),
             "approval_notes": notes.strip(),
             "approved_at": datetime.now(timezone.utc).isoformat(),
+            "validation": validation,
         }
     )
     path.write_text(json.dumps(result, indent=2), encoding="utf-8")
@@ -233,11 +352,23 @@ def detect_floor_plane(
     sparse_model_dir: Path,
     settings: Settings,
 ) -> dict:
+    reconstruction = pycolmap.Reconstruction(str(sparse_model_dir))
+    camera_centers, scene_up = _camera_centers_and_up(reconstruction)
+    return detect_floor_plane_from_observations(fused_path, camera_centers, scene_up, settings)
+
+
+def detect_floor_plane_from_observations(
+    fused_path: Path,
+    camera_centers: np.ndarray,
+    scene_up: np.ndarray,
+    settings: Settings,
+) -> dict:
     cloud = o3d.io.read_point_cloud(str(fused_path), remove_nan_points=True, remove_infinite_points=True)
     if len(cloud.points) < settings.navigation_min_floor_points:
         raise NavigationPreparationError("Fused geometry has too few points for floor detection.")
-    reconstruction = pycolmap.Reconstruction(str(sparse_model_dir))
-    camera_centers, scene_up = _camera_centers_and_up(reconstruction)
+    camera_centers = np.asarray(camera_centers, dtype=float)
+    scene_up = np.asarray(scene_up, dtype=float)
+    scene_up /= max(np.linalg.norm(scene_up), 1e-9)
     working = cloud
     points = np.asarray(cloud.points)
     diagonal = float(np.linalg.norm(points.max(axis=0) - points.min(axis=0)))
@@ -324,19 +455,25 @@ def calibrate_collision_scale(
     if known_distance_meters <= 0 or observed_distance_units <= 0:
         raise NavigationPreparationError("Both calibration distances must be positive.")
     manifest = read_collision_manifest(geometry_dir)
+    invalidate_navigation_artifacts(
+        geometry_dir,
+        "Metric scale changed; regenerate and review the navigation mesh.",
+    )
     model_path = geometry_dir / "collision" / manifest["model_path"]
     scale = known_distance_meters / observed_distance_units
+    current_scale = float(manifest.get("scale_factor_meters_per_unit", 1.0))
+    correction = scale / current_scale if manifest.get("scale_calibrated", False) else scale
     loaded = trimesh.load(str(model_path), force="scene")
     if isinstance(loaded, trimesh.Scene):
         mesh = trimesh.util.concatenate(tuple(loaded.geometry.values()))
     else:
         mesh = loaded
-    mesh.apply_scale(scale)
+    mesh.apply_scale(correction)
     mesh.export(model_path)
     preview_path = geometry_dir / "collision" / manifest.get("preview_path", "")
     if preview_path.is_file():
         preview = o3d.io.read_triangle_mesh(str(preview_path))
-        preview.scale(scale, center=(0, 0, 0))
+        preview.scale(correction, center=(0, 0, 0))
         o3d.io.write_triangle_mesh(str(preview_path), preview, write_ascii=False)
     manifest.update(
         {
@@ -348,7 +485,7 @@ def calibrate_collision_scale(
             "sha256": sha256(model_path.read_bytes()).hexdigest(),
             "bounds_min": mesh.bounds[0].tolist(),
             "bounds_max": mesh.bounds[1].tolist(),
-            "voxel_size": float(manifest.get("voxel_size", 0.0)) * scale,
+            "voxel_size": float(manifest.get("voxel_size", 0.0)) * correction,
             "safe_for_navigation": False,
             "status": "review_required",
         }
