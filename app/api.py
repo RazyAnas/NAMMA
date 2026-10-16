@@ -219,7 +219,9 @@ async def start_collision_build(
         raise HTTPException(status_code=409, detail="Run reconstruction before collision geometry.") from exc
     if not report["passed"]:
         raise HTTPException(status_code=409, detail="Reconstruction quality gate did not pass.")
-    if not settings.resolve_colmap():
+    if settings.collision_geometry_backend == "monocular" and not settings.monocular_depth_command:
+        raise HTTPException(status_code=503, detail="Monocular depth predictor is not configured.")
+    if settings.collision_geometry_backend == "colmap" and not settings.resolve_colmap():
         raise HTTPException(status_code=503, detail="Native COLMAP is required for dense stereo.")
     return _start_job(project_id, "build_collision", db)
 

@@ -53,6 +53,12 @@ class Settings(BaseSettings):
     collision_poisson_depth: int = 9
     collision_density_trim_quantile: float = 0.02
     collision_target_triangles: int = 100000
+    collision_geometry_backend: str = "monocular"
+    monocular_depth_command: str | None = None
+    monocular_min_alignment_points: int = 12
+    monocular_max_alignment_error: float = 0.4
+    monocular_pixel_stride: int = 4
+    monocular_fusion_voxel_size: float = 0.02
 
     def absolute_data_dir(self) -> Path:
         return self.data_dir if self.data_dir.is_absolute() else PROJECT_ROOT / self.data_dir

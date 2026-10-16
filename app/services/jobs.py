@@ -10,6 +10,7 @@ from app.services.colmap import run_colmap
 from app.services.dataset import export_gaussian_dataset
 from app.services.gaussian import run_gaussian_training
 from app.services.geometry import run_dense_geometry
+from app.services.monocular import run_monocular_geometry
 from app.services.quality import score_reconstruction, write_quality_report
 from app.services.storage import ensure_project_dirs
 from app.services.video import extract_frames
@@ -128,7 +129,12 @@ def _run_job(job_id: str) -> None:
                 job.progress = 0.1
                 db.commit()
                 report = read_quality_report(paths["artifacts"] / "quality-report.json")
-                run_dense_geometry(
+                geometry_runner = (
+                    run_monocular_geometry
+                    if settings.collision_geometry_backend == "monocular"
+                    else run_dense_geometry
+                )
+                geometry_runner(
                     paths["frames"],
                     paths["tracking"] / "colmap" / "sparse" / report["selected_model_id"],
                     paths["artifacts"] / "geometry",

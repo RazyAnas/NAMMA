@@ -28,6 +28,7 @@ if (-not $nvcc) {
 & $trainerPython -m pip install --upgrade pip "setuptools<82" wheel ninja
 & $trainerPython -m pip install torch==2.7.1 torchvision==0.22.1 --index-url https://download.pytorch.org/whl/cu128
 & $trainerPython -m pip install nerfstudio==1.1.5
+& $trainerPython -m pip install transformers==4.57.1 safetensors==0.6.2
 & $trainerPython -m pip uninstall --yes gsplat
 
 $vcvars = "C:\Program Files (x86)\Microsoft Visual Studio\18\BuildTools\VC\Auxiliary\Build\vcvarsall.bat"

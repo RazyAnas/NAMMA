@@ -104,6 +104,11 @@ For the downloaded TUM RGB-D benchmark only, `scripts/build_tum_rgbd_collision.p
 depth and publish the same artifact format. This validates fusion/mesh/export independently and is not used as
 a substitute for monocular depth on ordinary room videos.
 
+For ordinary RGB video, configure the Apache-2.0 Depth Anything V2 Small subprocess shown in `.env.example`.
+The backend predicts relative depth per registered frame, robustly chooses direct- or inverse-depth alignment
+against visible COLMAP sparse points, fuses the aligned views, and publishes the same review-gated collision GLB.
+The result remains in COLMAP's arbitrary units until an explicit metric scale measurement is supplied.
+
 Artifacts are stored under `data/projects/<project-id>/`. Quality reports and trained outputs are under
 `artifacts/`; exported images, camera poses and COLMAP data are under `training/dataset/`. The SQLite
 database is `data/namma.db`.
