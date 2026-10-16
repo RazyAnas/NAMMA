@@ -119,6 +119,9 @@ def test_navigation_approval_marks_artifact_ready(tmp_path: Path) -> None:
                 "width": 1,
                 "height": 1,
                 "source_units_to_meters": 1.0,
+                "viewer_units_to_meters": 1.0,
+                "source_to_viewer": np.eye(4).tolist(),
+                "viewer_to_source": np.eye(4).tolist(),
                 "spawn": {"grid": [0, 0]},
             }
         ),
@@ -180,6 +183,7 @@ def test_navmesh_builds_floor_grid_and_inflates_wall(tmp_path: Path, monkeypatch
     assert result["blocked_obstacle_count"] > 0
     assert result["navmesh_ready"] is False
     assert result["source_units_to_meters"] == 1.0
+    assert result["viewer_units_to_meters"] == 1.0
     assert len(result["spawn"]["source_world"]) == 3
 
 

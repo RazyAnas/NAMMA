@@ -8,7 +8,7 @@ from app.database import SessionLocal
 from app.models import Job, JobStatus, Project, ProjectStatus
 from app.services.colmap import run_colmap
 from app.services.dataset import export_gaussian_dataset
-from app.services.gaussian import run_gaussian_training
+from app.services.gaussian import read_gaussian_manifest, run_gaussian_training
 from app.services.geometry import run_dense_geometry
 from app.services.monocular import run_monocular_geometry
 from app.services.navigation import build_navigation_mesh, invalidate_navigation_artifacts
@@ -155,10 +155,12 @@ def _run_job(job_id: str) -> None:
                 job.progress = 0.15
                 db.commit()
                 quality = read_quality_report(paths["artifacts"] / "quality-report.json")
+                gaussian = read_gaussian_manifest(paths["artifacts"] / "gaussian")
                 build_navigation_mesh(
                     paths["artifacts"] / "geometry",
                     paths["tracking"] / "colmap" / "sparse" / quality["selected_model_id"],
                     settings,
+                    source_to_viewer=gaussian.get("source_to_viewer"),
                 )
                 project.status = previous_project_status
 

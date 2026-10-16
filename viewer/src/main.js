@@ -86,6 +86,40 @@ async function loadNavigation(projectId) {
   return { ...manifest, walkable: bytes };
 }
 
+function transformPoint(matrix, point) {
+  if (!Array.isArray(matrix) || matrix.length !== 4) return point;
+  const [x, y, z] = point;
+  const w = matrix[3][0] * x + matrix[3][1] * y + matrix[3][2] * z + matrix[3][3];
+  const divisor = Math.abs(w) > 1e-9 ? w : 1;
+  return [
+    (matrix[0][0] * x + matrix[0][1] * y + matrix[0][2] * z + matrix[0][3]) / divisor,
+    (matrix[1][0] * x + matrix[1][1] * y + matrix[1][2] * z + matrix[1][3]) / divisor,
+    (matrix[2][0] * x + matrix[2][1] * y + matrix[2][2] * z + matrix[2][3]) / divisor,
+  ];
+}
+
+function frameCamera(manifest) {
+  const bounds = manifest.viewer_bounds;
+  const spawn = navigation?.spawn?.source_world;
+  let target = [0, 0, 0];
+  let distance = 3;
+  if (bounds?.min?.length === 3 && bounds?.max?.length === 3) {
+    target = bounds.center?.length === 3
+      ? bounds.center
+      : bounds.min.map((value, index) => (value + bounds.max[index]) * 0.5);
+    const extent = bounds.min.map((value, index) => bounds.max[index] - value);
+    distance = Math.max(1, Math.max(...extent) * 0.9);
+  }
+  if (navigation?.navmesh_ready && Array.isArray(spawn) && spawn.length === 3) {
+    camera.position.fromArray(transformPoint(navigation.source_to_viewer, spawn));
+  } else {
+    camera.position.set(target[0], target[1] + distance * 0.15, target[2] + distance);
+  }
+  camera.lookAt(new THREE.Vector3(...target));
+  yaw = camera.rotation.y;
+  pitch = camera.rotation.x;
+}
+
 async function loadModel() {
   const projectId = ui.project.value;
   if (!projectId) return;
@@ -113,12 +147,6 @@ async function loadModel() {
     renderer.setClearColor(0x07110f, 1);
 
     camera = new THREE.PerspectiveCamera(62, window.innerWidth / window.innerHeight, 0.03, 500);
-    const spawn = navigation?.spawn?.source_world;
-    if (navigation?.navmesh_ready && Array.isArray(spawn) && spawn.length === 3) {
-      camera.position.fromArray(spawn);
-    } else {
-      camera.position.set(0, 0, 3);
-    }
     camera.rotation.order = 'YXZ';
 
     viewer = new GaussianSplats3D.Viewer({
@@ -126,26 +154,28 @@ async function loadModel() {
       renderer,
       camera,
       useBuiltInControls: false,
-      gpuAcceleratedSort: true,
+      gpuAcceleratedSort: false,
       enableSIMDInSort: true,
       sharedMemoryForWorkers: false,
       integerBasedSort: true,
-      halfPrecisionCovariancesOnGPU: true,
+      halfPrecisionCovariancesOnGPU: false,
       dynamicScene: false,
-      renderMode: GaussianSplats3D.RenderMode.Always,
-      sceneRevealMode: GaussianSplats3D.SceneRevealMode.Gradual,
+      renderMode: GaussianSplats3D.RenderMode.OnChange,
+      sceneRevealMode: GaussianSplats3D.SceneRevealMode.Instant,
       sphericalHarmonicsDegree: 2,
       inMemoryCompressionLevel: 1,
       freeIntermediateSplatData: true,
     });
-
     await viewer.addSplatScene(`/api/v1/projects/${projectId}/gaussian-model`, {
       format: GaussianSplats3D.SceneFormat.Ply,
       splatAlphaRemovalThreshold: 5,
       showLoadingUI: false,
-      progressiveLoad: true,
+      progressiveLoad: false,
       onProgress: (percentage, label) => updateProgress(5 + percentage * 0.9, label || 'Decoding Gaussian splats…'),
     });
+    // First-scene setup applies the library's default pose. Frame only after
+    // the scene is attached so nothing can overwrite the reconstructed bounds.
+    frameCamera(manifest);
 
     updateProgress(100, 'Scene ready');
     const option = ui.project.selectedOptions[0];
@@ -157,6 +187,10 @@ async function loadModel() {
     ui.controls.hidden = false;
     ui.enter.hidden = false;
     setStatus('Scene ready', 'ready');
+    // Paint the first frame immediately. Background laptop tabs may throttle
+    // requestAnimationFrame until they become active.
+    viewer.update();
+    viewer.render();
     requestAnimationFrame(frame);
   } catch (error) {
     console.error(error);
@@ -196,7 +230,7 @@ function updateMovement(delta) {
   direction.applyQuaternion(camera.quaternion);
   direction.y += vertical;
   if (direction.lengthSq() > 0) direction.normalize();
-  const sourceUnitsToMeters = navigation?.navmesh_ready ? navigation.source_units_to_meters : 1;
+  const sourceUnitsToMeters = navigation?.navmesh_ready ? navigation.viewer_units_to_meters : 1;
   velocity.copy(direction).multiplyScalar((speed * multiplier * delta) / sourceUnitsToMeters);
   if (!navigation?.navmesh_ready) {
     camera.position.add(velocity);
@@ -216,8 +250,9 @@ function updateMovement(delta) {
 function isWalkable(position) {
   const basis = navigation.basis;
   const scale = navigation.source_units_to_meters;
-  const x = scale * (position.x * basis.axis_x[0] + position.y * basis.axis_x[1] + position.z * basis.axis_x[2]);
-  const y = scale * (position.x * basis.axis_y[0] + position.y * basis.axis_y[1] + position.z * basis.axis_y[2]);
+  const source = transformPoint(navigation.viewer_to_source, position.toArray());
+  const x = scale * (source[0] * basis.axis_x[0] + source[1] * basis.axis_x[1] + source[2] * basis.axis_x[2]);
+  const y = scale * (source[0] * basis.axis_y[0] + source[1] * basis.axis_y[1] + source[2] * basis.axis_y[2]);
   const gx = Math.floor((x - navigation.origin_floor_coordinates[0]) / navigation.cell_size_m);
   const gy = Math.floor((y - navigation.origin_floor_coordinates[1]) / navigation.cell_size_m);
   if (gx < 0 || gx >= navigation.width || gy < 0 || gy >= navigation.height) return false;

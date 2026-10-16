@@ -122,6 +122,12 @@ def validate_navigation_mesh(geometry_dir: Path) -> dict:
         errors.append("Collision geometry scale is not calibrated.")
     if float(navmesh.get("source_units_to_meters", 0.0)) <= 0:
         errors.append("Source-to-meter scale is missing.")
+    if float(navmesh.get("viewer_units_to_meters", 0.0)) <= 0:
+        errors.append("Viewer-to-meter scale is missing.")
+    for name in ("source_to_viewer", "viewer_to_source"):
+        matrix = np.asarray(navmesh.get(name, []), dtype=float)
+        if matrix.shape != (4, 4) or not np.isfinite(matrix).all():
+            errors.append(f"{name} transform is invalid.")
     return {
         "passed": not errors,
         "errors": errors,
@@ -155,6 +161,7 @@ def build_navigation_mesh(
     sparse_model_dir: Path,
     settings: Settings,
     camera_centers_source: np.ndarray | None = None,
+    source_to_viewer: list[list[float]] | None = None,
 ) -> dict:
     """Build a conservative 2-D walkability grid from calibrated fused points.
 
@@ -256,6 +263,16 @@ def build_navigation_mesh(
     eye_height_m = min(1.6, max(0.5, settings.agent_height_meters - 0.1))
     spawn_world_m = axis_x * spawn_floor_x + axis_y * spawn_floor_y - up * offset + up * eye_height_m
     walkable_bytes = walkable.astype(np.uint8).tobytes()
+    source_to_viewer_matrix = np.asarray(source_to_viewer if source_to_viewer is not None else np.eye(4), dtype=float)
+    if source_to_viewer_matrix.shape != (4, 4) or not np.isfinite(source_to_viewer_matrix).all():
+        raise NavigationPreparationError("Gaussian source-to-viewer transform is invalid.")
+    try:
+        viewer_to_source_matrix = np.linalg.inv(source_to_viewer_matrix)
+    except np.linalg.LinAlgError as exc:
+        raise NavigationPreparationError("Gaussian source-to-viewer transform is singular.") from exc
+    viewer_units_per_source_unit = float(abs(np.linalg.det(source_to_viewer_matrix[:3, :3])) ** (1.0 / 3.0))
+    if viewer_units_per_source_unit <= 1e-9:
+        raise NavigationPreparationError("Gaussian source-to-viewer scale is invalid.")
 
     result = {
         "schema_version": 1,
@@ -264,6 +281,9 @@ def build_navigation_mesh(
         "coordinate_system": "colmap_world_floor_basis",
         "units": "meters",
         "source_units_to_meters": scale,
+        "viewer_units_to_meters": scale / viewer_units_per_source_unit,
+        "source_to_viewer": source_to_viewer_matrix.tolist(),
+        "viewer_to_source": viewer_to_source_matrix.tolist(),
         "unknown_space_policy": "block_unknown",
         "source_dense_cloud": str(source.relative_to(geometry_dir.resolve())).replace("\\", "/"),
         "cell_size_m": cell_size,
