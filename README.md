@@ -7,7 +7,7 @@ This repository now contains the first local pipeline for a laptop-only video-to
 3. An offline CUDA COLMAP pipeline for feature extraction, sequential matching and sparse mapping.
 4. Reconstruction quality scoring with explicit coverage, point-count, reprojection and fragmentation gates.
 5. Export of the strongest model as a portable COLMAP + `transforms.json` Gaussian-training dataset.
-6. A configurable, quality-gated Gaussian trainer job interface.
+6. A configurable, quality-gated Gaussian trainer that exports and publishes a verified `.ply` model.
 
 The photorealistic MODP mapper, dense collision geometry, NavMesh and viewer are later milestones.
 
@@ -59,14 +59,25 @@ Configure the trainer in the private `.env` file. The command is executed withou
 `{dataset}` and `{output}` placeholders. For example:
 
 ```dotenv
-GAUSSIAN_TRAINER_COMMAND=ns-train splatfacto --data {dataset} --output-dir {output}
+GAUSSIAN_TRAINER_COMMAND=.\.venv-gsplat\Scripts\python.exe scripts\train_splatfacto.py --dataset {dataset} --output {output}
 ```
+
+On an RTX 50-series laptop, install the NVIDIA CUDA Toolkit 12.8 first, then create the isolated
+trainer environment with `scripts\install_gaussian_env.ps1`. The script uses Torch 2.7.1 CUDA 12.8
+and compiles current gsplat because the published Windows gsplat wheels predate Blackwell support.
 
 If quality fails, the backend returns HTTP 409 instead of spending GPU time on an unusable training run.
 
 Artifacts are stored under `data/projects/<project-id>/`. Quality reports and trained outputs are under
 `artifacts/`; exported images, camera poses and COLMAP data are under `training/dataset/`. The SQLite
 database is `data/namma.db`.
+
+After training, the roaming application can fetch integrity metadata and stream the model from:
+
+```text
+GET /api/v1/projects/{project_id}/gaussian-artifact
+GET /api/v1/projects/{project_id}/gaussian-model
+```
 
 ## COLMAP backend
 

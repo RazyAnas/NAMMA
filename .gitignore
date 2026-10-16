@@ -1,4 +1,6 @@
 .venv/
+.venv-gsplat/
+.python/
 .env
 .env.*
 !.env.example
