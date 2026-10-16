@@ -11,7 +11,8 @@ from app.services.dataset import export_gaussian_dataset
 from app.services.gaussian import run_gaussian_training
 from app.services.geometry import run_dense_geometry
 from app.services.monocular import run_monocular_geometry
-from app.services.quality import score_reconstruction, write_quality_report
+from app.services.navigation import build_navigation_mesh
+from app.services.quality import read_quality_report, score_reconstruction, write_quality_report
 from app.services.storage import ensure_project_dirs
 from app.services.video import extract_frames
 
@@ -142,6 +143,19 @@ def _run_job(job_id: str) -> None:
                     settings,
                 )
                 project.status = previous_project_status
+            elif job.kind == "build_navmesh":
+                project.status = ProjectStatus.GEOMETRY
+                job.stage = "navigation_mesh_generation"
+                job.log_path = str(paths["logs"] / "navigation-mesh.log")
+                job.progress = 0.15
+                db.commit()
+                quality = read_quality_report(paths["artifacts"] / "quality-report.json")
+                build_navigation_mesh(
+                    paths["artifacts"] / "geometry",
+                    paths["tracking"] / "colmap" / "sparse" / quality["selected_model_id"],
+                    settings,
+                )
+                project.status = previous_project_status
 
             job.status = JobStatus.SUCCEEDED
             job.stage = "complete"
@@ -149,7 +163,7 @@ def _run_job(job_id: str) -> None:
         except Exception as exc:
             message = str(exc)[:8000]
             project.status = (
-                previous_project_status if job.kind == "build_collision" else ProjectStatus.FAILED
+                previous_project_status if job.kind in {"build_collision", "build_navmesh"} else ProjectStatus.FAILED
             )
             project.error_message = message
             job.status = JobStatus.FAILED

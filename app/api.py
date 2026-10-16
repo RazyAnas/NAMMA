@@ -11,12 +11,13 @@ from sqlalchemy.orm import Session
 from app.config import Settings, get_settings
 from app.database import get_db
 from app.models import Job, Project
-from app.schemas import HealthRead, JobRead, ProjectRead, ScaleCalibrationRequest
+from app.schemas import HealthRead, JobRead, NavigationApprovalRequest, ProjectRead, ScaleCalibrationRequest
 from app.services.jobs import submit_job
 from app.services.gaussian import GaussianTrainingError, read_gaussian_manifest
 from app.services.geometry import GeometryError, read_collision_manifest
 from app.services.navigation import (
     NavigationPreparationError,
+    approve_navigation_mesh,
     calibrate_collision_scale,
     prepare_navigation_geometry,
 )
@@ -263,6 +264,39 @@ async def calibrate_project_scale(
         raise HTTPException(status_code=409, detail=str(exc)) from exc
 
 
+@router.get("/projects/{project_id}/navigation-mesh")
+async def get_navigation_mesh(
+    project_id: str,
+    db: Session = Depends(get_db),
+    settings: Settings = Depends(settings_dependency),
+) -> dict:
+    if db.get(Project, project_id) is None:
+        raise HTTPException(status_code=404, detail="Project not found.")
+    path = ensure_project_dirs(settings, project_id)["artifacts"] / "geometry" / "navigation" / "navmesh.json"
+    if not path.is_file():
+        raise HTTPException(status_code=404, detail="Navigation mesh has not been generated.")
+    return json.loads(path.read_text(encoding="utf-8"))
+
+
+@router.post("/projects/{project_id}/approve-navigation")
+async def approve_project_navigation(
+    project_id: str,
+    request: NavigationApprovalRequest,
+    db: Session = Depends(get_db),
+    settings: Settings = Depends(settings_dependency),
+) -> dict:
+    if db.get(Project, project_id) is None:
+        raise HTTPException(status_code=404, detail="Project not found.")
+    try:
+        return approve_navigation_mesh(
+            ensure_project_dirs(settings, project_id)["artifacts"] / "geometry",
+            request.reviewer,
+            request.notes,
+        )
+    except (FileNotFoundError, NavigationPreparationError) as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+
+
 @router.post("/projects/{project_id}/build-collision", response_model=JobRead, status_code=202)
 async def start_collision_build(
     project_id: str,
@@ -284,6 +318,37 @@ async def start_collision_build(
     if settings.collision_geometry_backend == "colmap" and not settings.resolve_colmap():
         raise HTTPException(status_code=503, detail="Native COLMAP is required for dense stereo.")
     return _start_job(project_id, "build_collision", db)
+
+
+@router.post("/projects/{project_id}/build-navmesh", response_model=JobRead, status_code=202)
+async def start_navigation_mesh_build(
+    project_id: str,
+    db: Session = Depends(get_db),
+    settings: Settings = Depends(settings_dependency),
+) -> Job:
+    if db.get(Project, project_id) is None:
+        raise HTTPException(status_code=404, detail="Project not found.")
+    geometry_dir = ensure_project_dirs(settings, project_id)["artifacts"] / "geometry"
+    try:
+        manifest = read_collision_manifest(geometry_dir)
+    except (FileNotFoundError, GeometryError) as exc:
+        raise HTTPException(status_code=409, detail="Build collision geometry before the navigation mesh.") from exc
+    if not manifest.get("scale_calibrated", False):
+        raise HTTPException(status_code=409, detail="Calibrate collision geometry scale before NavMesh generation.")
+    preparation = geometry_dir / "navigation" / "preparation.json"
+    if not preparation.is_file():
+        raise HTTPException(status_code=409, detail="Run navigation preparation before NavMesh generation.")
+    try:
+        preparation_data = json.loads(preparation.read_text(encoding="utf-8"))
+    except json.JSONDecodeError as exc:
+        raise HTTPException(status_code=409, detail="Navigation preparation artifact is invalid.") from exc
+    if not preparation_data.get("plane", {}).get("accepted", False):
+        raise HTTPException(status_code=409, detail="Floor candidate requires review before NavMesh generation.")
+    try:
+        read_quality_report(ensure_project_dirs(settings, project_id)["artifacts"] / "quality-report.json")
+    except FileNotFoundError as exc:
+        raise HTTPException(status_code=409, detail="Run reconstruction before NavMesh generation.") from exc
+    return _start_job(project_id, "build_navmesh", db)
 
 
 @router.post("/projects/{project_id}/train-gaussian", response_model=JobRead, status_code=202)

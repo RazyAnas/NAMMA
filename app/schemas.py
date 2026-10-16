@@ -45,3 +45,8 @@ class ScaleCalibrationRequest(BaseModel):
     known_distance_meters: float
     observed_distance_units: float
     reference: str = "manual room measurement"
+
+
+class NavigationApprovalRequest(BaseModel):
+    reviewer: str
+    notes: str = ""

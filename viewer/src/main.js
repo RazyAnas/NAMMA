@@ -4,7 +4,7 @@ import './style.css';
 
 const ui = Object.fromEntries(
   ['project', 'load', 'launcher', 'loading', 'progress', 'progress-bar', 'loading-detail', 'error',
-    'hud', 'controls', 'crosshair', 'enter', 'status', 'status-dot', 'project-name', 'model-size', 'fps']
+    'hud', 'controls', 'crosshair', 'enter', 'status', 'status-dot', 'project-name', 'model-size', 'fps', 'nav-status']
     .map((id) => [id, document.getElementById(id)])
 );
 const canvas = document.getElementById('scene');
@@ -12,6 +12,7 @@ const canvas = document.getElementById('scene');
 let viewer;
 let camera;
 let renderer;
+let navigation;
 let previousFrame = performance.now();
 let fpsFrames = 0;
 let fpsStarted = previousFrame;
@@ -66,6 +67,25 @@ function updateProgress(percent, detail) {
   if (detail) ui['loading-detail'].textContent = detail;
 }
 
+async function decodeNavigationGrid(encoded, expectedLength) {
+  const binary = Uint8Array.from(atob(encoded), (character) => character.charCodeAt(0));
+  if (typeof DecompressionStream === 'undefined') throw new Error('Compressed navigation data is not supported by this browser.');
+  const stream = new Blob([binary]).stream().pipeThrough(new DecompressionStream('deflate'));
+  const bytes = new Uint8Array(await new Response(stream).arrayBuffer());
+  if (bytes.length !== expectedLength) throw new Error('Navigation grid length mismatch.');
+  return bytes;
+}
+
+async function loadNavigation(projectId) {
+  const response = await fetch(`/api/v1/projects/${projectId}/navigation-mesh`);
+  if (response.status === 404) return null;
+  if (!response.ok) throw new Error(`Navigation API returned ${response.status}`);
+  const manifest = await response.json();
+  if (!manifest.navmesh_ready) return manifest;
+  const bytes = await decodeNavigationGrid(manifest.walkable_grid_base64, manifest.width * manifest.height);
+  return { ...manifest, walkable: bytes };
+}
+
 async function loadModel() {
   const projectId = ui.project.value;
   if (!projectId) return;
@@ -79,6 +99,12 @@ async function loadModel() {
     const manifestResponse = await fetch(`/api/v1/projects/${projectId}/gaussian-artifact`);
     if (!manifestResponse.ok) throw new Error('The Gaussian model manifest is not available.');
     const manifest = await manifestResponse.json();
+    navigation = null;
+    try {
+      navigation = await loadNavigation(projectId);
+    } catch (navigationError) {
+      console.warn(navigationError);
+    }
     updateProgress(2, `Downloading ${formatBytes(manifest.size_bytes)} model…`);
 
     renderer = new THREE.WebGLRenderer({ canvas, antialias: false, powerPreference: 'high-performance' });
@@ -120,6 +146,7 @@ async function loadModel() {
     const option = ui.project.selectedOptions[0];
     ui['project-name'].textContent = option?.textContent || 'Reconstruction';
     ui['model-size'].textContent = formatBytes(manifest.size_bytes);
+    ui['nav-status'].textContent = navigation?.navmesh_ready ? 'collision on' : 'review required';
     ui.loading.hidden = true;
     ui.hud.hidden = false;
     ui.controls.hidden = false;
@@ -165,7 +192,38 @@ function updateMovement(delta) {
   direction.y += vertical;
   if (direction.lengthSq() > 0) direction.normalize();
   velocity.copy(direction).multiplyScalar(speed * multiplier * delta);
-  camera.position.add(velocity);
+  if (!navigation?.navmesh_ready) {
+    camera.position.add(velocity);
+    return;
+  }
+  // Substep movement to prevent a fast sprint from tunnelling through a wall.
+  const distance = velocity.length();
+  const steps = Math.max(1, Math.ceil(distance / (navigation.cell_size_m * 0.5)));
+  const step = velocity.clone().multiplyScalar(1 / steps);
+  for (let index = 0; index < steps; index += 1) {
+    const candidate = camera.position.clone().add(step);
+    if (!isWalkable(candidate)) break;
+    camera.position.copy(candidate);
+  }
+}
+
+function isWalkable(position) {
+  const basis = navigation.basis;
+  const x = position.x * basis.axis_x[0] + position.y * basis.axis_x[1] + position.z * basis.axis_x[2];
+  const y = position.x * basis.axis_y[0] + position.y * basis.axis_y[1] + position.z * basis.axis_y[2];
+  const gx = Math.floor((x - navigation.origin_floor_coordinates[0]) / navigation.cell_size_m);
+  const gy = Math.floor((y - navigation.origin_floor_coordinates[1]) / navigation.cell_size_m);
+  const radius = Math.ceil((navigation.agent_radius_m + navigation.safety_margin_m) / navigation.cell_size_m);
+  for (let row = gy - radius; row <= gy + radius; row += 1) {
+    for (let column = gx - radius; column <= gx + radius; column += 1) {
+      if (column < 0 || column >= navigation.width || row < 0 || row >= navigation.height) return false;
+      const dx = column - gx;
+      const dy = row - gy;
+      if (dx * dx + dy * dy > radius * radius) continue;
+      if (navigation.walkable[row * navigation.width + column] === 0) return false;
+    }
+  }
+  return true;
 }
 
 function lockPointer() {

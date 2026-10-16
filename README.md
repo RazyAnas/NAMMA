@@ -115,6 +115,15 @@ writes a review artifact with an explicit `block_unknown` policy. Supply a known
 `POST /api/v1/projects/{project_id}/calibrate-scale` before NavMesh generation; calibration updates the GLB and
 manifest atomically but does not mark the scene navigable.
 
+Once scale and the floor candidate have been reviewed, start the conservative NavMesh build with
+`POST /api/v1/projects/{project_id}/build-navmesh`. The generated artifact is available from
+`GET /api/v1/projects/{project_id}/navigation-mesh`. It is a compressed, floor-aligned voxel grid: cells
+without floor support, cells inside the inflated obstacle mask, and disconnected components are blocked.
+The artifact remains `navmesh_ready: false` until a human reviewer approves the floor, scale and unknown-space
+boundary. The laptop viewer reads this artifact and performs sub-stepped collision-constrained movement only
+when that explicit approval flag is enabled; otherwise it remains visual-only. Record that review explicitly with
+`POST /api/v1/projects/{project_id}/approve-navigation` and a JSON body containing `reviewer` and optional `notes`.
+
 Artifacts are stored under `data/projects/<project-id>/`. Quality reports and trained outputs are under
 `artifacts/`; exported images, camera poses and COLMAP data are under `training/dataset/`. The SQLite
 database is `data/namma.db`.

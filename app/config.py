@@ -65,6 +65,17 @@ class Settings(BaseSettings):
     navigation_min_floor_points: int = 1000
     navigation_floor_min_inlier_ratio: float = 0.05
     navigation_min_floor_confidence: float = 0.55
+    navigation_cell_size_m: float = 0.10
+    navigation_floor_support_below_m: float = 0.08
+    navigation_floor_support_above_m: float = 0.12
+    navigation_min_floor_points_per_cell: int = 2
+    navigation_obstacle_min_height_m: float = 0.15
+    navigation_grid_max_dimension: int = 512
+    navigation_component_min_cells: int = 20
+    agent_radius_meters: float = 0.30
+    agent_height_meters: float = 1.70
+    safety_margin_meters: float = 0.10
+    max_slope_degrees: float = 35.0
 
     def absolute_data_dir(self) -> Path:
         return self.data_dir if self.data_dir.is_absolute() else PROJECT_ROOT / self.data_dir
