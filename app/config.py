@@ -59,6 +59,12 @@ class Settings(BaseSettings):
     monocular_max_alignment_error: float = 0.4
     monocular_pixel_stride: int = 4
     monocular_fusion_voxel_size: float = 0.02
+    navigation_floor_distance_ratio: float = 0.005
+    navigation_floor_ransac_iterations: int = 1000
+    navigation_floor_candidate_count: int = 8
+    navigation_min_floor_points: int = 1000
+    navigation_floor_min_inlier_ratio: float = 0.05
+    navigation_min_floor_confidence: float = 0.55
 
     def absolute_data_dir(self) -> Path:
         return self.data_dir if self.data_dir.is_absolute() else PROJECT_ROOT / self.data_dir

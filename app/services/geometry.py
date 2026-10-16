@@ -137,7 +137,7 @@ def build_collision_candidate(
     *,
     coordinate_units: str = "colmap_arbitrary_units",
     scale_calibrated: bool = False,
-    source_description: str = "../dense/fused.ply",
+    source_description: str = "dense/fused.ply",
 ) -> dict:
     if not fused_path.is_file():
         raise GeometryError("COLMAP stereo fusion did not produce fused.ply.")

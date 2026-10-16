@@ -108,7 +108,7 @@ def main() -> None:
         settings,
         coordinate_units="meters",
         scale_calibrated=True,
-        source_description="../dense/fused-rgbd.ply",
+        source_description="dense/fused-rgbd.ply",
     )
     manifest["depth_source"] = "TUM RGB-D sensor depth"
     manifest["integrated_frames"] = len(associations)

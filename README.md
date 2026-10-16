@@ -109,6 +109,12 @@ The backend predicts relative depth per registered frame, robustly chooses direc
 against visible COLMAP sparse points, fuses the aligned views, and publishes the same review-gated collision GLB.
 The result remains in COLMAP's arbitrary units until an explicit metric scale measurement is supplied.
 
+Navigation preparation is exposed through `POST /api/v1/projects/{project_id}/prepare-navigation`. It detects
+candidate floor planes using fused points, registered camera centers and the estimated scene-up direction, then
+writes a review artifact with an explicit `block_unknown` policy. Supply a known room measurement through
+`POST /api/v1/projects/{project_id}/calibrate-scale` before NavMesh generation; calibration updates the GLB and
+manifest atomically but does not mark the scene navigable.
+
 Artifacts are stored under `data/projects/<project-id>/`. Quality reports and trained outputs are under
 `artifacts/`; exported images, camera poses and COLMAP data are under `training/dataset/`. The SQLite
 database is `data/namma.db`.

@@ -210,7 +210,7 @@ def run_monocular_geometry(
         fused_path,
         output_dir / "collision",
         settings,
-        source_description="../dense/fused-monocular.ply",
+        source_description="dense/fused-monocular.ply",
     )
     artifact["depth_source"] = predictor_manifest.get("model", "unknown")
     artifact["depth_license"] = predictor_manifest.get("license")

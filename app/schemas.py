@@ -39,3 +39,9 @@ class HealthRead(BaseModel):
     status: str
     ffmpeg: str
     colmap: str | None
+
+
+class ScaleCalibrationRequest(BaseModel):
+    known_distance_meters: float
+    observed_distance_units: float
+    reference: str = "manual room measurement"

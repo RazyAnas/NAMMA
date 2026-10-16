@@ -11,10 +11,15 @@ from sqlalchemy.orm import Session
 from app.config import Settings, get_settings
 from app.database import get_db
 from app.models import Job, Project
-from app.schemas import HealthRead, JobRead, ProjectRead
+from app.schemas import HealthRead, JobRead, ProjectRead, ScaleCalibrationRequest
 from app.services.jobs import submit_job
 from app.services.gaussian import GaussianTrainingError, read_gaussian_manifest
 from app.services.geometry import GeometryError, read_collision_manifest
+from app.services.navigation import (
+    NavigationPreparationError,
+    calibrate_collision_scale,
+    prepare_navigation_geometry,
+)
 from app.services.quality import read_quality_report
 from app.services.storage import ensure_project_dirs, safe_filename, save_upload
 
@@ -201,6 +206,61 @@ async def download_collision_model(
     manifest, output_dir = _collision_artifact(project_id, db, settings)
     model = output_dir / "collision" / manifest["model_path"]
     return FileResponse(model, media_type="model/gltf-binary", filename=f"{project_id}-collision.glb")
+
+
+@router.get("/projects/{project_id}/navigation-preparation")
+async def get_navigation_preparation(
+    project_id: str,
+    db: Session = Depends(get_db),
+    settings: Settings = Depends(settings_dependency),
+) -> dict:
+    if db.get(Project, project_id) is None:
+        raise HTTPException(status_code=404, detail="Project not found.")
+    path = ensure_project_dirs(settings, project_id)["artifacts"] / "geometry" / "navigation" / "preparation.json"
+    if not path.is_file():
+        raise HTTPException(status_code=404, detail="Navigation preparation has not been run.")
+    return json.loads(path.read_text(encoding="utf-8"))
+
+
+@router.post("/projects/{project_id}/prepare-navigation")
+async def prepare_project_navigation(
+    project_id: str,
+    db: Session = Depends(get_db),
+    settings: Settings = Depends(settings_dependency),
+) -> dict:
+    if db.get(Project, project_id) is None:
+        raise HTTPException(status_code=404, detail="Project not found.")
+    geometry_dir = ensure_project_dirs(settings, project_id)["artifacts"] / "geometry"
+    try:
+        quality = read_quality_report(ensure_project_dirs(settings, project_id)["artifacts"] / "quality-report.json")
+        result = prepare_navigation_geometry(
+            geometry_dir,
+            ensure_project_dirs(settings, project_id)["tracking"] / "colmap" / "sparse" / quality["selected_model_id"],
+            settings,
+        )
+    except (FileNotFoundError, NavigationPreparationError) as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    return result
+
+
+@router.post("/projects/{project_id}/calibrate-scale")
+async def calibrate_project_scale(
+    project_id: str,
+    request: ScaleCalibrationRequest,
+    db: Session = Depends(get_db),
+    settings: Settings = Depends(settings_dependency),
+) -> dict:
+    if db.get(Project, project_id) is None:
+        raise HTTPException(status_code=404, detail="Project not found.")
+    try:
+        return calibrate_collision_scale(
+            ensure_project_dirs(settings, project_id)["artifacts"] / "geometry",
+            request.known_distance_meters,
+            request.observed_distance_units,
+            request.reference,
+        )
+    except (FileNotFoundError, NavigationPreparationError) as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
 
 
 @router.post("/projects/{project_id}/build-collision", response_model=JobRead, status_code=202)
