@@ -32,6 +32,8 @@ class Settings(BaseSettings):
     colmap_bin: str = "colmap"
     ffmpeg_bin: str = "ffmpeg"
     colmap_use_gpu: bool = True
+    colmap_exhaustive_loop_closure: bool = True
+    colmap_exhaustive_max_images: int = 500
     quality_min_registered_images: int = 20
     quality_min_registered_ratio: float = 0.5
     quality_min_sparse_points: int = 1000

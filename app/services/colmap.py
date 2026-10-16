@@ -37,6 +37,7 @@ def _run_colmap_cli(
     sparse_root.mkdir(parents=True)
 
     gpu = "1" if settings.colmap_use_gpu else "0"
+    frame_count = sum(1 for path in frames_dir.iterdir() if path.is_file())
     commands = [
         [
             executable,
@@ -64,6 +65,19 @@ def _run_colmap_cli(
             "--SequentialMatching.overlap",
             "30",
         ],
+    ]
+    if settings.colmap_exhaustive_loop_closure and frame_count <= settings.colmap_exhaustive_max_images:
+        commands.append(
+            [
+                executable,
+                "exhaustive_matcher",
+                "--database_path",
+                str(database_path),
+                "--FeatureMatching.use_gpu",
+                gpu,
+            ]
+        )
+    commands.append(
         [
             executable,
             "mapper",
@@ -73,8 +87,8 @@ def _run_colmap_cli(
             str(frames_dir),
             "--output_path",
             str(sparse_root),
-        ],
-    ]
+        ]
+    )
 
     log_path.parent.mkdir(parents=True, exist_ok=True)
     with log_path.open("w", encoding="utf-8", errors="replace") as log_file:

@@ -76,6 +76,10 @@ The adapter uses the first available backend:
 2. `tools/colmap/COLMAP.bat` from the official portable Windows CUDA distribution.
 3. The official `pycolmap` Python package, using CPU feature extraction and sequential matching.
 
+For bounded scenes, the CLI pipeline performs GPU sequential matching followed by GPU exhaustive
+loop-closure matching. Exhaustive matching is enabled for at most 500 extracted images by default;
+configure `COLMAP_EXHAUSTIVE_LOOP_CLOSURE` and `COLMAP_EXHAUSTIVE_MAX_IMAGES` to change that guard.
+
 For CUDA acceleration on Windows, install the official portable build into the ignored `tools/` directory:
 
 ```powershell
