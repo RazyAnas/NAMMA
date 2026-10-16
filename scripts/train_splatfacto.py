@@ -3,14 +3,33 @@
 from __future__ import annotations
 
 import argparse
+import os
 from pathlib import Path
 import subprocess
 import sys
 
 
+def nerfstudio_command(name: str) -> str:
+    """Resolve Nerfstudio entry points from the active virtual environment."""
+    scripts_dir = Path(sys.executable).parent
+    executable = scripts_dir / (f"{name}.exe" if sys.platform == "win32" else name)
+    if not executable.is_file():
+        raise RuntimeError(f"{name} is not installed beside {sys.executable}")
+    return str(executable)
+
+
 def run(command: list[str]) -> None:
     print("Running:", subprocess.list2cmdline(command), flush=True)
-    subprocess.run(command, check=True)
+    environment = os.environ.copy()
+    environment["PYTHONUTF8"] = "1"
+    environment["PYTHONIOENCODING"] = "utf-8"
+    # Nerfstudio 1.1.5 predates Torch 2.6's weights_only=True default. The
+    # checkpoint loaded here was created locally by this same wrapper.
+    environment["TORCH_FORCE_NO_WEIGHTS_ONLY_LOAD"] = "1"
+    torch_home = Path(__file__).resolve().parents[1] / "tmp" / "torch-cache"
+    torch_home.mkdir(parents=True, exist_ok=True)
+    environment.setdefault("TORCH_HOME", str(torch_home))
+    subprocess.run(command, check=True, env=environment)
 
 
 def main() -> int:
@@ -28,7 +47,7 @@ def main() -> int:
 
     run(
         [
-            "ns-train",
+            nerfstudio_command("ns-train"),
             "splatfacto",
             "--data",
             str(dataset),
@@ -36,8 +55,11 @@ def main() -> int:
             str(output / "runs"),
             "--max-num-iterations",
             str(args.iterations),
-            "--viewer.quit-on-train-completion",
-            "True",
+            "--vis",
+            "tensorboard",
+            "colmap",
+            "--colmap-path",
+            "sparse/0",
         ]
     )
     configs = list((output / "runs").rglob("config.yml"))
@@ -47,7 +69,7 @@ def main() -> int:
     export_dir = output / "export"
     run(
         [
-            "ns-export",
+            nerfstudio_command("ns-export"),
             "gaussian-splat",
             "--load-config",
             str(config),

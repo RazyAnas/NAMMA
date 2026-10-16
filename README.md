@@ -64,9 +64,27 @@ GAUSSIAN_TRAINER_COMMAND=.\.venv-gsplat\Scripts\python.exe scripts\train_splatfa
 
 On an RTX 50-series laptop, install the NVIDIA CUDA Toolkit 12.8 first, then create the isolated
 trainer environment with `scripts\install_gaussian_env.ps1`. The script uses Torch 2.7.1 CUDA 12.8
-and compiles current gsplat because the published Windows gsplat wheels predate Blackwell support.
+and compiles gsplat 1.5.3 for compute capability 12.0 because the published Windows wheels predate
+Blackwell support.
 
 If quality fails, the backend returns HTTP 409 instead of spending GPU time on an unusable training run.
+
+## Laptop web viewer
+
+The proof-of-concept viewer is served by the same FastAPI process at `http://127.0.0.1:8000/viewer/`.
+It lists completed projects, streams the published Gaussian PLY, and provides pointer-lock free roaming with
+W/A/S/D, Q/E, mouse look, Shift sprint, and mouse-wheel speed control. Build its static assets after cloning:
+
+```powershell
+Set-Location viewer
+npm install
+npm run build
+Set-Location ..
+.\run.ps1
+```
+
+The viewer is for visual roaming. Collision and obstacle blocking require a separate navigation mesh and are
+not inferred from the rendered splats.
 
 Artifacts are stored under `data/projects/<project-id>/`. Quality reports and trained outputs are under
 `artifacts/`; exported images, camera poses and COLMAP data are under `training/dataset/`. The SQLite

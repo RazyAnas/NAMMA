@@ -1,0 +1,58 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="theme-color" content="#07110f" />
+    <title>NAMMA · Spatial Viewer</title>
+    <script type="module" crossorigin src="/viewer/assets/index-D5LFyVrC.js"></script>
+    <link rel="stylesheet" crossorigin href="/viewer/assets/index-D5NUwPtX.css">
+  </head>
+  <body>
+    <main id="app">
+      <canvas id="scene" aria-label="Interactive 3D Gaussian reconstruction"></canvas>
+
+      <header class="topbar">
+        <a class="brand" href="/viewer/" aria-label="NAMMA viewer home">
+          <span class="brand-mark">N</span>
+          <span><strong>NAMMA</strong><small>Spatial reconstruction</small></span>
+        </a>
+        <div class="runtime"><span id="status-dot"></span><span id="status">Connecting</span></div>
+      </header>
+
+      <section id="launcher" class="launcher">
+        <p class="eyebrow">3D Gaussian Splat Viewer</p>
+        <h1>Walk back into<br />the captured space.</h1>
+        <p class="lede">Select a completed reconstruction, load its photorealistic model, then use laptop controls to roam freely.</p>
+        <label for="project">Reconstruction</label>
+        <select id="project"><option value="">Loading projects…</option></select>
+        <button id="load" type="button" disabled>Load spatial model <span>→</span></button>
+        <p id="error" role="alert"></p>
+      </section>
+
+      <section id="loading" class="loading" hidden>
+        <div class="loading-head"><span>Preparing scene</span><strong id="progress">0%</strong></div>
+        <div class="track"><i id="progress-bar"></i></div>
+        <p id="loading-detail">Reading reconstruction manifest…</p>
+      </section>
+
+      <aside id="hud" class="hud" hidden>
+        <div><span>MODEL</span><strong id="project-name">—</strong></div>
+        <div><span>SIZE</span><strong id="model-size">—</strong></div>
+        <div><span>FPS</span><strong id="fps">—</strong></div>
+      </aside>
+
+      <section id="controls" class="controls" hidden>
+        <div class="keys" aria-label="Movement keys">
+          <i></i><kbd>W</kbd><i></i><kbd>A</kbd><kbd>S</kbd><kbd>D</kbd>
+        </div>
+        <p><strong>Move</strong><span>W A S D · Q / E down/up</span></p>
+        <p><strong>Look</strong><span>Click scene · move mouse · Esc release</span></p>
+        <p><strong>Speed</strong><span>Shift to sprint · wheel to tune</span></p>
+      </section>
+
+      <div id="crosshair" class="crosshair" hidden><i></i><i></i></div>
+      <button id="enter" class="enter" type="button" hidden>Click to roam</button>
+    </main>
+  </body>
+</html>

@@ -14,6 +14,18 @@ async def test_health_reports_runtime_tools(client):
     assert Path(payload["ffmpeg"]).is_file()
 
 
+async def test_root_advertises_laptop_viewer(client):
+    response = await client.get("/")
+    assert response.status_code == 200
+    assert response.json()["viewer"] == "/viewer/"
+
+
+async def test_laptop_viewer_is_served(client):
+    response = await client.get("/viewer/")
+    assert response.status_code == 200
+    assert "NAMMA · Spatial Viewer" in response.text
+
+
 async def test_upload_creates_project_and_persists_video(client):
     response = await client.post(
         "/api/v1/projects",

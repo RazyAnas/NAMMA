@@ -22,5 +22,6 @@ tools/
 third_party/
 node_modules/
 dist/
+viewer/node_modules/
 .idea/
 .vscode/
