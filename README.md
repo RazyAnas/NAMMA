@@ -86,6 +86,24 @@ Set-Location ..
 The viewer is for visual roaming. Collision and obstacle blocking require a separate navigation mesh and are
 not inferred from the rendered splats.
 
+## Dense collision candidate
+
+After a project passes reconstruction quality, start dense stereo with
+`POST /api/v1/projects/{project_id}/build-collision`. The job runs CUDA COLMAP image undistortion,
+PatchMatch stereo and fusion, then produces a filtered, simplified GLB candidate.
+Its manifest and model are available at `collision-artifact` and `collision-model` under the same project API.
+
+The checked-in laptop profile uses filtered photometric PatchMatch to avoid Windows GPU timeout resets on the
+display-connected RTX 50-series GPU. Set `DENSE_GEOM_CONSISTENCY=true` for the higher-quality two-pass mode on
+a dedicated GPU or a validated Linux environment.
+
+This output is deliberately marked `safe_for_navigation: false`: monocular scale calibration, floor alignment,
+unknown-space exclusion and a human geometry review are required before generating a NavMesh.
+
+For the downloaded TUM RGB-D benchmark only, `scripts/build_tum_rgbd_collision.py` can fuse its metric sensor
+depth and publish the same artifact format. This validates fusion/mesh/export independently and is not used as
+a substitute for monocular depth on ordinary room videos.
+
 Artifacts are stored under `data/projects/<project-id>/`. Quality reports and trained outputs are under
 `artifacts/`; exported images, camera poses and COLMAP data are under `training/dataset/`. The SQLite
 database is `data/namma.db`.

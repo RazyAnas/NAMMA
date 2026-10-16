@@ -14,6 +14,7 @@ from app.models import Job, Project
 from app.schemas import HealthRead, JobRead, ProjectRead
 from app.services.jobs import submit_job
 from app.services.gaussian import GaussianTrainingError, read_gaussian_manifest
+from app.services.geometry import GeometryError, read_collision_manifest
 from app.services.quality import read_quality_report
 from app.services.storage import ensure_project_dirs, safe_filename, save_upload
 
@@ -166,6 +167,61 @@ async def download_gaussian_model(
     manifest, output_dir = _gaussian_artifact(project_id, db, settings)
     model = output_dir / manifest["model_path"]
     return FileResponse(model, media_type="application/octet-stream", filename=f"{project_id}.ply")
+
+
+def _collision_artifact(project_id: str, db: Session, settings: Settings) -> tuple[dict, Path]:
+    if db.get(Project, project_id) is None:
+        raise HTTPException(status_code=404, detail="Project not found.")
+    output_dir = ensure_project_dirs(settings, project_id)["artifacts"] / "geometry"
+    try:
+        manifest = read_collision_manifest(output_dir)
+    except FileNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except GeometryError as exc:
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+    return manifest, output_dir
+
+
+@router.get("/projects/{project_id}/collision-artifact")
+async def get_collision_artifact(
+    project_id: str,
+    db: Session = Depends(get_db),
+    settings: Settings = Depends(settings_dependency),
+) -> dict:
+    manifest, _ = _collision_artifact(project_id, db, settings)
+    return manifest
+
+
+@router.get("/projects/{project_id}/collision-model", response_class=FileResponse)
+async def download_collision_model(
+    project_id: str,
+    db: Session = Depends(get_db),
+    settings: Settings = Depends(settings_dependency),
+) -> FileResponse:
+    manifest, output_dir = _collision_artifact(project_id, db, settings)
+    model = output_dir / "collision" / manifest["model_path"]
+    return FileResponse(model, media_type="model/gltf-binary", filename=f"{project_id}-collision.glb")
+
+
+@router.post("/projects/{project_id}/build-collision", response_model=JobRead, status_code=202)
+async def start_collision_build(
+    project_id: str,
+    db: Session = Depends(get_db),
+    settings: Settings = Depends(settings_dependency),
+) -> Job:
+    if db.get(Project, project_id) is None:
+        raise HTTPException(status_code=404, detail="Project not found.")
+    try:
+        report = read_quality_report(
+            ensure_project_dirs(settings, project_id)["artifacts"] / "quality-report.json"
+        )
+    except FileNotFoundError as exc:
+        raise HTTPException(status_code=409, detail="Run reconstruction before collision geometry.") from exc
+    if not report["passed"]:
+        raise HTTPException(status_code=409, detail="Reconstruction quality gate did not pass.")
+    if not settings.resolve_colmap():
+        raise HTTPException(status_code=503, detail="Native COLMAP is required for dense stereo.")
+    return _start_job(project_id, "build_collision", db)
 
 
 @router.post("/projects/{project_id}/train-gaussian", response_model=JobRead, status_code=202)

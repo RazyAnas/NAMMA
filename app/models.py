@@ -20,6 +20,7 @@ class ProjectStatus(StrEnum):
     QUALITY_FAILED = "quality_failed"
     DATASET_READY = "dataset_ready"
     TRAINING = "training"
+    GEOMETRY = "geometry"
     READY = "ready"
     FAILED = "failed"
 

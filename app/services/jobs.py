@@ -9,6 +9,7 @@ from app.models import Job, JobStatus, Project, ProjectStatus
 from app.services.colmap import run_colmap
 from app.services.dataset import export_gaussian_dataset
 from app.services.gaussian import run_gaussian_training
+from app.services.geometry import run_dense_geometry
 from app.services.quality import score_reconstruction, write_quality_report
 from app.services.storage import ensure_project_dirs
 from app.services.video import extract_frames
@@ -57,6 +58,7 @@ def _run_job(job_id: str) -> None:
                 return
             _active_projects.add(project.id)
 
+        previous_project_status = project.status
         try:
             job.status = JobStatus.RUNNING
             job.started_at = datetime.now(timezone.utc)
@@ -119,13 +121,30 @@ def _run_job(job_id: str) -> None:
                     settings,
                 )
                 project.status = ProjectStatus.READY
+            elif job.kind == "build_collision":
+                project.status = ProjectStatus.GEOMETRY
+                job.stage = "dense_stereo"
+                job.log_path = str(paths["logs"] / "dense-geometry.log")
+                job.progress = 0.1
+                db.commit()
+                report = read_quality_report(paths["artifacts"] / "quality-report.json")
+                run_dense_geometry(
+                    paths["frames"],
+                    paths["tracking"] / "colmap" / "sparse" / report["selected_model_id"],
+                    paths["artifacts"] / "geometry",
+                    Path(job.log_path),
+                    settings,
+                )
+                project.status = previous_project_status
 
             job.status = JobStatus.SUCCEEDED
             job.stage = "complete"
             job.progress = 1.0
         except Exception as exc:
             message = str(exc)[:8000]
-            project.status = ProjectStatus.FAILED
+            project.status = (
+                previous_project_status if job.kind == "build_collision" else ProjectStatus.FAILED
+            )
             project.error_message = message
             job.status = JobStatus.FAILED
             job.stage = "failed"

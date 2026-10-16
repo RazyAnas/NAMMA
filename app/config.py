@@ -39,6 +39,20 @@ class Settings(BaseSettings):
     quality_min_sparse_points: int = 1000
     quality_max_reprojection_error: float = 2.0
     gaussian_trainer_command: str | None = None
+    dense_max_image_size: int = 1280
+    dense_gpu_index: int = -1
+    dense_geom_consistency: bool = False
+    dense_source_images: int = 10
+    dense_window_step: int = 2
+    dense_num_samples: int = 10
+    dense_num_iterations: int = 3
+    dense_min_num_pixels: int = 5
+    dense_max_reprojection_error: float = 2.0
+    collision_min_dense_points: int = 5000
+    collision_voxels_across_diagonal: int = 600
+    collision_poisson_depth: int = 9
+    collision_density_trim_quantile: float = 0.02
+    collision_target_triangles: int = 100000
 
     def absolute_data_dir(self) -> Path:
         return self.data_dir if self.data_dir.is_absolute() else PROJECT_ROOT / self.data_dir
