@@ -295,7 +295,9 @@ def _decode_frames(video: Path, frames_dir: Path, stride: int) -> int:
 def _remux(video: Path, fps: float, destination: Path) -> Path:
     if video.suffix == ".h264":
         target = destination / "video.mp4"
-        command = ["ffmpeg", "-hide_banner", "-loglevel", "error", "-y", "-framerate", f"{fps:.3f}", "-i", str(video), "-c", "copy", str(target)]
+        # Raw Annex B has no timestamps; without +genpts the mp4 gets broken dts and players drop most frames.
+        command = ["ffmpeg", "-hide_banner", "-loglevel", "error", "-y", "-fflags", "+genpts", "-r", f"{fps:.3f}",
+                   "-i", str(video), "-c", "copy", str(target)]
     else:
         target = destination / "video.webm"
         command = ["ffmpeg", "-hide_banner", "-loglevel", "error", "-y", "-i", str(video), "-c", "copy", str(target)]

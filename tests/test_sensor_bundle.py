@@ -137,6 +137,12 @@ def test_ingest_h264_bundle(tmp_path):
     assert report["frames_written"] == 9
     assert report["frames_with_pose"] == 9
     assert report["remuxed_video"] == "video.mp4"
+    decoded = subprocess.run(
+        ["ffprobe", "-v", "error", "-count_frames", "-select_streams", "v:0", "-show_entries", "stream=nb_read_frames",
+         "-of", "csv=p=0", str(tmp_path / "out" / "video.mp4")],
+        check=True, capture_output=True, text=True,
+    )
+    assert int(decoded.stdout.strip()) == 45
     assert report["path_length_m"] == pytest.approx(0.05 * 44, abs=1e-3)
     cameras = (tmp_path / "out" / "colmap_known_poses" / "cameras.txt").read_text().splitlines()[-1].split()
     assert cameras[:4] == ["1", "PINHOLE", "320", "240"]
