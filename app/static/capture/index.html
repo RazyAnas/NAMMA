@@ -1,0 +1,38 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+    <meta name="theme-color" content="#07110f" />
+    <title>NAMMA Live Capture</title>
+    <link rel="stylesheet" href="capture.css" />
+  </head>
+  <body>
+    <video id="video" playsinline muted autoplay></video>
+    <canvas id="map" width="220" height="220" aria-label="Live top-down map"></canvas>
+
+    <header class="bar">
+      <strong>NAMMA live</strong>
+      <span id="link" data-state="off">Offline</span>
+    </header>
+
+    <section id="hud" class="hud">
+      <div class="meter"><span>Motion</span><i><b id="motion-bar"></b></i></div>
+      <div class="meter"><span>Sharp</span><i><b id="sharp-bar"></b></i></div>
+      <p id="advice">Point the camera at the room and press Start.</p>
+      <dl>
+        <dt>Sent</dt><dd id="sent">0</dd>
+        <dt>Mapped</dt><dd id="mapped">0</dd>
+        <dt>Points</dt><dd id="points">0</dd>
+        <dt>Camera</dt><dd id="locks">auto</dd>
+      </dl>
+    </section>
+
+    <footer class="actions">
+      <button id="start" type="button">Start</button>
+      <button id="finish" type="button" disabled>Finish &amp; build</button>
+    </footer>
+    <p id="error" role="alert"></p>
+    <script type="module" src="capture.js"></script>
+  </body>
+</html>

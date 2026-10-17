@@ -67,7 +67,52 @@ trainer environment with `scripts\install_gaussian_env.ps1`. The script uses Tor
 and compiles gsplat 1.5.3 for compute capability 12.0 because the published Windows wheels predate
 Blackwell support.
 
+On a Mac (or any machine without an NVIDIA GPU), use `scripts/train_opensplat.py` instead: it wraps
+[OpenSplat](https://github.com/pierotofy/OpenSplat), which trains on Apple silicon through Metal or on the CPU.
+See the script's docstring for the `.env` lines.
+
 If quality fails, the backend returns HTTP 409 instead of spending GPU time on an unusable training run.
+
+## Fast-motion and lighting robustness
+
+- **Sharpest-frame selection** (`FRAME_SELECTION=sharpest`, default): FFmpeg decodes
+  `FRAME_CANDIDATES_PER_KEYFRAME` (default 4) frames per keyframe and keeps the sharpest one, scored by
+  Laplacian variance over intensity variance so exposure changes do not bias it. Results and capture
+  warnings are written to `artifacts/frame-quality.json`.
+- **Exposure / white-balance / flicker compensation** (`PHOTOMETRIC_COMPENSATION=true`, default): after
+  SfM, per-frame RGB gains are solved from the colours of tracked 3D points and removed from the training
+  images. Report: `artifacts/photometric-report.json`.
+- **Global mapper** (`COLMAP_MAPPER=global`, default) instead of incremental mapping.
+- `scripts/train_splatfacto.py` enables splatfacto's per-image bilateral grid and SO3xR3 pose refinement
+  (`--no-bilateral-grid`, `--camera-optimizer off` to disable).
+
+## Live capture from a phone browser
+
+No app install: the phone opens a web page served by this backend and streams keyframes while the laptop
+maps them.
+
+```powershell
+.\.venv\Scripts\python.exe scripts\serve_live.py
+```
+
+Open the printed `https://<laptop-ip>:8443/capture/` URL on a phone on the same Wi-Fi, accept the self-signed
+certificate once, and press **Start**. Phone browsers only expose the camera and motion sensors on HTTPS pages,
+which is why this mode uses its own certificate and listens on the LAN; the normal `run.ps1` server stays
+localhost-only.
+
+What happens during capture:
+
+- **On the phone** (`app/static/capture/`): after auto-exposure settles, exposure, white balance and focus are
+  locked where the browser allows it (Android Chrome), with exposure capped at 1/120 s and ISO raised to match,
+  so lighting drift never starts and motion blur is about four times shorter. The gyroscope predicts blur in
+  pixels and asks the user to slow down. Each 0.4 s window sends only its sharpest frame.
+- **On the laptop** (`app/services/live_mapper.py`): every new keyframe is checked again for blur, then SIFT
+  features are matched against recent keyframes and COLMAP's incremental mapper resumes from the current model,
+  so the map grows within about a second per update on a CPU. The phone shows mapped keyframes and a top-down
+  map. Gravity from the phone's accelerometer, and AR positions when a client sends them, are stored as COLMAP
+  pose priors.
+- **Finish & build** stops streaming and runs the full offline pass above (global SfM, quality gate, exposure
+  compensation). Gaussian training is then started as usual.
 
 ## Laptop web viewer
 

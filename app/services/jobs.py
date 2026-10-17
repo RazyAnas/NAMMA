@@ -12,6 +12,7 @@ from app.services.gaussian import read_gaussian_manifest, run_gaussian_training
 from app.services.geometry import run_dense_geometry
 from app.services.monocular import run_monocular_geometry
 from app.services.navigation import build_navigation_mesh, invalidate_navigation_artifacts
+from app.services.photometric import compensate_dataset
 from app.services.quality import read_quality_report, score_reconstruction, write_quality_report
 from app.services.storage import ensure_project_dirs
 from app.services.video import extract_frames
@@ -69,7 +70,11 @@ def _run_job(job_id: str) -> None:
 
             paths = ensure_project_dirs(settings, project.id)
             project.error_message = None
-            if job.kind in {"extract_frames", "reconstruct"}:
+            live_capture = project.source_filename == "live-capture"
+            if job.kind in {"extract_frames", "reconstruct"} and live_capture:
+                # Keyframes were already selected and stored by the live session.
+                project.frame_count = sum(1 for _ in paths["frames"].glob("frame_*.jpg"))
+            elif job.kind in {"extract_frames", "reconstruct"}:
                 project.status = ProjectStatus.PREPROCESSING
                 job.stage = "extracting_frames"
                 db.commit()
@@ -107,6 +112,15 @@ def _run_job(job_id: str) -> None:
                     paths["frames"],
                     paths["training"] / "dataset",
                 )
+                if settings.photometric_compensation:
+                    job.stage = "exposure_compensation"
+                    job.progress = 0.95
+                    db.commit()
+                    compensate_dataset(
+                        paths["training"] / "dataset" / "sparse" / "0",
+                        paths["training"] / "dataset" / "images",
+                        paths["artifacts"] / "photometric-report.json",
+                    )
                 project.status = (
                     ProjectStatus.DATASET_READY if report["passed"] else ProjectStatus.QUALITY_FAILED
                 )
