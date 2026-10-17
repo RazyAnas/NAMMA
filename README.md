@@ -67,6 +67,10 @@ trainer environment with `scripts\install_gaussian_env.ps1`. The script uses Tor
 and compiles gsplat 1.5.3 for compute capability 12.0 because the published Windows wheels predate
 Blackwell support.
 
+On a Mac (or any machine without an NVIDIA GPU), use `scripts/train_opensplat.py` instead: it wraps
+[OpenSplat](https://github.com/pierotofy/OpenSplat), which trains on Apple silicon through Metal or on the CPU.
+See the script's docstring for the `.env` lines.
+
 If quality fails, the backend returns HTTP 409 instead of spending GPU time on an unusable training run.
 
 ## Fast-motion and lighting robustness
