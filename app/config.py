@@ -87,6 +87,10 @@ class Settings(BaseSettings):
     navigation_floor_support_above_m: float = 0.12
     navigation_min_floor_points_per_cell: int = 2
     navigation_obstacle_min_height_m: float = 0.15
+    navigation_max_support_height_m: float = 1.0
+    navigation_step_clearance_m: float = 0.30
+    navigation_max_step_m: float = 0.25
+    navigation_min_obstacle_points_per_cell: int = 3
     navigation_grid_max_dimension: int = 512
     navigation_component_min_cells: int = 20
     agent_radius_meters: float = 0.30

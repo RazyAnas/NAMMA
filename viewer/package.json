@@ -8,6 +8,7 @@
     "dev": "vite --host 127.0.0.1"
   },
   "dependencies": {
+    "@dimforge/rapier3d-compat": "^0.19.3",
     "@mkkellogg/gaussian-splats-3d": "0.4.7",
     "three": "0.180.0"
   },

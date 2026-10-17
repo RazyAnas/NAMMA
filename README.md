@@ -133,7 +133,12 @@ What happens during capture:
 
 The proof-of-concept viewer is served by the same FastAPI process at `http://127.0.0.1:8000/viewer/`.
 It lists completed projects, streams the published Gaussian PLY, and provides pointer-lock free roaming with
-W/A/S/D, Q/E, mouse look, Shift sprint, and mouse-wheel speed control. Build its static assets after cloning:
+W/A/S/D, Q/E, mouse look, Shift sprint, and mouse-wheel speed control. When an approved NavMesh with
+movement layers is available, the viewer switches to physics walking: a Rapier character controller keeps a
+1.7 m body on the floor with gravity, 25 cm auto-step, a 35 degree slope limit and wall sliding against the
+collision mesh and the NavMesh floor-height map (F toggles walk/fly, Space jumps). To test walking against known
+geometry, `python scripts/build_walk_test_scene.py --output data/walk-test-room` builds a synthetic room, and
+`node bench/walk_bench.mjs ../data/walk-test-room` (from `viewer/`) compares old and new movement against it. Build its static assets after cloning:
 
 ```powershell
 Set-Location viewer
