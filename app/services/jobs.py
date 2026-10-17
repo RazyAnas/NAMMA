@@ -70,7 +70,11 @@ def _run_job(job_id: str) -> None:
 
             paths = ensure_project_dirs(settings, project.id)
             project.error_message = None
-            if job.kind in {"extract_frames", "reconstruct"}:
+            live_capture = project.source_filename == "live-capture"
+            if job.kind in {"extract_frames", "reconstruct"} and live_capture:
+                # Keyframes were already selected and stored by the live session.
+                project.frame_count = sum(1 for _ in paths["frames"].glob("frame_*.jpg"))
+            elif job.kind in {"extract_frames", "reconstruct"}:
                 project.status = ProjectStatus.PREPROCESSING
                 job.stage = "extracting_frames"
                 db.commit()

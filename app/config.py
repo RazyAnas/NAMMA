@@ -49,6 +49,13 @@ class Settings(BaseSettings):
     quality_min_sparse_points: int = 1000
     quality_max_reprojection_error: float = 2.0
     gaussian_trainer_command: str | None = None
+    live_max_packet_bytes: int = 8 * 1024 * 1024
+    live_min_sharpness_ratio: float = 0.5
+    live_max_features: int = 4096
+    live_match_window: int = 8
+    live_loop_radius_m: float = 0.75
+    live_prior_position_sigma_m: float = 0.05
+    live_preview_points: int = 4000
     dense_max_image_size: int = 1280
     dense_gpu_index: int = -1
     dense_geom_consistency: bool = False
