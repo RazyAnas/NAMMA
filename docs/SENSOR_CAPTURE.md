@@ -86,6 +86,27 @@ Not tested, needs your phone: whether `camera-access` is granted and at what res
 the frames come out upright, whether H.264 is offered and keeps up at full frame rate, whether
 motion sensors fire during an AR session, and the real IMU-to-camera offset.
 
+## First real phone recording (2026-10-17, Android Chrome 155, AR mode with depth)
+
+Measured from the bundle (`/mnt/project-files/sensor-capture/ar-2026-10-17T11-28-46/`):
+
+- `camera-access` and `depth-sensing` were both granted. The AR camera image is **867 x 1920**, a
+  portrait crop matching the screen shape (412 x 912 css px), not the full sensor; fx = fy = 1331 px,
+  so about 36 x 72 degrees field of view. Frames come out upright.
+- H.264 Baseline (`avc1.42E028`) hardware encoding kept up: 576 frames in 21.6 s, **30.5 fps**, 5 dropped.
+- ARCore tracked **94%** of frames; one loss of 1.4 s. Walk of 5.1 m over a 1.3 x 2.0 m area.
+- IMU kept firing during the AR session: Generic Sensors about 59 Hz, `devicemotion` 60 Hz.
+- Two surprises, both fixed in the recorder and ingest: Generic Sensor `timestamp` is on a different
+  clock from `performance.now()` (about 230,000 s apart), and Chrome reports `rotationRate` alpha,
+  beta, gamma about device x, y, z (the spec says z, x, y).
+- **IMU-to-camera offset: -129 ms** (gyro motion appears 129 ms before the XR frame time of the same
+  motion), residual 6.4 deg/s against a 25.7 deg/s signal.
+- **Pose accuracy check:** 58 frames (every 10th) triangulated with the ARCore poses as-is gave 8,827
+  points at **1.69 px** mean reprojection error. A free bundle adjustment then moved the camera
+  centres by a median of **2.8 cm** (max 9.2 cm) after removing the similarity gauge. So the AR poses
+  are usable directly as priors; triangulation took 2 s after 52 s of feature extraction and matching
+  on this container's CPU.
+
 ## Phone test
 
 1. On the Mac: `python scripts/serve_live.py`, then on the Android phone (same Wi-Fi) open

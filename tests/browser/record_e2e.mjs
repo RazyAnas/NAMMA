@@ -53,7 +53,8 @@ const mock = ({ offset, mode }) => {
         const t = now / 1000 - t0 - offset;
         const v = this.kind === 'gyro' ? omegaBody(t).map((x) => x + 0.005 * (Math.random() - 0.5)) : [0, 9.81, 0];
         [this.x, this.y, this.z] = v;
-        this.timestamp = now;
+        // Android Chrome stamps Generic Sensor readings on a different clock (measured on a phone).
+        this.timestamp = now + 230_000_000;
         this.dispatchEvent(new Event('reading'));
       }, 16);
     }

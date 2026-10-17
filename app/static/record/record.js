@@ -111,25 +111,26 @@ function newRecording(mode) {
     csvRow(['frame', 't_ms', 'video_ts_us', 'tracking', 'screen_angle', ...Array.from({ length: 16 }, (_, i) => `m${i}`), 'p0', 'p5', 'p8', 'p9', 'image_w', 'image_h'])
   );
   r.videoIndex.write(csvRow(['chunk', 'ts_us', 'key', 'bytes']));
-  r.imu.write(csvRow(['t_ms', 'sensor', 'x', 'y', 'z']));
+  r.imu.write(csvRow(['t_ms', 'sensor', 'x', 'y', 'z', 't_sensor_ms']));
   r.depthIndex.write(csvRow(['frame', 't_ms', 'file', 'width', 'height', 'raw_to_m', ...Array.from({ length: 16 }, (_, i) => `n${i}`)]));
   return r;
 }
 
 // ---- IMU ---------------------------------------------------------------------------------------
 
-function imuSample(sensor, t, x, y, z) {
+function imuSample(sensor, t, x, y, z, tSensor) {
   if (!rec || rec.stopping) return;
-  rec.imu.write(csvRow([t, sensor, x, y, z]));
+  rec.imu.write(csvRow([t, sensor, x, y, z, tSensor]));
   rec.imuCounts[sensor] = (rec.imuCounts[sensor] || 0) + 1;
 }
 
 function onDeviceMotion(event) {
-  // rotationRate is in deg/s with alpha about z, beta about x, gamma about y (device axes:
-  // x right, y up along the screen, z out of the screen). Stored as rad/s in x, y, z order.
+  // rotationRate is in deg/s. The spec puts alpha about z, but Android Chrome reports alpha, beta,
+  // gamma about device x, y, z (measured on a phone against the Gyroscope sensor, 2026-10-17).
+  // Stored as rad/s in device x, y, z order (x right, y up along the screen, z out of the screen).
   const r = event.rotationRate;
   const k = Math.PI / 180;
-  if (r && r.alpha != null) imuSample('dm_gyro', event.timeStamp, r.beta * k, r.gamma * k, r.alpha * k);
+  if (r && r.alpha != null) imuSample('dm_gyro', event.timeStamp, r.alpha * k, r.beta * k, r.gamma * k);
   const a = event.accelerationIncludingGravity;
   if (a && a.x != null) imuSample('dm_accel', event.timeStamp, a.x, a.y, a.z);
   if (rec && event.interval) rec.dmIntervalMs = event.interval;
@@ -145,7 +146,9 @@ function startImu(r) {
     if (!(name in window)) continue;
     try {
       const sensor = new window[name]({ frequency: IMU_FREQUENCY_HZ, referenceFrame: 'device' });
-      sensor.addEventListener('reading', () => imuSample(tag, sensor.timestamp, sensor.x, sensor.y, sensor.z));
+      // sensor.timestamp is the exact sample time but on Android it is not the performance.now()
+      // clock, so the arrival time is logged too and the laptop maps one onto the other.
+      sensor.addEventListener('reading', () => imuSample(tag, performance.now(), sensor.x, sensor.y, sensor.z, sensor.timestamp));
       sensor.addEventListener('error', (e) => r.errors.push(`${name}: ${e.error?.name || 'error'}`));
       sensor.start();
       r.sensors.push(sensor);
@@ -400,7 +403,7 @@ async function finish() {
     mode: r.mode,
     clock: 'DOMHighResTimeStamp ms (performance.now)',
     pose_convention: 'frames.csv m0..m15: column-major world_from_camera, WebXR local-floor world (y up, metres), OpenGL camera (x right, y up, looking down -z)',
-    imu_convention: 'imu.csv device axes (x right, y up along screen, z out of screen); gyro rad/s, accel m/s^2 including gravity, gravity m/s^2',
+    imu_convention: 'imu.csv device axes (x right, y up along screen, z out of screen); gyro rad/s, accel m/s^2 including gravity, gravity m/s^2; t_ms page clock, t_sensor_ms raw Generic Sensor timestamp (different clock)',
     started_wall: r.startedWall,
     duration_s: +durationS.toFixed(3),
     user_agent: navigator.userAgent,

@@ -56,9 +56,18 @@ class Bundle:
         self.imu: dict[str, tuple[np.ndarray, np.ndarray]] = {}
         by_sensor: dict[str, list[list[float]]] = {}
         for row in imu:
-            by_sensor.setdefault(row["sensor"], []).append([_float(row[k]) for k in ("t_ms", "x", "y", "z")])
+            by_sensor.setdefault(row["sensor"], []).append(
+                [_float(row[k]) for k in ("t_ms", "x", "y", "z")] + [_float(row.get("t_sensor_ms", ""))]
+            )
         for sensor, values in by_sensor.items():
             array = np.array(values)
+            sensor_clock = array[:, 4]
+            if np.isfinite(sensor_clock).all():
+                # Generic Sensor timestamps are exact sample times but, on Android Chrome, on a
+                # different clock from performance.now() (measured 2026-10-17: about 230,000 s apart).
+                # Map them onto the page clock with the smallest observed delivery latency.
+                array[:, 0] = sensor_clock + np.min(array[:, 0] - sensor_clock)
+            array = array[:, :4]
             array = array[np.argsort(array[:, 0])]
             self.imu[sensor] = (array[:, 0] / 1000.0, array[:, 1:])
 
@@ -251,7 +260,13 @@ def bundle_report(bundle: Bundle) -> dict:
             fx = [intrinsics(p, *s) for p, s in zip(bundle.projection[tracked], sizes)]
             report["intrinsics_median"] = dict(zip(("fx", "fy", "cx", "cy"), np.median(np.array(fx), axis=0).round(2).tolist()))
             report["image_size"] = sizes[0].astype(int).tolist()
-        gyro_key = "gyro" if "gyro" in bundle.imu else "dm_gyro" if "dm_gyro" in bundle.imu else None
+        # Prefer the Generic Sensor gyro, but only if its timestamps share the frames' clock (bundles
+        # recorded before t_sensor_ms existed hold raw sensor-clock times that never overlap).
+        overlapping = [
+            key for key in ("gyro", "dm_gyro")
+            if key in bundle.imu and bundle.imu[key][0][0] < t[-1] and bundle.imu[key][0][-1] > t[0]
+        ]
+        gyro_key = overlapping[0] if overlapping else None
         if gyro_key and tracked.sum() > 20:
             # GL-axes rotations; gyro device axes match GL camera axes up to the screen rotation.
             rotations = bundle.matrices[tracked][:, :3, :3]
@@ -340,6 +355,9 @@ def _write_colmap_model(directory: Path, bundle: Bundle, images: list) -> None:
     directory.mkdir(parents=True, exist_ok=True)
     rows = [row for *_rest, row in images]
     width, height = bundle.image_size[rows[0]]
+    # The encoder drops an odd last column or row (H.264 needs even sizes); the principal point is
+    # unaffected, but COLMAP must get the size of the decoded frames.
+    width, height = width - width % 2, height - height % 2
     focal = np.median(np.array([intrinsics(bundle.projection[r], width, height) for r in rows]), axis=0)
     (directory / "cameras.txt").write_text(
         "# Camera list with one line of data per camera:\n#   CAMERA_ID, MODEL, WIDTH, HEIGHT, PARAMS[]\n"
