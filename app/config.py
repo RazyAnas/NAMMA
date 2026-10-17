@@ -91,6 +91,8 @@ class Settings(BaseSettings):
     navigation_step_clearance_m: float = 0.30
     navigation_max_step_m: float = 0.25
     navigation_min_obstacle_points_per_cell: int = 3
+    navigation_obstacle_neighbor_radius_m: float = 0.08
+    navigation_min_obstacle_neighbor_voxels: int = 12
     navigation_grid_max_dimension: int = 512
     navigation_component_min_cells: int = 20
     agent_radius_meters: float = 0.30

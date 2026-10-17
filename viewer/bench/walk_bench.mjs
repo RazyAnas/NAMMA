@@ -71,19 +71,20 @@ function gtPenetration([x, feetY, z]) {
 }
 
 const CLIP = 0.03; // 3 cm overlap counts as walking into something
+// A reference surface meshed from scanned points is bumpy by about a centimetre.
+const GT_TOLERANCE = scene.synthetic_room === false ? 0.015 : 0.005;
 
 // ---- ground-truth reachability -----------------------------------------
 const cellCenter = (gx, gy) => [x0 + (gx + 0.5) * cell, z0 + (gy + 0.5) * cell];
 const gtSupport = new Float32Array(width * height).fill(NaN);
 const gtStand = new Uint8Array(width * height);
-const roomCorners = [[0, 0, 0], [scene.room.x, 0, 0], [0, 0, scene.room.z], [scene.room.x, 0, scene.room.z]].map(worldToNav);
 for (let gy = 0; gy < height; gy += 1) {
   for (let gx = 0; gx < width; gx += 1) {
     const [x, z] = cellCenter(gx, gy);
     const ground = gtGround(x, z, 2.4);
     if (!Number.isFinite(ground) || ground > 0.55) continue; // sofa/table tops are not reachable floors
     gtSupport[gy * width + gx] = ground;
-    if (gtPenetration([x, ground + 0.005, z]) <= 0.005) gtStand[gy * width + gx] = 1;
+    if (gtPenetration([x, ground + 0.005, z]) <= GT_TOLERANCE) gtStand[gy * width + gx] = 1;
   }
 }
 function bfs(start, canMove) {
@@ -179,6 +180,7 @@ const FOOTPRINTS = {
 };
 function countByObject(cells) {
   const counts = {};
+  if (scene.synthetic_room === false) return counts;
   for (const [x, z, pen] of cells) {
     let name = 'walls';
     let best = Infinity;
@@ -274,13 +276,28 @@ const scenarios = {
   'walk through the blank wall': { from: [6.0, 2.7], to: [8.0, 2.7], seconds: 2 },
   'walk under the dining table': { from: [5.2, 1.9], to: [5.2, 0.2], seconds: 2 },
 };
-const scenarioResults = Object.fromEntries(Object.entries(scenarios).map(([name, spec]) => [name, runScenario(spec)]));
+// Scripted walks only make sense in the synthetic room whose layout is known.
+const scenarioResults = scene.synthetic_room === false
+  ? {}
+  : Object.fromEntries(Object.entries(scenarios).map(([name, spec]) => [name, runScenario(spec)]));
 
 // ---- per-frame cost ------------------------------------------------------
 walker.spawn();
 const t1 = performance.now();
 for (let i = 0; i < 600; i += 1) walker.step([Math.cos(i / 50), Math.sin(i / 50)], 1 / 60);
 const stepMs = (performance.now() - t1) / 600;
+
+if (args.includes('--map')) {
+  // + both reach, g only the true room allows, w only the walker reaches, # neither
+  for (let gy = 0; gy < height; gy += 1) {
+    let row = '';
+    for (let gx = 0; gx < width; gx += 1) {
+      const i = gy * width + gx;
+      row += gtReach[i] && walkerReach[i] ? '+' : gtReach[i] ? 'g' : walkerReach[i] ? 'w' : (gtStand[i] ? ':' : '#');
+    }
+    console.error(row);
+  }
+}
 
 const report = {
   scene: path.basename(path.resolve(sceneDir)),

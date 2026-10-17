@@ -12,6 +12,7 @@ import open3d as o3d
 import pycolmap
 import trimesh
 from scipy import ndimage
+from scipy.spatial import cKDTree
 
 from app.config import Settings
 from app.services.geometry import GeometryError, read_collision_manifest
@@ -156,15 +157,35 @@ def _disk_structure(radius_cells: int) -> np.ndarray:
     return (xx * xx + yy * yy) <= radius_cells * radius_cells
 
 
+def _supported_by_neighbours(points: np.ndarray, mask: np.ndarray, settings: Settings) -> np.ndarray:
+    """Keep obstacle points that sit on a surface, dropping flying pixels.
+
+    Counts occupied 2 cm voxels within a small radius, which makes the test
+    independent of how densely the source cloud was sampled.
+    """
+    keep = np.zeros(len(points), dtype=bool)
+    if not np.any(mask):
+        return keep
+    voxel = 0.02
+    keys, inverse = np.unique(np.floor(points[mask] / voxel).astype(np.int64), axis=0, return_inverse=True)
+    centres = (keys + 0.5) * voxel
+    counts = cKDTree(centres).query_ball_point(
+        centres, r=settings.navigation_obstacle_neighbor_radius_m, return_length=True
+    )
+    keep[np.flatnonzero(mask)] = counts[inverse.ravel()] >= int(settings.navigation_min_obstacle_neighbor_voxels)
+    return keep
+
+
 def _movement_layers(
     grid_x: np.ndarray,
     grid_y: np.ndarray,
+    local_xy: np.ndarray,
     height: np.ndarray,
     width: int,
     height_cells: int,
     cell_size: float,
     settings: Settings,
-) -> dict:
+) -> tuple[np.ndarray, dict]:
     """Per-cell support height and a standable mask for physics-based roaming.
 
     The flat ``walkable`` grid treats every point between 0.15 m and head
@@ -199,8 +220,10 @@ def _movement_layers(
         (above_support > settings.navigation_step_clearance_m)
         & (above_support <= settings.agent_height_meters)
     )
+    obstacle &= _supported_by_neighbours(np.column_stack([local_xy, height]), obstacle, settings)
     obstacle_counts = np.bincount(cells[obstacle], minlength=width * height_cells)
     hard = obstacle_counts >= int(settings.navigation_min_obstacle_points_per_cell)
+    hard_points = local_xy[obstacle & hard[cells]]
     # Cells seen only as obstacles (wall faces, legs) are known, not unknown.
     observed |= obstacle_counts > 0
     observed = observed.reshape(height_cells, width)
@@ -210,11 +233,19 @@ def _movement_layers(
     # capsule's edge, not its centre, stops at them (a blank wall leaves no
     # points, only the end of the observed floor).
     radius_cells = int(np.ceil(settings.agent_radius_meters / cell_size))
-    disk = _disk_structure(radius_cells)
     # Unseen space gets one extra cell: the observed edge is only known to
     # within a cell after closing, and nothing on a blank wall marks its face.
     unseen = ndimage.binary_dilation(~observed, structure=_disk_structure(radius_cells + 1), border_value=1)
-    blocked = ndimage.binary_dilation(hard, structure=disk) | unseen
+    # Obstacles use the exact distance from each cell centre to the nearest
+    # obstacle point rather than cell dilation, which would close every
+    # body-width gap between furniture in a cluttered room.
+    near_obstacle = np.zeros((height_cells, width), dtype=bool)
+    if len(hard_points):
+        yy, xx = np.mgrid[0:height_cells, 0:width]
+        centres = np.column_stack([(xx.ravel() + 0.5) * cell_size, (yy.ravel() + 0.5) * cell_size])
+        distance, _ = cKDTree(hard_points).query(centres, distance_upper_bound=settings.agent_radius_meters)
+        near_obstacle = (distance < settings.agent_radius_meters).reshape(height_cells, width)
+    blocked = near_obstacle | unseen
     standable = ~blocked
     support = support.reshape(height_cells, width)
     # Unknown cells inherit the nearest known support so the height field has
@@ -226,7 +257,7 @@ def _movement_layers(
     else:
         support = np.zeros_like(support)
     support_mm = np.clip(np.round(support * 1000.0), -32768, 32767).astype("<i2")
-    return {
+    return standable, {
         "encoding": "zlib_row_major_base64",
         "standable_base64": encode_walkable_grid(standable),
         "standable_count": int(np.count_nonzero(standable)),
@@ -236,7 +267,7 @@ def _movement_layers(
         "support_height_dtype": "int16_le_mm",
         "step_clearance_m": float(settings.navigation_step_clearance_m),
         "max_step_m": float(settings.navigation_max_step_m),
-        "inflation_radius_m": float(radius_cells * cell_size),
+        "inflation_radius_m": float(settings.agent_radius_meters),
     }
 
 
@@ -330,7 +361,17 @@ def build_navigation_mesh(
     spawn_x = int(np.clip(np.floor((camera_mean @ axis_x - min_x) / cell_size), 0, width - 1))
     spawn_y = int(np.clip(np.floor((camera_mean @ axis_y - min_y) / cell_size), 0, height_cells - 1))
 
-    labels, component_count = ndimage.label(walkable, structure=np.ones((3, 3), dtype=np.uint8))
+    local_xy = np.column_stack([(horizontal_x - min_x)[valid], (horizontal_y - min_y)[valid]])
+    standable, movement = _movement_layers(grid_x, grid_y, local_xy, height, width, height_cells, cell_size, settings)
+    structure = np.ones((3, 3), dtype=np.uint8)
+    labels, component_count = ndimage.label(walkable, structure=structure)
+    largest = int(np.bincount(labels.ravel())[1:].max()) if component_count else 0
+    walkable_source = "floor_band"
+    if largest < settings.navigation_component_min_cells:
+        # Stray depth points can block the whole floor band; the movement
+        # layers ignore them, so they stand in for the legacy grid.
+        labels, component_count = ndimage.label(standable, structure=structure)
+        walkable_source = "movement_standable"
     if component_count == 0:
         raise NavigationPreparationError("No walkable floor cells were found after obstacle inflation.")
     component_id = int(labels[spawn_y, spawn_x])
@@ -346,7 +387,6 @@ def build_navigation_mesh(
     spawn_floor_y = min_y + (int(spawn_y) + 0.5) * cell_size
     eye_height_m = min(1.6, max(0.5, settings.agent_height_meters - 0.1))
     spawn_world_m = axis_x * spawn_floor_x + axis_y * spawn_floor_y - up * offset + up * eye_height_m
-    movement = _movement_layers(grid_x, grid_y, height, width, height_cells, cell_size, settings)
     walkable_bytes = walkable.astype(np.uint8).tobytes()
     source_to_viewer_matrix = np.asarray(source_to_viewer if source_to_viewer is not None else np.eye(4), dtype=float)
     if source_to_viewer_matrix.shape != (4, 4) or not np.isfinite(source_to_viewer_matrix).all():
@@ -376,6 +416,7 @@ def build_navigation_mesh(
         "width": width,
         "height": height_cells,
         "walkable_count": int(np.count_nonzero(walkable)),
+        "walkable_source": walkable_source,
         "floor_support_count": int(np.count_nonzero(floor_support)),
         "blocked_obstacle_count": int(np.count_nonzero(inflated_obstacles)),
         "component_count": int(component_count),

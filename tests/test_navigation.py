@@ -230,7 +230,7 @@ def test_movement_layers_allow_steps_and_ignore_floaters() -> None:
     x, y, h = (np.concatenate(values) for values in (xs, ys, hs))
     gx = np.floor(x / cell).astype(np.int32)
     gy = np.floor(y / cell).astype(np.int32)
-    layers = navigation_service._movement_layers(gx, gy, h, width, height, cell, settings)
+    _, layers = navigation_service._movement_layers(gx, gy, np.column_stack([x, y]), h, width, height, cell, settings)
     standable = navigation_service.decode_walkable_grid(layers["standable_base64"], width, height)
     support = np.frombuffer(
         __import__("zlib").decompress(__import__("base64").b64decode(layers["support_height_mm_base64"])), dtype="<i2"

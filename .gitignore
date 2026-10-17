@@ -26,3 +26,4 @@ viewer/node_modules/
 .idea/
 .vscode/
 tests/browser/node_modules/
+viewer/dist-demo/
