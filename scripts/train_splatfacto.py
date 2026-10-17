@@ -37,6 +37,11 @@ def main() -> int:
     parser.add_argument("--dataset", type=Path, required=True)
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--iterations", type=int, default=7000)
+    # Per-image bilateral grid (Bilateral Guided Radiance Field Processing) absorbs exposure, white
+    # balance and tone changes the up-front compensation leaves behind.
+    parser.add_argument("--bilateral-grid", action=argparse.BooleanOptionalAction, default=True)
+    # Refine camera poses during training; helps frames whose poses are slightly off from motion blur.
+    parser.add_argument("--camera-optimizer", choices=["off", "SO3xR3", "SE3"], default="SO3xR3")
     args = parser.parse_args()
 
     dataset = args.dataset.resolve()
@@ -57,6 +62,10 @@ def main() -> int:
             str(args.iterations),
             "--vis",
             "tensorboard",
+            "--pipeline.model.use-bilateral-grid",
+            str(args.bilateral_grid),
+            "--pipeline.model.camera-optimizer.mode",
+            args.camera_optimizer,
             "colmap",
             "--colmap-path",
             "sparse/0",
