@@ -1,7 +1,7 @@
 import cv2
 import numpy as np
 
-from app.services.frame_quality import measure_frame, select_sharpest, summarize
+from app.services.frame_quality import measure_frame, normalize_contrast, select_sharpest, summarize
 
 
 def _scene() -> np.ndarray:
@@ -33,3 +33,13 @@ def test_summary_flags_lighting_drift():
     scores = [measure_frame(image, f"{i}.jpg") for i, image in enumerate(frames)]
     report = summarize(scores, scores)
     assert any("Brightness changed" in warning for warning in report["warnings"])
+
+
+def test_normalize_contrast_stretches_washed_out_frames(tmp_path):
+    washed = (_scene().astype(np.float32) * 0.2 + 180).astype(np.uint8)
+    source = tmp_path / "frames"
+    source.mkdir()
+    cv2.imwrite(str(source / "frame_000001.jpg"), washed)
+    out = normalize_contrast(source, tmp_path / "features")
+    restored = cv2.imread(str(out / "frame_000001.jpg"), cv2.IMREAD_GRAYSCALE)
+    assert restored.std() > 3 * cv2.cvtColor(washed, cv2.COLOR_BGR2GRAY).std()

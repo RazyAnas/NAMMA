@@ -5,6 +5,7 @@ import shutil
 import subprocess
 
 from app.config import Settings
+from app.services.frame_quality import normalize_contrast
 
 
 class ColmapError(RuntimeError):
@@ -12,6 +13,9 @@ class ColmapError(RuntimeError):
 
 
 def run_colmap(frames_dir: Path, tracking_dir: Path, log_path: Path, settings: Settings) -> int:
+    if settings.colmap_contrast_normalize:
+        # Features are found on contrast-equalised copies; training still uses the original frames.
+        frames_dir = normalize_contrast(frames_dir, tracking_dir / "feature-images")
     executable = settings.resolve_colmap()
     if executable:
         return _run_colmap_cli(executable, frames_dir, tracking_dir, log_path, settings)
@@ -52,6 +56,18 @@ def _run_colmap_cli(
             "1",
             "--FeatureExtraction.use_gpu",
             gpu,
+            *(
+                [
+                    "--SiftExtraction.domain_size_pooling",
+                    "1",
+                    "--SiftExtraction.peak_threshold",
+                    "0.004",
+                    "--SiftExtraction.max_num_features",
+                    "8192",
+                ]
+                if settings.colmap_blur_robust_features
+                else []
+            ),
         ],
         [
             executable,
@@ -135,11 +151,17 @@ def _run_pycolmap(frames_dir: Path, tracking_dir: Path, log_path: Path, settings
     output = io.StringIO()
     try:
         with contextlib.redirect_stdout(output), contextlib.redirect_stderr(output):
+            extraction = pycolmap.FeatureExtractionOptions()
+            if settings.colmap_blur_robust_features:
+                extraction.sift.domain_size_pooling = True
+                extraction.sift.peak_threshold = 0.004
+                extraction.sift.max_num_features = 8192
             pycolmap.extract_features(
                 database_path,
                 frames_dir,
                 camera_mode=pycolmap.CameraMode.SINGLE,
                 reader_options=pycolmap.ImageReaderOptions(camera_model="SIMPLE_RADIAL"),
+                extraction_options=extraction,
                 device=pycolmap.Device.cpu,
             )
             pycolmap.match_sequential(database_path, device=pycolmap.Device.cpu)

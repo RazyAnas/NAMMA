@@ -5,6 +5,7 @@ from __future__ import annotations
 from dataclasses import asdict, dataclass
 import json
 from pathlib import Path
+import shutil
 
 import cv2
 import numpy as np
@@ -83,6 +84,30 @@ def summarize(scores: list[FrameQuality], selected: list[FrameQuality]) -> dict:
         "selected": [asdict(item) for item in selected],
         "warnings": warnings,
     }
+
+
+def normalize_contrast(source: Path, destination: Path) -> Path:
+    """Write contrast-equalised copies of every JPEG frame for feature detection.
+
+    Auto-exposure on a fast-moving phone leaves frames washed out or dark, and SIFT's fixed
+    contrast threshold then finds few features. A 1-99 percentile stretch followed by CLAHE
+    on lightness (a staple of medical imaging) restores them without changing geometry.
+    """
+    if destination.exists():
+        shutil.rmtree(destination)
+    destination.mkdir(parents=True)
+    clahe = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8, 8))
+    for path in sorted(source.glob("*.jpg")):
+        image = cv2.imread(str(path))
+        if image is None:
+            continue
+        lab = cv2.cvtColor(image, cv2.COLOR_BGR2LAB)
+        lightness = lab[:, :, 0].astype(np.float32)
+        low, high = np.percentile(lightness, [1, 99])
+        stretched = np.clip((lightness - low) / max(high - low, 1e-6) * 255, 0, 255).astype(np.uint8)
+        lab[:, :, 0] = clahe.apply(stretched)
+        cv2.imwrite(str(destination / path.name), cv2.cvtColor(lab, cv2.COLOR_LAB2BGR), [cv2.IMWRITE_JPEG_QUALITY, 95])
+    return destination
 
 
 def write_report(report: dict, destination: Path) -> None:

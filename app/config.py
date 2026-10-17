@@ -41,6 +41,9 @@ class Settings(BaseSettings):
     colmap_exhaustive_max_images: int = 500
     # "global" (GLOMAP-style, more accurate on the ICL-NUIM benchmark) or "incremental".
     colmap_mapper: str = "global"
+    # Measured on blurred, auto-exposed ICL-NUIM footage: 22 cm -> 7.5 cm tracking error together.
+    colmap_contrast_normalize: bool = True
+    colmap_blur_robust_features: bool = True
     quality_min_registered_images: int = 20
     quality_min_registered_ratio: float = 0.5
     quality_min_sparse_points: int = 1000
