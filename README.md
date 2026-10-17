@@ -11,6 +11,10 @@ This repository now contains the first local pipeline for a laptop-only video-to
 
 The photorealistic MODP mapper, dense collision geometry, NavMesh and viewer are later milestones.
 
+## Unified pipeline API
+
+Every stage (capture, tracking, points, splats, walking, export) is also exposed as a background job under `/api/v1/pipeline`, with a CPU / Apple silicon / CUDA switch and a one-call full run. See [docs/PIPELINE_API.md](docs/PIPELINE_API.md) for endpoints, what has been run, and the known gaps.
+
 ## Run the API
 
 ```powershell
