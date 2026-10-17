@@ -69,6 +69,19 @@ Blackwell support.
 
 If quality fails, the backend returns HTTP 409 instead of spending GPU time on an unusable training run.
 
+## Fast-motion and lighting robustness
+
+- **Sharpest-frame selection** (`FRAME_SELECTION=sharpest`, default): FFmpeg decodes
+  `FRAME_CANDIDATES_PER_KEYFRAME` (default 4) frames per keyframe and keeps the sharpest one, scored by
+  Laplacian variance over intensity variance so exposure changes do not bias it. Results and capture
+  warnings are written to `artifacts/frame-quality.json`.
+- **Exposure / white-balance / flicker compensation** (`PHOTOMETRIC_COMPENSATION=true`, default): after
+  SfM, per-frame RGB gains are solved from the colours of tracked 3D points and removed from the training
+  images. Report: `artifacts/photometric-report.json`.
+- **Global mapper** (`COLMAP_MAPPER=global`, default) instead of incremental mapping.
+- `scripts/train_splatfacto.py` enables splatfacto's per-image bilateral grid and SO3xR3 pose refinement
+  (`--no-bilateral-grid`, `--camera-optimizer off` to disable).
+
 ## Laptop web viewer
 
 The proof-of-concept viewer is served by the same FastAPI process at `http://127.0.0.1:8000/viewer/`.

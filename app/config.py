@@ -29,11 +29,18 @@ class Settings(BaseSettings):
     frame_sample_fps: float = 2.0
     frame_max_width: int = 1280
     max_keyframes: int = 500
+    # "sharpest" keeps the sharpest of every N decoded frames; "uniform" keeps every frame at the sample rate.
+    frame_selection: str = "sharpest"
+    frame_candidates_per_keyframe: int = 4
+    # Remove per-frame exposure / white-balance / flicker changes before Gaussian training.
+    photometric_compensation: bool = True
     colmap_bin: str = "colmap"
     ffmpeg_bin: str = "ffmpeg"
     colmap_use_gpu: bool = True
     colmap_exhaustive_loop_closure: bool = True
     colmap_exhaustive_max_images: int = 500
+    # "global" (GLOMAP-style, more accurate on the ICL-NUIM benchmark) or "incremental".
+    colmap_mapper: str = "global"
     quality_min_registered_images: int = 20
     quality_min_registered_ratio: float = 0.5
     quality_min_sparse_points: int = 1000

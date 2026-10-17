@@ -15,7 +15,7 @@ def run_colmap(frames_dir: Path, tracking_dir: Path, log_path: Path, settings: S
     executable = settings.resolve_colmap()
     if executable:
         return _run_colmap_cli(executable, frames_dir, tracking_dir, log_path, settings)
-    return _run_pycolmap(frames_dir, tracking_dir, log_path)
+    return _run_pycolmap(frames_dir, tracking_dir, log_path, settings)
 
 
 def _run_colmap_cli(
@@ -80,7 +80,7 @@ def _run_colmap_cli(
     commands.append(
         [
             executable,
-            "mapper",
+            "global_mapper" if settings.colmap_mapper == "global" else "mapper",
             "--database_path",
             str(database_path),
             "--image_path",
@@ -115,7 +115,7 @@ def _run_colmap_cli(
     return max(_registered_image_count(model) for model in models)
 
 
-def _run_pycolmap(frames_dir: Path, tracking_dir: Path, log_path: Path) -> int:
+def _run_pycolmap(frames_dir: Path, tracking_dir: Path, log_path: Path, settings: Settings) -> int:
     try:
         import pycolmap
     except Exception as exc:
@@ -143,7 +143,8 @@ def _run_pycolmap(frames_dir: Path, tracking_dir: Path, log_path: Path) -> int:
                 device=pycolmap.Device.cpu,
             )
             pycolmap.match_sequential(database_path, device=pycolmap.Device.cpu)
-            maps = pycolmap.incremental_mapping(database_path, frames_dir, sparse_root)
+            mapping = pycolmap.global_mapping if settings.colmap_mapper == "global" else pycolmap.incremental_mapping
+            maps = mapping(database_path, frames_dir, sparse_root)
             if not maps:
                 raise ColmapError("PyCOLMAP produced no sparse reconstruction model.")
             for model_id, reconstruction in maps.items():
