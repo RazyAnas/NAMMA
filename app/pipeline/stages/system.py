@@ -31,6 +31,7 @@ STATUS = {
     "points.monocular": "verified",
     "points.export_modp": "verified",
     "splats.train": "wired",
+    "splats.modp": "wired",
     "splats.gpu_results": "wired",
     "walk.collision_dense": "wired",
     "export.splat_pack": "wired",

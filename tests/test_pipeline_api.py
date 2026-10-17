@@ -118,3 +118,13 @@ def test_umeyama_recovers_a_similarity_transform():
     assert scale == pytest.approx(2.5)
     assert np.allclose(r, rotation)
     assert np.allclose(t, [1.0, -2.0, 0.5])
+
+
+async def test_modp_is_refused_without_its_gpu_install(client, monkeypatch):
+    monkeypatch.setattr(backends, "modp_ready", lambda: False)
+    project_id = await _project(client)
+    response = await client.post(f"/api/v1/pipeline/projects/{project_id}/splats/modp", json={"poses": "ar", "points": "dense"})
+    assert response.status_code == 503
+    assert "modp" in response.json()["detail"]["missing"]
+    stages = {stage["kind"]: stage for stage in (await client.get("/api/v1/pipeline/stages")).json()}
+    assert "modp" in stages["splats.modp"]["missing_here"]

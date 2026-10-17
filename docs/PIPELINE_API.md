@@ -5,7 +5,7 @@ original `/api/v1/projects/...` endpoints are unchanged; the pipeline lives unde
 Open `/docs` for the interactive version; the stage tags are numbered in pipeline order.
 
 ```
-phone /record/ bundle ─┐                                   ┌─> splats/train ──> export/splat-pack
+phone /record/ bundle ─┐                                   ┌─> splats/train | splats/modp ──> export/splat-pack
                        ├─> capture ─> tracking ─> points ──┤
 recorded video ────────┘   (frames)   (sfm | ar-poses)     └─> walk (scale, floor, navmesh) ─> export/walk-scene
 ```
@@ -25,7 +25,7 @@ A `device` parameter (`cpu`, `mps`, `cuda`) adds that device to the check.
 |---|---|
 | splatfacto training | OpenSplat (Metal or CPU): set `OPENSPLAT_BIN` |
 | COLMAP PatchMatch dense stereo (`walk/collision` with `backend=colmap`) | `backend=monocular` (Depth Anything V2 via ONNX) |
-| MODP | `points/export-modp` packages the data for a GPU machine |
+| MODP (`splats/modp`) | `splats/train` with OpenSplat; or run MODP in the Colab handout |
 
 ## Endpoints
 
@@ -48,6 +48,7 @@ here (the tool, GPU or input isn't in the cloud machine).
 | 3 points | `POST .../points/monocular` | Depth Anything V2 ONNX + anchoring + fusion + collision mesh | verified |
 | 3 points | `POST .../points/export-modp` | MODP "aria" dataset with monocular points | verified |
 | 4 splats | `POST .../splats/train` | OpenSplat / splatfacto / custom command; `init=monocular` | wired |
+| 4 splats | `POST .../splats/modp` | Meta's MODP, code unchanged, fed our poses (`sfm`/`ar`) and points (`sparse` = stock, `dense` = monocular); held-out PSNR/SSIM/LPIPS | wired |
 | 4 splats | `POST .../splats/gpu-results` | `gpu-handout/ingest_results.py` | wired |
 | 5 walking | `POST .../walk/collision` | monocular (CPU) or COLMAP dense (CUDA) | verified (monocular) |
 | 5 walking | `POST .../walk/auto-scale` | metric scale from ARCore poses, no tape measure | verified |
@@ -88,6 +89,28 @@ curl -X POST -H 'content-type: application/json' -d '{}' localhost:8000/api/v1/p
 
 Depth Anything V2 Small weights download on first use from the GitHub release
 `fabio-sim/Depth-Anything-ONNX` v2.0.0 into `tools/models/` (override with `NAMMA_MODELS_DIR`).
+
+## MODP on a GPU machine (Linux + NVIDIA)
+
+`splats/modp` runs Meta's MODP (facebookresearch/Online-3DGS-Monocular @ `7d75169`). MODP has no
+trained scene model to download. It optimises each video online, and its only pretrained weights are
+DepthCov `scannet.ckpt`, which ship in its repo. The job:
+1. undistorts the frames, crops them to multiples of 8, and writes per-frame points (`prep_modp_inputs.py`);
+2. writes MODP's own dataset layout with the paper config `orb_tracking/aria_base.yaml` (`make_modp_dataset.py`);
+3. runs `SceneMapper.run()` and `eval_gaussians` in MODP's environment, then renders every 8th frame held out (`run_modp.py`);
+4. scores the held-out frames (`score.py`). The model is `artifacts/modp/results/<poses>_<points>/point_cloud.ply`, a standard 3DGS PLY.
+
+```bash
+bash scripts/modp/setup_modp.sh tools      # micromamba env: Python 3.9, CUDA 11.8, MODP's setup_env.sh (20-35 min)
+MODP_DIR=tools/Online-3DGS-Monocular MODP_PYTHON=tools/modp_env/bin/python uvicorn app.main:app
+curl -X POST -H 'content-type: application/json' -d '{"poses":"ar","points":"dense","resize":0.5}' \
+  localhost:8000/api/v1/pipeline/projects/<id>/splats/modp
+```
+
+The backend reports `modp: false` unless the checkout, `scannet.ckpt`, MODP's python and `nvidia-smi`
+all exist, so on a Mac the endpoint answers `503` and every CPU stage is unchanged. RTX 50xx is too new
+for CUDA 11.8. Without a GPU, the Colab handout (`modp-colab/` in the project files) runs the same
+scripts on a free T4. Tested here: the job wiring end to end with a stand-in for MODP. MODP itself was not run.
 
 ## Known gaps for the fix-later pass
 

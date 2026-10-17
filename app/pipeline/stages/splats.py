@@ -1,8 +1,9 @@
-"""Stage 4, splats: Gaussian splat training (OpenSplat on Mac/CPU, splatfacto on CUDA) and GPU results."""
+"""Stage 4, splats: Gaussian splat training (OpenSplat on Mac/CPU, splatfacto on CUDA), MODP on CUDA, and GPU results."""
 
 from __future__ import annotations
 
 from pathlib import Path
+import json
 import shutil
 
 from fastapi import APIRouter, Depends, File, HTTPException, UploadFile
@@ -89,6 +90,58 @@ def train_splats(ctx: TaskContext) -> dict:
     return {"trainer": trainer, "iterations": iterations, "init": p.get("init", "sparse"), "manifest": manifest}
 
 
+class ModpRequest(BaseModel):
+    poses: str = Field("sfm", pattern="^(sfm|ar)$", description="sfm = COLMAP model, ar = ARCore poses (metric)")
+    points: str = Field("dense", pattern="^(sparse|dense)$", description="sparse = stock MODP input; dense = monocular points")
+    post_steps: int | None = Field(None, ge=0, le=30000, description="MODP post-refinement steps; None = paper config (1000)")
+    camera_opt: bool = Field(True, description="MODP's own pose refinement (paper config: on)")
+    resize: float = Field(1.0, gt=0.1, le=1.0, description="image scale before MODP (0.5 for 1080p phone frames)")
+    cam_height_m: float = Field(1.45, gt=0.3, le=3.0, description="sets metric scale for SfM poses (MODP assumes metres)")
+
+
+@task("splats.modp", requires=("modp", "onnxruntime", "colmap"))
+def run_modp(ctx: TaskContext) -> dict:
+    """MODP (Meta, SIGGRAPH 2025) online Gaussian mapping, code unchanged, fed our poses and points; scored on held-out frames."""
+    from app.pipeline.backends import depth_model_path, modp_paths
+    from app.pipeline.stages.points import frames_for
+    from app.pipeline.stages.tracking import model_dir
+
+    p = ctx.params
+    poses, points = p.get("poses", "sfm"), p.get("points", "dense")
+    code, python = modp_paths()
+    scripts = PROJECT_ROOT / "scripts" / "modp"
+    root = ctx.paths["artifacts"] / "modp"
+    scene, track = root / "inputs", f"{poses}_poses"
+    run, result = root / "runs" / f"{poses}_{points}", root / "results" / f"{poses}_{points}"
+    shutil.rmtree(result, ignore_errors=True)
+    result.mkdir(parents=True)
+    ctx.progress("modp_inputs", 0.05)
+    prep = [ctx.python(), scripts / "prep_modp_inputs.py", "--frames", frames_for(ctx, poses), "--models", model_dir(ctx, poses),
+            "--out", scene, "--track", track, "--resize", p.get("resize", 1.0), "--depth-model", depth_model_path("vits")]
+    prep += ["--metric"] if poses == "ar" else ["--cam-height", p.get("cam_height_m", 1.45)]
+    ctx.run(prep)
+    make = [ctx.python(), scripts / "make_modp_dataset.py", scene / track, points, run]
+    if p.get("post_steps") is not None:
+        make += ["--post-steps", p["post_steps"]]
+    if not p.get("camera_opt", True):
+        make += ["--no-cam-opt"]
+    ctx.run(make)
+    (result / "run_meta.json").write_text(json.dumps({"scene": "project", "track": str(scene / track), "points": points,
+                                                      "label": f"MODP, {poses} poses, {points} points"}))
+    # MODP runs in its own CUDA 11.8 environment; modp_vars.sh (written by setup_modp.sh) holds its compiler paths
+    env_vars = python.parent.parent / "modp_vars.sh"
+    prefix = ["bash", "-c", f'. "{env_vars}" && exec "$@"', "_"] if env_vars.is_file() else []
+    ctx.progress("modp_mapping", 0.2)
+    ctx.run(prefix + [python, scripts / "run_modp.py", run, result], cwd=code)
+    ctx.progress("modp_scoring", 0.95)
+    ctx.run(prefix + [python, scripts / "score.py", result.parent])
+    rows = {row["run"]: row for row in json.loads((result.parent / "summary.json").read_text())}
+    score = rows.get(result.name, {})
+    return {"poses": poses, "points": points, "model": str(result / "point_cloud.ply"), "renders": str(result / "renders"),
+            "heldout": {k: score.get(k) for k in ("heldout_frames", "psnr", "ssim", "lpips")},
+            "modp_native_eval": score.get("native"), "run_info": json.loads((result / "run_info.json").read_text())}
+
+
 @task("splats.gpu_results")
 def ingest_gpu_results(ctx: TaskContext) -> dict:
     """Score the friend's GPU run (gsplat 30k steps, MODP) into final_comparison.md/.png."""
@@ -107,6 +160,12 @@ async def start_training(project_id: str, request: TrainRequest, db: Session = D
     if missing:
         raise HTTPException(status_code=503, detail={"message": f"{request.trainer} cannot run here.", "missing": missing})
     return submit_task(db, project_id, "splats.train", request.model_dump())
+
+
+@router.post("/projects/{project_id}/splats/modp", response_model=JobRead, status_code=202)
+async def start_modp(project_id: str, request: ModpRequest, db: Session = Depends(get_db)):
+    """Meta's MODP on this project's poses and points (Linux + NVIDIA only; 503 on a Mac, where splats/train still works)."""
+    return submit_task(db, project_id, "splats.modp", request.model_dump())
 
 
 @router.post("/projects/{project_id}/splats/gpu-results", response_model=JobRead, status_code=202)
