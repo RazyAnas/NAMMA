@@ -239,3 +239,33 @@ def test_movement_layers_allow_steps_and_ignore_floaters() -> None:
     assert standable[20, 34] and abs(int(support[20, 34]) - 160) <= 5, "a 16 cm step is standable at its height"
     assert not standable[20, 1], "cells next to the wall are blocked"
     assert not standable[0, 20], "the unseen edge of the scan is blocked"
+
+
+def test_movement_layers_mark_furniture_tops_but_not_walls() -> None:
+    settings = Settings(_env_file=None)
+    cell = 0.1
+    width = height = 40
+    rng = np.random.default_rng(1)
+    xs, ys, hs = [], [], []
+
+    def add(x0, x1, y0, y1, h, count):
+        xs.append(rng.uniform(x0, x1, count))
+        ys.append(rng.uniform(y0, y1, count))
+        hs.append(np.full(count, h) if np.isscalar(h) else rng.uniform(*h, count))
+
+    add(0.0, 4.0, 0.0, 4.0, 0.0, 16000)        # floor, seen under the table too
+    add(1.5, 2.5, 1.5, 2.5, 0.45, 6000)        # 45 cm table top
+    add(0.0, 0.1, 0.0, 4.0, (0.0, 1.8), 2000)  # wall along x = 0
+    x, y, h = (np.concatenate(values) for values in (xs, ys, hs))
+    gx = np.floor(x / cell).astype(np.int32)
+    gy = np.floor(y / cell).astype(np.int32)
+    _, layers = navigation_service._movement_layers(gx, gy, np.column_stack([x, y]), h, width, height, cell, settings)
+    decode = lambda key: np.frombuffer(  # noqa: E731
+        __import__("zlib").decompress(__import__("base64").b64decode(layers[key])), dtype="<i2"
+    ).reshape(height, width)
+    standable = navigation_service.decode_walkable_grid(layers["standable_base64"], width, height)
+    top = decode("climb_top_mm_base64")
+    support = decode("support_height_mm_base64")
+    assert not standable[20, 20], "the table blocks walking on the floor"
+    assert abs(int(top[20, 20]) - 450) <= 5, "the table top is a surface you can jump onto"
+    assert int(top[20, 0]) == int(support[20, 0]), "a wall is too tall to climb"

@@ -17,7 +17,8 @@ export const DEFAULTS = {
   maxSlopeDegrees: 35,
   snapToGround: 0.3,
   gravity: 9.81,
-  jumpSpeed: 3.2,
+  // About 0.9 m of lift: enough to land on a sofa seat or a table.
+  jumpSpeed: 4.2,
   skin: 0.02,
 };
 
@@ -39,7 +40,15 @@ export async function decodeMovementLayers(navigation) {
   const view = new DataView(raw.buffer, raw.byteOffset, raw.byteLength);
   const support = new Float32Array(cells);
   for (let index = 0; index < cells; index += 1) support[index] = view.getInt16(index * 2, true) / 1000;
-  return { standable, support };
+  // Older navmeshes have no climb layer: nothing is climbable.
+  let top = support;
+  if (movement.climb_top_mm_base64) {
+    const rawTop = await inflate(movement.climb_top_mm_base64, cells * 2);
+    const topView = new DataView(rawTop.buffer, rawTop.byteOffset, rawTop.byteLength);
+    top = new Float32Array(cells);
+    for (let index = 0; index < cells; index += 1) top[index] = topView.getInt16(index * 2, true) / 1000;
+  }
+  return { standable, support, top };
 }
 
 // Minimal GLB reader: concatenates every triangle primitive's POSITION and
@@ -255,6 +264,34 @@ export class Walker {
     return this.layers.support[gy * width + gx];
   }
 
+  // Highest observed furniture surface around (x, z), or the floor support.
+  topAt(x, z) {
+    if (!this.layers?.top) return this.supportAt(x, z);
+    const [gx, gy] = this.frame.cellOf(x, z);
+    const { width, height } = this.navigation;
+    if (gx < 0 || gx >= width || gy < 0 || gy >= height) return 0;
+    return this.layers.top[gy * width + gx];
+  }
+
+  // Can the agent's centre be at (px, pz) with its feet at feetY?
+  // On the floor the standable mask decides. Above the floor (jumping, or
+  // standing on a sofa or table) the feet must be at least level with an
+  // observed furniture top there, so you clear the edge before moving over it
+  // and unseen space stays closed. Standing is never allowed more than a step
+  // above observed surfaces: Poisson meshing invents smooth bulges (over a
+  // glass table, between furniture) that the controller would happily climb.
+  allowed(px, pz, feetY, grounded) {
+    const support = this.supportAt(px, pz);
+    const top = this.topAt(px, pz);
+    const slack = this.options.maxStep + 0.05;
+    if (grounded && feetY > Math.max(support, top) + slack) return false;
+    if (this.standable(px, pz)) return true;
+    if (top <= support + slack) return false;
+    // Already standing on furniture (a seat below a backrest), or high
+    // enough in the air to clear its top.
+    return (grounded && feetY > support + slack) || feetY >= top - 0.1;
+  }
+
   // Place the feet on the ground at (x, z) in the nav frame.
   placeFeet(x, z, feetY = this.supportAt(x, z)) {
     const center = { x, y: feetY + this.options.height / 2 + this.options.skin, z };
@@ -295,11 +332,8 @@ export class Walker {
     const c = this.center;
     // Mask check on the corrected motion, then per-axis so the agent slides
     // along the edge of known space instead of sticking to it.
-    // Poisson meshing can invent smooth bulges (over a glass table, between
-    // furniture) that the controller would happily climb; the observed floor
-    // height is the arbiter, so standing more than a step above it is refused.
     const feetY = c.y + moved.y - this.options.height / 2;
-    const allowed = (px, pz) => this.standable(px, pz) && feetY <= this.supportAt(px, pz) + this.options.maxStep + 0.05;
+    const allowed = (px, pz) => this.allowed(px, pz, feetY, this.grounded);
     let { x, z } = moved;
     if (!allowed(c.x + x, c.z + z)) {
       this.blockedByMask += 1;

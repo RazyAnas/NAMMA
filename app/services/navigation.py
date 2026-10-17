@@ -248,6 +248,20 @@ def _movement_layers(
     blocked = near_obstacle | unseen
     standable = ~blocked
     support = support.reshape(height_cells, width)
+    # Furniture tops you can jump onto: a cell whose obstacle points all stay
+    # below the climb limit has a real surface at its highest point (a sofa
+    # seat, a table). Walls and tall shelves exceed the limit and get none.
+    # The top is spread over the agent radius, matching the obstacle
+    # inflation, so the ring around a sofa can be crossed once you are above it.
+    hard_mask = obstacle & hard.ravel()[cells]
+    cell_top = np.full(width * height_cells, -np.inf)
+    if np.any(hard_mask):
+        np.maximum.at(cell_top, cells[hard_mask], height[hard_mask])
+    cell_top = cell_top.reshape(height_cells, width)
+    climbable = hard & (cell_top <= settings.navigation_max_climb_height_m)
+    top = ndimage.grey_dilation(
+        np.where(climbable, cell_top, -np.inf), footprint=_disk_structure(radius_cells), mode="constant", cval=-np.inf
+    )
     # Unknown cells inherit the nearest known support so the height field has
     # no cliffs at the edge of the scan; the standable mask still blocks them.
     known = np.isfinite(support)
@@ -257,6 +271,9 @@ def _movement_layers(
     else:
         support = np.zeros_like(support)
     support_mm = np.clip(np.round(support * 1000.0), -32768, 32767).astype("<i2")
+    # Cells with no climbable surface carry the floor support.
+    top = np.where(np.isfinite(top) & (top > support), top, support)
+    top_mm = np.clip(np.round(top * 1000.0), -32768, 32767).astype("<i2")
     return standable, {
         "encoding": "zlib_row_major_base64",
         "standable_base64": encode_walkable_grid(standable),
@@ -265,6 +282,9 @@ def _movement_layers(
         "hard_obstacle_count": int(np.count_nonzero(hard)),
         "support_height_mm_base64": base64.b64encode(zlib.compress(support_mm.tobytes(), 9)).decode("ascii"),
         "support_height_dtype": "int16_le_mm",
+        "climb_top_mm_base64": base64.b64encode(zlib.compress(top_mm.tobytes(), 9)).decode("ascii"),
+        "climbable_count": int(np.count_nonzero(top > support + settings.navigation_step_clearance_m)),
+        "max_climb_height_m": float(settings.navigation_max_climb_height_m),
         "step_clearance_m": float(settings.navigation_step_clearance_m),
         "max_step_m": float(settings.navigation_max_step_m),
         "inflation_radius_m": float(settings.agent_radius_meters),

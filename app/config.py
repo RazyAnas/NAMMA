@@ -90,6 +90,7 @@ class Settings(BaseSettings):
     navigation_max_support_height_m: float = 1.0
     navigation_step_clearance_m: float = 0.30
     navigation_max_step_m: float = 0.25
+    navigation_max_climb_height_m: float = 1.2
     navigation_min_obstacle_points_per_cell: int = 3
     navigation_obstacle_neighbor_radius_m: float = 0.08
     navigation_min_obstacle_neighbor_voxels: int = 12
