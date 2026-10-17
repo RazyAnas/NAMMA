@@ -86,6 +86,21 @@ If quality fails, the backend returns HTTP 409 instead of spending GPU time on a
 - `scripts/train_splatfacto.py` enables splatfacto's per-image bilateral grid and SO3xR3 pose refinement
   (`--no-bilateral-grid`, `--camera-optimizer off` to disable).
 
+## Recording video, AR pose and IMU from a phone browser
+
+`https://<laptop-ip>:8443/record/` (served by the same `scripts/serve_live.py`) records on Android Chrome, with
+no app install, the camera video, the ARCore pose and intrinsics of every frame through WebXR, and raw gyroscope
+and accelerometer samples on one clock, then saves one `.zip` bundle. On the laptop:
+
+```bash
+python scripts/ingest_sensor_bundle.py namma-ar-....zip data/bundles/room1 --stride 10
+```
+
+This writes frames, a COLMAP model with the metric AR poses (`colmap_known_poses/`), pose priors, an MP4 the
+normal upload accepts, and a report with measured rates, tracking loss and the IMU-to-camera time offset. See
+[docs/SENSOR_CAPTURE.md](docs/SENSOR_CAPTURE.md) for what each stream is for, what Android Chrome can deliver,
+what was tested without a phone, and the phone test steps.
+
 ## Live capture from a phone browser
 
 No app install: the phone opens a web page served by this backend and streams keyframes while the laptop

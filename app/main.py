@@ -30,6 +30,9 @@ if viewer_directory.is_dir():
 capture_directory = Path(__file__).resolve().parent / "static" / "capture"
 app.mount("/capture", StaticFiles(directory=capture_directory, html=True), name="capture")
 
+record_directory = Path(__file__).resolve().parent / "static" / "record"
+app.mount("/record", StaticFiles(directory=record_directory, html=True), name="record")
+
 
 @app.get("/")
 async def root() -> dict[str, str]:

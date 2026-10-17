@@ -1,0 +1,49 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+    <meta name="theme-color" content="#07110f" />
+    <title>NAMMA Sensor Recorder</title>
+    <link rel="stylesheet" href="record.css" />
+  </head>
+  <body data-screen="setup">
+    <video id="video" playsinline muted autoplay></video>
+
+    <main id="setup" class="panel">
+      <h1>NAMMA sensor recorder</h1>
+      <p>Records video, the AR pose of every frame and raw motion sensors, then saves one file for the laptop.</p>
+      <dl class="caps">
+        <dt>HTTPS</dt><dd id="cap-secure">…</dd>
+        <dt>AR (ARCore)</dt><dd id="cap-ar">…</dd>
+        <dt>AR camera image</dt><dd id="cap-camera">…</dd>
+        <dt>Video encoder</dt><dd id="cap-codec">…</dd>
+        <dt>Motion sensors</dt><dd id="cap-imu">…</dd>
+      </dl>
+      <label class="check"><input id="depth" type="checkbox" /> Also record ARCore depth (5 per second)</label>
+      <button id="start-ar" type="button" disabled>Record with AR</button>
+      <button id="start-camera" class="secondary" type="button" disabled>Record camera only</button>
+      <p id="status"></p>
+      <p id="error" role="alert"></p>
+    </main>
+
+    <section id="hud" class="hud">
+      <dl>
+        <dt>Time</dt><dd id="hud-time">0 s</dd>
+        <dt>Frames</dt><dd id="hud-frames">0</dd>
+        <dt>Gyro</dt><dd id="hud-imu">…</dd>
+      </dl>
+      <p id="hud-track" data-ok="yes">starting…</p>
+      <button id="stop" type="button">Stop and save</button>
+    </section>
+
+    <main id="done" class="panel">
+      <h1>Recording ready</h1>
+      <dl id="summary" class="caps"></dl>
+      <a id="save" class="button" href="#">Save bundle</a>
+      <button id="again" class="secondary" type="button">Record again</button>
+    </main>
+
+    <script type="module" src="record.js"></script>
+  </body>
+</html>
