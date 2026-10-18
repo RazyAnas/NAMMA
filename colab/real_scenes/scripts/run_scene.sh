@@ -16,7 +16,7 @@ python3 $D/gauss_to_xyzrgb.py $W/init_k5.ply $W/init_k5_xyzrgb.ply
 python3 $D/make_whole_proj.py $W $W/init_k5_xyzrgb.ply $W/proj
 OPENSPLAT_TEST_PREFIX=test_ $OS_BIN $W/proj $FLAGS --save-every 1000 -o $out/splat.ply > $out/log_a.txt 2>&1 &
 P=$!
-until [ -f $out/splat_1000.ply ] && grep -q "^Step 1001" $out/log_a.txt; do
+until [ -f $out/splat_1000.ply ] && grep -q "^Step 1[0-9][0-9][0-9]:" $out/log_a.txt; do
   sleep 2; kill -0 $P 2>/dev/null || { tail -20 $out/log_a.txt; echo "training stopped early"; exit 1; }
 done
 kill $P; wait $P 2>/dev/null || true
