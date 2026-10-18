@@ -4,6 +4,7 @@
 # (MODP's pins break on Python 3.12, DepthCov has known CUDA 12 build issues) and MODP runs as a subprocess of that python.
 #   bash scripts/modp/setup_modp.sh tools      -> then set MODP_DIR=tools/Online-3DGS-Monocular MODP_PYTHON=tools/modp_env/bin/python
 set -eo pipefail
+trap 'echo; echo "!! MODP SETUP FAILED at line $LINENO: $BASH_COMMAND"; echo "!! Send these last lines to the project."' ERR
 BASE=$(realpath -m "${1:-/content}"); mkdir -p "$BASE"; ENV=$BASE/modp_env; MM=$BASE/micromamba; REPO=$BASE/Online-3DGS-Monocular
 CAP=$(nvidia-smi --query-gpu=compute_cap --format=csv,noheader | head -1); SM=${CAP/./}
 echo "GPU: $(nvidia-smi --query-gpu=name --format=csv,noheader | head -1), compute capability $CAP"
@@ -19,7 +20,14 @@ sed -i "s/arch=compute_86,code=sm_86/arch=compute_${SM},code=sm_${SM}/" DepthCov
 sed -i 's/^python -m pip install gsplat$/python -m pip install gsplat==1.5.3/' setup_env.sh
 
 # 2. micromamba + Python 3.9 + CUDA 11.8 compiler + gcc 11 (accepted by nvcc 11.8)
-if [ ! -x $MM/bin/micromamba ]; then mkdir -p $MM && mkdir -p $MM/bin && curl -sSL -o $MM/bin/micromamba https://github.com/mamba-org/micromamba-releases/releases/download/2.9.0/micromamba-linux-64 && chmod +x $MM/bin/micromamba; fi
+MM_URL=https://github.com/mamba-org/micromamba-releases/releases/download/2.9.0-0/micromamba-linux-64   # release tags end in -0
+if ! $MM/bin/micromamba --version >/dev/null 2>&1; then
+  mkdir -p $MM/bin && rm -f $MM/bin/micromamba
+  curl -fsSL --retry 3 -o $MM/bin/micromamba "$MM_URL" || { echo "!! Could not download micromamba from $MM_URL"; exit 3; }
+  chmod +x $MM/bin/micromamba
+  $MM/bin/micromamba --version >/dev/null 2>&1 || { echo "!! The micromamba download is not a working program ($(head -c 60 $MM/bin/micromamba))"; exit 3; }
+fi
+echo "micromamba $($MM/bin/micromamba --version)"
 export MAMBA_ROOT_PREFIX=$MM
 [ -x $ENV/bin/python ] || $MM/bin/micromamba create -y -p $ENV -c conda-forge python=3.9
 $MM/bin/micromamba install -y -p $ENV -c "nvidia/label/cuda-11.8.0" -c conda-forge cuda-toolkit=11.8 gxx_linux-64=11 gcc_linux-64=11
@@ -44,3 +52,4 @@ img, _, _ = rasterization(m, q, s, o, c, torch.eye(4, device='cuda')[None], K, 6
 from depth_cov_backends import *   # noqa: the compiled DepthCov kernels
 print('MODP env OK | torch', torch.__version__, '| CUDA', torch.version.cuda, '| gsplat', gsplat.__version__, '| render', tuple(img.shape))
 EOF
+touch $ENV/.modp_ok && echo "SETUP COMPLETE: MODP is ready"
