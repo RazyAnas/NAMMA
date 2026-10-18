@@ -46,7 +46,7 @@ set -x
 export OS_BIN=/content/OpenSplat/build/opensplat
 SCENES="phone_sfm:phone_ar/images:phone_ar/ar_poses/cameras.json phone_arba:phone_ar/images:phone_ar/ar_poses/cameras.json lobby_ref:lobby/images:lobby/sfm/cameras.json"
 for e in \\$SCENES; do IFS=: read s img cj <<< "\\$e"
-  mkdir -p /content/work/\\$s/clean; cp -r $R/data/\\$s/clean/. /content/work/\\$s/clean/
+  mkdir -p /content/work/\\$s/clean; cp -r $R/scenes/\\$s/clean/. /content/work/\\$s/clean/
   python3 $R/scripts/link_frames.py /content/work/\\$s $Z/\\$img $Z/\\$cj; done
 (for e in \\$SCENES; do s=\\${e%%:*}; python3 $R/scripts/prep_depth.py /content/work/\\$s /content/models/depth_anything_v2_vits.onnx > /content/work/\\$s.depth.log 2>&1; touch /content/work/\\$s.depth.done; done) &
 for e in \\$SCENES; do s=\\${e%%:*}
