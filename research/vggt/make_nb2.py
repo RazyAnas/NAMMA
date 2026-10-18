@@ -5,7 +5,7 @@ R = 'https://raw.githubusercontent.com/RazyAnas/NAMMA/claude/project-thread-gxgk
 cells = []
 md = lambda s: cells.append(dict(cell_type='markdown', metadata={}, source=s))
 code = lambda s: cells.append(dict(cell_type='code', metadata={}, execution_count=None, outputs=[], source=s))
-md("# NammaSpace: VGGT depth anchored to our SfM (T4, Run all, nothing to upload)")
+md("# NammaSpace: VGGT depth anchored to our SfM (T4 or CPU, Run all, nothing to upload)")
 code(f"""!pip -q install git+https://github.com/facebookresearch/vggt.git opencv-python-headless
 import os, zipfile, urllib.request
 B = 'https://github.com/isl-org/open3d_downloads/releases/download/augmented-icl-nuim/'
@@ -21,13 +21,13 @@ for f in FRAMES:
     open(f'icl/{f:05d}.jpg', 'wb').write(zc.read(f'{f:05d}.jpg')); open(f'icl/d{f:05d}.png', 'wb').write(zd.read(f'{f:05d}.png'))
 from vggt.models.vggt import VGGT
 from vggt.utils.load_fn import load_and_preprocess_images
-dev = 'cuda'; dtype = torch.bfloat16 if torch.cuda.get_device_capability()[0] >= 8 else torch.float16
+dev = 'cuda' if torch.cuda.is_available() else 'cpu'  # CPU fallback when Colab has no GPU left (slow, fp32)\ndtype = (torch.bfloat16 if torch.cuda.get_device_capability()[0] >= 8 else torch.float16) if dev == 'cuda' else torch.float32\nt0 = time.time()
 model = VGGT.from_pretrained('facebook/VGGT-1B').to(dev).eval()
 imgs = load_and_preprocess_images([f'icl/{f:05d}.jpg' for f in FRAMES]).to(dev)
-with torch.no_grad(), torch.cuda.amp.autocast(dtype=dtype):
+with torch.no_grad(), torch.autocast(device_type=dev, dtype=dtype, enabled=dev == 'cuda'):
     pred = model(imgs)
 depth = pred['depth'][0, ..., 0].float().cpu().numpy(); conf = pred['depth_conf'][0].float().cpu().numpy()
-print('depth', depth.shape, 'imgs', tuple(imgs.shape))""")
+secs = time.time() - t0; print('depth', depth.shape, 'imgs', tuple(imgs.shape), f'{secs:.0f} s on {dev}')""")
 code("""S = json.load(open('sparse_samples.json')); G = [gt_depth(f'icl/d{f:05d}.png') for f in FRAMES]
 assert depth.shape[1:] == (H, W), depth.shape
 def raw(pred, gt, mask=None):
@@ -39,7 +39,7 @@ def raw(pred, gt, mask=None):
     o = np.array(o); return dict(absrel_pct=float(o[:, 0].mean() * 100), delta1_pct=float(o[:, 1].mean() * 100), median_err_cm=float(o[:, 2].mean()))
 anc = [fit_depth_scale(d, np.array(S[str(f)])) for d, f in zip(depth, FRAMES)]
 top70 = [c >= np.percentile(c, 30) for c in conf]
-res = dict(gpu=torch.cuda.get_device_name(0),
+res = dict(device=torch.cuda.get_device_name(0) if dev == 'cuda' else 'cpu', seconds=secs,
            vggt_anchored_to_our_sfm=raw(anc, G),
            vggt_anchored_top70_conf=raw(anc, G, top70),
            vggt_true_scale_per_frame=depth_metrics(list(depth), G, 'scale'),
