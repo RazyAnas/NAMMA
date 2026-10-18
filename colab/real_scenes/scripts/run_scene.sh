@@ -7,13 +7,13 @@
 #  4. resume to 3000, render the held-out views, score PSNR / SSIM
 # usage: run_scene.sh <work dir>   (needs OS_BIN; the work dir comes from prep_sfm.py + prep_depth.py)
 set -e
-D=$(cd $(dirname $0); pwd); W=$1; out=$W/run; mkdir -p $out
-export OPENSPLAT_PAPER_ADC=1; EXTRA="--refine-every 100 --densify-from 500 --densify-until 2500"
+D=$(cd $(dirname $0); pwd); W=$1; out=$W/${RUN:-run}; mkdir -p $out
+export OPENSPLAT_PAPER_ADC=1; EXTRA=${EXTRA:-"--refine-every 100 --densify-from 500 --densify-until 2500"}
 FLAGS="-n ${TOTAL:-3000} -d 1 --num-downscales 2 --resolution-schedule 500 $EXTRA"
 date +%s > $out/start.txt
-python3 $D/modp_init.py $W $W/init_k5.ply --k-feat 5 --k-grid 20 --stats $out/init_stats.json | cut -c1-300
+[ -f $W/proj/sparse/0/points3D.bin ] || { python3 $D/modp_init.py $W $W/init_k5.ply --k-feat 5 --k-grid 20 --stats $out/init_stats.json | cut -c1-300
 python3 $D/gauss_to_xyzrgb.py $W/init_k5.ply $W/init_k5_xyzrgb.ply
-python3 $D/make_whole_proj.py $W $W/init_k5_xyzrgb.ply $W/proj
+python3 $D/make_whole_proj.py $W $W/init_k5_xyzrgb.ply $W/proj; }
 OPENSPLAT_TEST_PREFIX=test_ $OS_BIN $W/proj $FLAGS --save-every 1000 -o $out/splat.ply > $out/log_a.txt 2>&1 &
 P=$!
 until [ -f $out/splat_1000.ply ] && grep -q "^Step 1010:" $out/log_a.txt; do
