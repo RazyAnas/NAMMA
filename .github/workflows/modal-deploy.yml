@@ -30,7 +30,7 @@ jobs:
           python-version: "3.11"
       - run: pip install -q modal==1.6.2
       - name: Sign in to Modal (open the link in the notice above, on your phone)
-        run: python scripts/modal_login.py --wait 900 --expires-in 7200
+        run: python scripts/modal_login.py --wait 1800 --expires-in 7200
       - name: Deploy
         env:
           NAMMA_GPU: ${{ inputs.gpu }}
