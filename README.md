@@ -105,6 +105,13 @@ normal upload accepts, and a report with measured rates, tracking loss and the I
 [docs/SENSOR_CAPTURE.md](docs/SENSOR_CAPTURE.md) for what each stream is for, what Android Chrome can deliver,
 what was tested without a phone, and the phone test steps.
 
+## Phone studio: quick 3D on the phone, photoreal render on the laptop
+
+`python scripts/serve_render.py` prints a link for the phone. After recording, the phone builds a rough 3D
+model from ARCore depth in about a second; **Send for render** uploads the recording to the laptop (or a
+Colab GPU via `notebooks/phone_render_colab.ipynb`) and the photoreal splat comes back into the same
+viewer. See [docs/PHONE_STUDIO.md](docs/PHONE_STUDIO.md).
+
 ## Live capture from a phone browser
 
 No app install: the phone opens a web page served by this backend and streams keyframes while the laptop

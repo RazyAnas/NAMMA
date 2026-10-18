@@ -2,6 +2,7 @@ from contextlib import asynccontextmanager
 from pathlib import Path
 
 from fastapi import FastAPI
+from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 
 from app.api import router
@@ -21,6 +22,9 @@ async def lifespan(_: FastAPI):
 
 settings = get_settings()
 app = FastAPI(title=settings.app_name, version="0.1.0", lifespan=lifespan)
+# The phone page is usually served from GitHub Pages (another origin) and calls /api/v1/remote here;
+# those calls carry the pairing key, which is what actually protects a tunnelled laptop.
+app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"], max_age=3600)
 app.include_router(router)
 app.include_router(live_router)
 for pipeline_router in pipeline_routers:
