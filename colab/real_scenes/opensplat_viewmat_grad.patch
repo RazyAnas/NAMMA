@@ -1,0 +1,29 @@
+--- a/project_gaussians.cpp
++++ b/project_gaussians.cpp
+@@ -72,11 +72,25 @@
+                                             conics, v_xys, v_depths, v_conics);
+     torch::Tensor none;
+ 
++    // NAMMA: gradient for the view matrix, so per-camera pose refinement also works on the GPU path.
++    // The camera-frame mean is p_c = R p + t, so dL/dp_c = R dL/dp; dL/dR = sum dL/dp_c p^T, dL/dt = sum dL/dp_c.
++    // (Covers every term that depends on the mean; the rotation of the 3D covariance into the camera is not included.)
++    torch::Tensor v_view;
++    if (viewMat.requires_grad()){
++        using torch::indexing::Slice;
++        torch::Tensor vm = std::get<2>(t);
++        torch::Tensor R = viewMat.index({Slice(0, 3), Slice(0, 3)}).detach();
++        torch::Tensor vc = torch::matmul(vm, R.transpose(0, 1));
++        v_view = torch::zeros_like(viewMat);
++        v_view.index_put_({Slice(0, 3), Slice(0, 3)}, torch::matmul(vc.transpose(0, 1), means.detach()));
++        v_view.index_put_({Slice(0, 3), 3}, vc.sum(0));
++    }
++
+     return {std::get<2>(t), // v_mean
+             std::get<3>(t), // v_scale
+             none, // globScale
+             std::get<4>(t), // v_quat
+-            none, // viewMat
++            v_view, // viewMat
+             none, // projMat
+             none, // fx
+             none, // fy
