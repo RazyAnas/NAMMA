@@ -88,7 +88,8 @@ async function checkPairing() {
   }
   $('pair-status').textContent = `Checking ${pairing.server} …`;
   try {
-    const hello = await new RenderClient(pairing.server, pairing.key).hello();
+    let hello = await new RenderClient(pairing.server, pairing.key).hello();
+    if (hello.claimable) hello = await claimServer(); // a fresh cloud server: this phone becomes its owner
     const what = hello.photoreal ? `photoreal splats with ${hello.trainer}` : hello.dense_points ? 'dense 3D points (no splat trainer on it yet)' : 'sparse points only';
     machine = hello.machine;
     $('pair-status').textContent = `Connected to ${hello.machine}: it can make ${what}.`;
@@ -104,6 +105,25 @@ async function checkPairing() {
     $('send').disabled = true;
     return null;
   }
+}
+
+async function claimServer() {
+  const bytes = crypto.getRandomValues(new Uint8Array(24));
+  const key = btoa(String.fromCharCode(...bytes)).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+  await new RenderClient(pairing.server, '').json('/api/v1/remote/claim', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ key }),
+  });
+  pairing = { server: pairing.server, key };
+  try {
+    storage?.setItem('namma.server', pairing.server);
+    storage?.setItem('namma.key', key);
+  } catch {
+    // not persisted: Change server shows the key to write down
+  }
+  $('key').value = key;
+  return new RenderClient(pairing.server, key).hello();
 }
 
 function savePairing() {

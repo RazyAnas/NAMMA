@@ -29,17 +29,21 @@ billed only while it renders. A render keeps going with the phone page closed. M
 gives $30 of free credit a month; at Modal's price list an L4 is about $0.80 an hour and a T4 about
 $0.59 an hour (not measured here).
 
-One-time setup, all in the phone's browser:
+Deploy, all in the phone's browser, with no token or secret stored anywhere:
 
-1. Sign up at modal.com (GitHub sign-in works). Settings > API tokens > **New token**: it shows a token
-   id and a token secret.
-2. On github.com/RazyAnas/NAMMA: Settings > Secrets and variables > Actions > **New repository secret**,
-   three times: `MODAL_TOKEN_ID`, `MODAL_TOKEN_SECRET`, and `NAMMA_REMOTE_KEY` (any password you pick).
-3. Actions tab: enable workflows if GitHub asks (forks start with them off), open **Deploy render server
-   to Modal**, tap **Run workflow**. The first run builds the image (gsplat's GPU kernels are compiled
-   once, there); later pushes redeploy by themselves.
-4. The run's summary shows the phone link, `https://<you>--namma-web.modal.run/record/`. Open it, type
-   the pairing key once, and bookmark it.
+1. github.com/RazyAnas/NAMMA > Actions > **Deploy render server to Modal** > **Run workflow** (pick the
+   GPU; L4 is the default).
+2. Open the run. A **Sign in to Modal** notice at the top has a link: open it, sign in to the Modal
+   account that should pay, approve. The token it hands the run lasts 2 hours and is never saved
+   (`scripts/modal_login.py`, Modal's own `modal token new` sign-in).
+3. The first deploy builds the image (gsplat's GPU kernels are compiled once, there). The run's summary
+   then shows the phone link, `https://<workspace>--namma-web.modal.run/record/`.
+4. Open it on the phone. A fresh server is paired by the first phone that opens it: the page makes a
+   random key, the server keeps it (`POST /api/v1/remote/claim`, stored on the `namma-db` volume) and
+   from then on only that key works. Change server shows the key, for a second phone.
+
+Another Modal account is the same steps with that account: it gets its own link, GPU bill and scan
+history (each account has its own volumes).
 
 ### Colab: free GPU while the notebook runs
 
@@ -90,7 +94,10 @@ compensation Gaussians); it has not been measured on phone footage or with the r
 ## Security
 
 The tunnel URL is public, so every `/api/v1/remote` call needs the pairing key (`NAMMA_REMOTE_KEY`, sent
-as `X-Namma-Key` or `?key=`). CORS is open because the page is served from GitHub Pages.
+as `X-Namma-Key` or `?key=`). CORS is open because the page is served from GitHub Pages. The Modal
+server has no key until its first phone claims one; until then it answers only `/hello` and `/claim`,
+so the window is the minutes between a deploy and opening the link. The Modal sign-in link in a public
+repository's Actions log can only hand a token to that run, for whoever approves it.
 
 ## Measured (in this container, 4-core CPU, no GPU)
 

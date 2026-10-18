@@ -162,3 +162,17 @@ async def test_remote_renders_supply_live_state_and_capabilities(client, monkeyp
     assert hello["machine"] == "Modal L4" and hello["photoreal"] and hello["history"]
     detail = (await client.get(f"/api/v1/remote/renders/{job_id}")).json()
     assert detail["progress"] == 0.6 and detail["eta_seconds"] == 42 and detail["steps"][0]["key"] == "splat"
+
+
+async def test_a_fresh_cloud_server_is_paired_by_the_first_phone(client, monkeypatch, tmp_path):
+    monkeypatch.delenv("NAMMA_REMOTE_KEY", raising=False)
+    monkeypatch.setenv("NAMMA_REMOTE_KEY_FILE", str(tmp_path / "db" / "pairing_key"))
+    assert (await client.get("/api/v1/remote/hello")).json()["claimable"] is True
+    assert (await client.get("/api/v1/remote/renders")).status_code == 403  # nothing else until paired
+    assert (await client.post("/api/v1/remote/claim", json={"key": "short"})).status_code == 422
+    key = "k" * 32
+    assert (await client.post("/api/v1/remote/claim", json={"key": key})).json() == {"paired": True}
+    assert (await client.get("/api/v1/remote/hello")).status_code == 401
+    assert (await client.get("/api/v1/remote/hello", headers={"X-Namma-Key": key})).json()["claimable"] is False
+    assert (await client.post("/api/v1/remote/claim", json={"key": "x" * 32})).status_code == 409
+    assert (await client.get("/api/v1/remote/renders", headers={"X-Namma-Key": key})).status_code == 200

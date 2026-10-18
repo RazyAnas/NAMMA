@@ -12,9 +12,10 @@ Two functions share one image:
 The web container never shares the sqlite file with a GPU container (sqlite on a shared volume is not
 safe), and a render keeps going when the phone closes the page or the web container goes to sleep.
 
-Deploy (no laptop): .github/workflows/modal-deploy.yml runs `modal deploy modal_app.py` on every push
-with the MODAL_TOKEN_ID / MODAL_TOKEN_SECRET / NAMMA_REMOTE_KEY repository secrets. The phone link is
-https://<workspace>--namma-web.modal.run/record/ ; the page pairs with the server it is served from.
+Deploy (no laptop, no stored secrets): run .github/workflows/modal-deploy.yml from GitHub's Actions tab,
+open the Modal sign-in link it shows, approve with whichever Modal account should pay, and it deploys
+there (scripts/modal_login.py). The phone link is https://<workspace>--namma-web.modal.run/record/ ; the
+first phone that opens it pairs with it by itself (a random key, kept on the `namma-db` volume).
 
     NAMMA_GPU=T4 modal deploy modal_app.py     # cheaper, slower GPU (default L4)
 """
@@ -59,7 +60,6 @@ app = modal.App("namma")
 data = modal.Volume.from_name("namma-data", create_if_missing=True)
 database = modal.Volume.from_name("namma-db", create_if_missing=True)
 live = modal.Dict.from_name("namma-live", create_if_missing=True)
-secret = modal.Secret.from_name("namma")  # NAMMA_REMOTE_KEY, created by the deploy workflow
 
 COMMON_ENV = {"DATA_DIR": "/data", "LOG_DIR": "/tmp/logs"}  # nothing held open on /data, so the web side can reload it
 STALE_SECONDS = 90  # no heartbeat for this long: ask Modal whether the render container is still alive
@@ -75,7 +75,7 @@ def _enter_repo() -> None:
 
 # ---- GPU side -------------------------------------------------------------------------------------
 
-@app.function(image=image, gpu=GPU, volumes={"/data": data}, secrets=[secret], timeout=4 * 3600,
+@app.function(image=image, gpu=GPU, volumes={"/data": data}, timeout=4 * 3600,
               env={**COMMON_ENV, "DATABASE_URL": "sqlite:////tmp/render.db"})
 def render(job: dict) -> dict:
     """Runs one phone.render job (rows copied from the web container's history) and returns its end state."""
@@ -182,9 +182,9 @@ class CloudRenders:
         return result
 
 
-@app.function(image=image, volumes={"/data": data, "/db": database}, secrets=[secret], max_containers=1,
-              scaledown_window=300, timeout=3600,
-              env={**COMMON_ENV, "DATABASE_URL": "sqlite:////db/namma.db", "JOBS_RUN_ELSEWHERE": "true"})
+@app.function(image=image, volumes={"/data": data, "/db": database}, max_containers=1, scaledown_window=300, timeout=3600,
+              env={**COMMON_ENV, "DATABASE_URL": "sqlite:////db/namma.db", "JOBS_RUN_ELSEWHERE": "true",
+                   "NAMMA_REMOTE_KEY_FILE": "/db/pairing_key"})
 @modal.concurrent(max_inputs=50)
 @modal.asgi_app()
 def web():

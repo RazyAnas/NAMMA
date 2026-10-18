@@ -126,9 +126,28 @@ def _timestamp(value: datetime | None) -> float | None:
     return (value if value.tzinfo else value.replace(tzinfo=timezone.utc)).timestamp()
 
 
+def key_file() -> Path | None:
+    """Where a server that is paired by its first phone keeps the key (the Modal cloud: NAMMA_REMOTE_KEY_FILE)."""
+    path = os.environ.get("NAMMA_REMOTE_KEY_FILE")
+    return Path(path) if path else None
+
+
+def pairing_key() -> str | None:
+    if os.environ.get("NAMMA_REMOTE_KEY"):
+        return os.environ["NAMMA_REMOTE_KEY"]
+    path = key_file()
+    return path.read_text().strip() if path and path.is_file() else None
+
+
+def claimable() -> bool:
+    return key_file() is not None and pairing_key() is None
+
+
 def require_key(request: Request) -> None:
-    expected = os.environ.get("NAMMA_REMOTE_KEY")
+    expected = pairing_key()
     if not expected:
+        if claimable() and not request.url.path.endswith("/hello"):
+            raise HTTPException(status_code=403, detail="This server is not paired yet; open its /record/ page to pair it.")
         return
     given = request.headers.get("x-namma-key") or request.query_params.get("key") or ""
     if not secrets.compare_digest(given, expected):
@@ -412,10 +431,30 @@ class UploadFinish(BaseModel):
     overrides: dict = Field(default_factory=dict, description="per-render tweaks of the quality preset")
 
 
+class Claim(BaseModel):
+    key: str = Field(min_length=16, max_length=200, pattern="^[A-Za-z0-9_-]+$")
+
+
+@router.post("/claim")
+async def claim(request: Claim) -> dict:
+    """First phone to open a fresh cloud server pairs it: its random key becomes the only key that works."""
+    path = key_file()
+    if path is None or pairing_key() is not None:
+        raise HTTPException(status_code=409, detail="This server is already paired; use the key from the phone that paired it.")
+    path.parent.mkdir(parents=True, exist_ok=True)
+    try:
+        with path.open("x") as handle:  # two phones racing: only the first write wins
+            handle.write(request.key)
+    except FileExistsError as exc:
+        raise HTTPException(status_code=409, detail="This server was just paired by another phone.") from exc
+    return {"paired": True}
+
+
 @router.get("/hello", dependencies=[Depends(require_key)])
 async def hello() -> dict:
     """What the phone shows after "Test connection": this machine and what it can render."""
-    base = {"name": get_settings().app_name, "chunk_bytes": CHUNK_BYTES, "qualities": list(QUALITY), "history": True}
+    base = {"name": get_settings().app_name, "chunk_bytes": CHUNK_BYTES, "qualities": list(QUALITY), "history": True,
+            "claimable": claimable()}
     if REMOTE is not None:
         return {**base, **REMOTE.hello()}
     caps = capabilities()
