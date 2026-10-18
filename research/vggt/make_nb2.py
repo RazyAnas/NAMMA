@@ -10,10 +10,11 @@ code(f"""!pip -q install git+https://github.com/facebookresearch/vggt.git opencv
 import os, zipfile, urllib.request
 B = 'https://github.com/isl-org/open3d_downloads/releases/download/augmented-icl-nuim/'
 for f in ['livingroom1-color.zip', 'livingroom1-depth-clean.zip', 'livingroom1-traj.txt']:
+    if os.path.exists(f) and f.endswith('.zip') and not zipfile.is_zipfile(f): os.remove(f)  # half-downloaded
     if not os.path.exists(f): urllib.request.urlretrieve(B + f, f)
 for f in ['vggt_eval.py', 'anchor.py', 'sparse_samples.json']: urllib.request.urlretrieve('{R}' + f, f)
 print('data ok')""")
-code("""import torch, numpy as np, json, time
+code("""import os, zipfile, torch, numpy as np, json, time
 from vggt_eval import *; from anchor import *
 os.makedirs('icl', exist_ok=True)
 zc, zd = zipfile.ZipFile('livingroom1-color.zip'), zipfile.ZipFile('livingroom1-depth-clean.zip')
