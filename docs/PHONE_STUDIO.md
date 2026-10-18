@@ -35,6 +35,27 @@ For the photoreal splat without an NVIDIA laptop, open `notebooks/phone_render_c
 Quality presets (phone menu): fast = every 15th frame, 2,000 splat steps, half resolution; balanced =
 every 10th frame, 7,000 steps; best = every 5th frame, 15,000 steps, full resolution.
 
+### Best on OpenSplat: the sharper recipe
+
+With OpenSplat as the trainer, Best runs `scripts/train_opensplat_best.py` (3,000 steps) instead of
+plain training. It is the recipe the whole-room work measured on ICL-NUIM (OpenSplat on CPU, 3,000
+steps): held-out PSNR 31.33 -> 32.26 dB, SSIM 0.877 -> 0.900, 344k Gaussians, about 92 min.
+
+1. MODP pixel placement from the dense step's metric depth (saved as
+   `geometry/monocular-depth-metric/*.npy`): corners and strong edges every 2 px plus an 8 px grid,
+   deduplicated in a MOHV hash voxel. Capped at 500k points at random (`--max-points`); the cap is
+   ours, not part of the measured recipe.
+2. 3DGS paper densification (`OPENSPLAT_PAPER_ADC=1 --refine-every 100 --densify-from 500
+   --densify-until 2500`).
+3. MODP error compensation at step 1,000: renders every training view (30 at a time), adds a Gaussian
+   at every 8th pixel whose SSIM is below 0.5, then resumes to 3,000.
+
+Steps 2 and 3 need OpenSplat built with the NAMMA patches (`model_paper_adc.diff` and the held-out
+patch that adds `--densify-from/--densify-until/--resume/--val-render/--save-every`). A stock OpenSplat
+gets step 1 only and says so in `train_info.json` (`patched_opensplat: false`). The pipeline was run end
+to end here with a stand-in OpenSplat CLI (39 views: 1,016,802 placed points capped to 500k, 25,236
+compensation Gaussians); it has not been measured on phone footage or with the real patched binary.
+
 ## Security
 
 The tunnel URL is public, so every `/api/v1/remote` call needs the pairing key (`NAMMA_REMOTE_KEY`, sent

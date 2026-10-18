@@ -57,6 +57,9 @@ QUALITY = {
     "balanced": {"stride": 10, "iterations": 7000, "downscale": 2, "pixel_stride": 4, "max_splats": 700000},
     "best": {"stride": 5, "iterations": 15000, "downscale": 1, "pixel_stride": 4, "max_splats": 1000000},
 }
+# Best with OpenSplat runs the measured CPU recipe (scripts/train_opensplat_best.py) at the step count it was measured
+# with: on a CPU, more steps cost hours, and the recipe gained +0.9 dB at 3,000 steps.
+OPENSPLAT_BEST_ITERATIONS = 3000
 
 
 def require_key(request: Request) -> None:
@@ -140,6 +143,10 @@ class StepContext(TaskContext):
         self.parent.progress(f"{self.key}:{stage}", self.low + (self.high - self.low) * max(0.0, min(1.0, value)))
 
 
+def quality_is_best(quality: dict) -> bool:
+    return quality.get("stride") == QUALITY["best"]["stride"] and quality.get("downscale") == QUALITY["best"]["downscale"]
+
+
 def render_plan(kind: str, quality: dict, trainer: str | None) -> list[dict]:
     q = quality
     if kind == "ar":
@@ -161,9 +168,12 @@ def render_plan(kind: str, quality: dict, trainer: str | None) -> list[dict]:
             {"key": "dense", "label": "Dense points (Depth Anything V2)", "task": "points.monocular",
              "params": {"poses": "sfm", "pixel_stride": q["pixel_stride"]}, "optional": True},
         ]
-    steps.append({"key": "splat", "label": f"Photoreal splat ({trainer or 'no trainer here'})", "task": "splats.train",
-                  "params": {"trainer": trainer or "opensplat", "iterations": q["iterations"], "downscale": q["downscale"],
-                             "init": "monocular"}, "optional": True, "needs_trainer": True})
+    best = quality_is_best(q) and trainer == "opensplat"
+    label = f"Photoreal splat ({trainer or 'no trainer here'}{', best recipe' if best else ''})"
+    steps.append({"key": "splat", "label": label, "task": "splats.train",
+                  "params": {"trainer": trainer or "opensplat", "iterations": OPENSPLAT_BEST_ITERATIONS if best else q["iterations"],
+                             "downscale": q["downscale"], "init": "monocular", "recipe": "best" if best else "plain"},
+                  "optional": True, "needs_trainer": True})
     return steps
 
 

@@ -96,3 +96,11 @@ def test_render_plan_uses_ar_poses_for_ar_bundles():
     assert steps[-1]["optional"] and "no trainer" in steps[-1]["label"]
     video = phone.render_plan("video", phone.QUALITY["fast"], "gsplat")
     assert [s["task"] for s in video] == ["capture.frames", "tracking.sfm", "points.monocular", "splats.train"]
+
+
+def test_render_plan_uses_the_best_recipe_only_for_best_on_opensplat():
+    best = phone.render_plan("ar", phone.QUALITY["best"], "opensplat")[-1]
+    assert best["params"]["recipe"] == "best" and best["params"]["iterations"] == phone.OPENSPLAT_BEST_ITERATIONS
+    assert "best recipe" in best["label"]
+    assert phone.render_plan("ar", phone.QUALITY["best"], "gsplat")[-1]["params"]["recipe"] == "plain"
+    assert phone.render_plan("ar", phone.QUALITY["fast"], "opensplat")[-1]["params"]["recipe"] == "plain"
