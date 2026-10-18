@@ -1,0 +1,72 @@
+# Puts the phone's render server on Modal (modal_app.py) on every push, so nothing runs on a laptop.
+# Needs three repository secrets (Settings > Secrets and variables > Actions):
+#   MODAL_TOKEN_ID, MODAL_TOKEN_SECRET  from modal.com > Settings > API tokens
+#   NAMMA_REMOTE_KEY                    any password; the phone asks for it once
+# The phone link is printed in this run's summary.
+name: Deploy render server to Modal
+
+on:
+  push:
+    branches: [main, claude/project-thread-6fvpyc]
+    paths: ["app/**", "scripts/**", "modal_app.py", ".github/workflows/modal-deploy.yml"]
+  workflow_dispatch:
+
+concurrency:
+  group: modal-deploy
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    env:
+      MODAL_TOKEN_ID: ${{ secrets.MODAL_TOKEN_ID }}
+      MODAL_TOKEN_SECRET: ${{ secrets.MODAL_TOKEN_SECRET }}
+      NAMMA_REMOTE_KEY: ${{ secrets.NAMMA_REMOTE_KEY }}
+    steps:
+      - name: Check the secrets are set
+        id: secrets
+        run: |
+          missing=""
+          for name in MODAL_TOKEN_ID MODAL_TOKEN_SECRET NAMMA_REMOTE_KEY; do
+            [ -n "${!name}" ] || missing="$missing $name"
+          done
+          if [ -n "$missing" ]; then
+            echo "Skipping the deploy: add these repository secrets:$missing" | tee -a "$GITHUB_STEP_SUMMARY"
+            echo "ready=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "ready=true" >> "$GITHUB_OUTPUT"
+          fi
+      - uses: actions/checkout@v4
+        if: steps.secrets.outputs.ready == 'true'
+      - uses: actions/setup-python@v5
+        if: steps.secrets.outputs.ready == 'true'
+        with:
+          python-version: "3.11"
+      - name: Deploy
+        if: steps.secrets.outputs.ready == 'true'
+        run: |
+          pip install -q modal==1.6.2
+          printf 'NAMMA_REMOTE_KEY=%s\n' "$NAMMA_REMOTE_KEY" > "$RUNNER_TEMP/namma.env"
+          modal secret create namma --from-dotenv "$RUNNER_TEMP/namma.env" --force > /dev/null
+          rm "$RUNNER_TEMP/namma.env"
+          modal deploy modal_app.py 2>&1 | tee deploy.log
+      - name: Check the server answers
+        if: steps.secrets.outputs.ready == 'true'
+        run: |
+          url=$(grep -oE 'https://[a-z0-9-]+--namma-web[a-z0-9-]*\.modal\.run' deploy.log | head -1)
+          [ -n "$url" ] || { echo "No web URL in the deploy output"; exit 1; }
+          for attempt in 1 2 3 4 5 6; do
+            if curl -fsS -m 120 -H "X-Namma-Key: $NAMMA_REMOTE_KEY" "$url/api/v1/remote/hello" > hello.json; then break; fi
+            sleep 20
+          done
+          cat hello.json
+          {
+            echo "## Phone link"
+            echo
+            echo "Open on the phone: **$url/record/**"
+            echo
+            echo "It asks for the pairing key (your NAMMA_REMOTE_KEY secret) once, then remembers it."
+            echo
+            echo "Server: \`$(cat hello.json)\`"
+          } >> "$GITHUB_STEP_SUMMARY"

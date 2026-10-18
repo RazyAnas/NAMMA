@@ -43,3 +43,11 @@ progress { width: 100%; height: 10px; margin-top: 12px; accent-color: #b8ff66; }
 .steps li[data-state="failed"] { color: #ffcf5c; }
 label.button { cursor: pointer; }
 [hidden] { display: none !important; }
+.history { margin: 8px 0 0; padding: 0; list-style: none; }
+.history li { margin: 8px 0; }
+.history button { display: block; min-height: 0; margin: 0; padding: 12px; border-radius: 12px; background: #0d1d19; color: inherit; text-align: left; line-height: 1.35; font-weight: 400; }
+.history strong { display: block; font-weight: 700; }
+.history .meta { display: block; font-size: 14px; color: #ffffffb3; }
+.history [data-status="running"] .meta, .history [data-status="queued"] .meta { color: #b8ff66; }
+.history [data-status="failed"] .meta { color: #ffcf5c; }
+.history progress { margin-top: 6px; height: 6px; }

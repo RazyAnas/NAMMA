@@ -104,3 +104,61 @@ def test_render_plan_uses_the_best_recipe_only_for_best_on_opensplat():
     assert "best recipe" in best["label"]
     assert phone.render_plan("ar", phone.QUALITY["best"], "gsplat")[-1]["params"]["recipe"] == "plain"
     assert phone.render_plan("ar", phone.QUALITY["fast"], "opensplat")[-1]["params"]["recipe"] == "plain"
+
+
+def _render_job(name, status="running", progress=0.5, started_ago=100.0):
+    from datetime import datetime, timedelta, timezone
+
+    from app.database import SessionLocal
+    from app.models import Job, Project
+
+    with SessionLocal() as db:
+        project = Project(name=name, source_filename="a.zip", source_path="a.zip", source_sha256="0" * 64, source_size_bytes=1)
+        db.add(project)
+        db.commit()
+        job = Job(project_id=project.id, kind="phone.render", status=status, progress=progress,
+                  started_at=datetime.now(timezone.utc) - timedelta(seconds=started_ago))
+        db.add(job)
+        db.commit()
+        return job.id, project.id
+
+
+def test_time_left_uses_the_trainers_step_counter(tmp_path):
+    import time
+
+    (tmp_path / "splat").mkdir()
+    (tmp_path / "splat" / "log.txt").write_text("step 0/7000 loss 0.3\nstep 3500/7000 loss 0.1 gaussians 9 60s\n")
+    steps = [{"key": "dense", "state": "done"}, {"key": "splat", "state": "running", "started": time.time() - 100}]
+    assert 115 <= phone.seconds_left(tmp_path, steps, 0.8, time.time() - 400) <= 125  # half-way after 100 s, plus packing
+    (tmp_path / "splat" / "log.txt").write_text("Step 250: 0.0412 (25%)\n")
+    assert 315 <= phone.seconds_left(tmp_path, steps, 0.8, None) <= 325
+    assert 99 <= phone.seconds_left(tmp_path, [{"key": "dense", "state": "running"}], 0.5, time.time() - 100) <= 101
+
+
+async def test_history_lists_renders_newest_first_with_time_left(client):
+    first, _ = _render_job("kitchen", status="succeeded", progress=1.0)
+    second, _ = _render_job("lobby", progress=0.25, started_ago=60)
+    renders = (await client.get("/api/v1/remote/renders")).json()["renders"]
+    assert [r["name"] for r in renders] == ["lobby", "kitchen"]
+    assert 175 <= renders[0]["eta_seconds"] <= 185 and renders[1]["eta_seconds"] is None
+    detail = (await client.get(f"/api/v1/remote/renders/{second}")).json()
+    assert detail["status"] == "running" and detail["steps"] == [] and detail["name"] == "lobby"
+
+
+async def test_remote_renders_supply_live_state_and_capabilities(client, monkeypatch):
+    job_id, _ = _render_job("hall", progress=0.1)
+
+    class Cloud:
+        def hello(self):
+            return {"machine": "Modal L4", "trainer": "gsplat", "photoreal": True}
+
+        def refresh(self, db, job):
+            job.progress = 0.6
+            db.commit()
+            return {"steps": [{"key": "splat", "state": "running"}], "log_tail": ["step 10/20"], "eta_seconds": 42}
+
+    monkeypatch.setattr(phone, "REMOTE", Cloud())
+    hello = (await client.get("/api/v1/remote/hello")).json()
+    assert hello["machine"] == "Modal L4" and hello["photoreal"] and hello["history"]
+    detail = (await client.get(f"/api/v1/remote/renders/{job_id}")).json()
+    assert detail["progress"] == 0.6 and detail["eta_seconds"] == 42 and detail["steps"][0]["key"] == "splat"

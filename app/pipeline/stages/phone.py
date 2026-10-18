@@ -7,7 +7,8 @@ same app) then runs the heavy pipeline as one job and the phone polls it and dow
     POST /api/v1/remote/uploads                      {filename, size}       -> {upload_id, chunk_bytes}
     PUT  /api/v1/remote/uploads/{id}/chunks/{index}  raw bytes              -> {received}
     POST /api/v1/remote/uploads/{id}/finish          {quality}              -> {render_id, project_id}
-    GET  /api/v1/remote/renders/{render_id}          status, steps, outputs
+    GET  /api/v1/remote/renders                      the phone's scan history, newest first
+    GET  /api/v1/remote/renders/{render_id}          status, steps, outputs, estimated time left
     GET  /api/v1/remote/renders/{render_id}/files/{name}   splat.splat | dense.ply | sparse.ply | result.json
 
 With AR bundles the job is: unpack -> triangulate on ARCore poses + BA -> dense Depth Anything points
@@ -21,19 +22,24 @@ scripts/serve_render.py always sets one because a tunnel URL is public.
 
 from __future__ import annotations
 
+from datetime import datetime, timezone
 import hashlib
 import json
 import os
 from pathlib import Path
+import re
 import secrets
 import shutil
 import time
 import uuid
 
+from typing import Protocol
+
 from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import FileResponse
 import numpy as np
 from pydantic import BaseModel, Field
+from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.config import get_settings
@@ -41,7 +47,7 @@ from app.database import get_db
 from app.models import Job, Project
 from app.pipeline.backends import capabilities, describe, missing_requirements
 from app.pipeline.stages.export import read_splat_ply, walk_scene_files
-from app.pipeline.tasks import TASKS, TaskContext, TaskError, job_dir, read_job_files, submit_task, task
+from app.pipeline.tasks import TASKS, TaskContext, TaskError, job_dir, submit_task, task
 from app.services.storage import ALLOWED_VIDEO_SUFFIXES, ensure_project_dirs, safe_filename
 
 
@@ -60,6 +66,64 @@ QUALITY = {
 # Best with OpenSplat runs the measured CPU recipe (scripts/train_opensplat_best.py) at the step count it was measured
 # with: on a CPU, more steps cost hours, and the recipe gained +0.9 dB at 3,000 steps.
 OPENSPLAT_BEST_ITERATIONS = 3000
+
+
+class RemoteRenders(Protocol):
+    """Renders that run on another machine (modal_app.py: GPU containers) while this server keeps the history."""
+
+    def hello(self) -> dict:
+        """What the render machine offers, merged into /hello."""
+
+    def refresh(self, db: Session, job: Job) -> dict | None:
+        """Live state of a queued/running job (steps, log_tail, eta_seconds); updates the job row when it ends."""
+
+
+REMOTE: RemoteRenders | None = None
+
+# gsplat prints "step 500/7000 ...", OpenSplat "Step 500: 0.0123 (7%)".
+TRAINING_STEP = re.compile(r"step (\d+)/(\d+)|Step (\d+): .*\((\d+)%\)")
+
+
+def training_fraction(log: Path) -> float | None:
+    if not log.is_file():
+        return None
+    with log.open("rb") as handle:
+        handle.seek(max(0, log.stat().st_size - 8192))
+        text = handle.read().decode("utf-8", "replace")
+    matches = list(TRAINING_STEP.finditer(text))
+    if not matches:
+        return None
+    last = matches[-1]
+    return int(last[1]) / int(last[2]) if last[1] else int(last[4]) / 100
+
+
+def seconds_left(directory: Path, steps: list[dict], progress: float, started: float | None) -> float | None:
+    """Rough time left: from the trainer's own step counter while it trains, else from the pace so far."""
+    now = time.time()
+    running = next((step for step in steps if step.get("state") == "running"), None)
+    if running and running.get("key") == "splat" and running.get("started"):
+        fraction = training_fraction(directory / "splat" / "log.txt")
+        if fraction and fraction > 0.02:
+            return round((now - running["started"]) * (1 - fraction) / fraction + 20)
+    if started and progress > 0.05:
+        return round((now - started) * (1 - progress) / progress)
+    return None
+
+
+def live_state(directory: Path, progress: float, started: float | None) -> dict:
+    steps_path, log = directory / "steps.json", directory / "log.txt"
+    try:
+        steps = json.loads(steps_path.read_text()) if steps_path.is_file() else []
+    except ValueError:  # written by an older or other writer mid-read
+        steps = []
+    tail = log.read_text(encoding="utf-8", errors="replace").splitlines()[-12:] if log.is_file() else []
+    return {"steps": steps, "log_tail": tail, "eta_seconds": seconds_left(directory, steps, progress, started)}
+
+
+def _timestamp(value: datetime | None) -> float | None:
+    if value is None:
+        return None
+    return (value if value.tzinfo else value.replace(tzinfo=timezone.utc)).timestamp()
 
 
 def require_key(request: Request) -> None:
@@ -201,8 +265,10 @@ def export_dataset(ctx: TaskContext) -> dict:
 
 
 def _write_steps(ctx: TaskContext, steps: list[dict]) -> None:
-    public = [{k: step.get(k) for k in ("key", "label", "state", "seconds", "summary", "reason")} for step in steps]
-    (ctx.job_dir / "steps.json").write_text(json.dumps(public, indent=2, default=str))
+    public = [{k: step.get(k) for k in ("key", "label", "state", "started", "seconds", "summary", "reason")} for step in steps]
+    temporary = ctx.job_dir / "steps.json.tmp"
+    temporary.write_text(json.dumps(public, indent=2, default=str))
+    temporary.replace(ctx.job_dir / "steps.json")  # read while the job runs, so never half-written
 
 
 def _summary(kind: str, result: dict) -> dict:
@@ -294,7 +360,7 @@ def phone_render(ctx: TaskContext) -> dict:
             ctx.log(f"skip {step['key']}: missing {missing}")
             _write_steps(ctx, steps)
             continue
-        step["state"] = "running"
+        step["state"], step["started"] = "running", time.time()
         _write_steps(ctx, steps)
         sub = StepContext(ctx, step["key"], step["params"], index / count, (index + 1) / count)
         t0 = time.time()
@@ -349,17 +415,18 @@ class UploadFinish(BaseModel):
 @router.get("/hello", dependencies=[Depends(require_key)])
 async def hello() -> dict:
     """What the phone shows after "Test connection": this machine and what it can render."""
+    base = {"name": get_settings().app_name, "chunk_bytes": CHUNK_BYTES, "qualities": list(QUALITY), "history": True}
+    if REMOTE is not None:
+        return {**base, **REMOTE.hello()}
     caps = capabilities()
     trainer = pick_trainer()
     return {
-        "name": get_settings().app_name,
+        **base,
         "machine": describe()["platform"],
         "trainer": trainer,
         "photoreal": trainer is not None,
         "dense_points": not missing_requirements(TASKS["points.monocular"].requires),
         "cuda": caps.get("cuda", False),
-        "chunk_bytes": CHUNK_BYTES,
-        "qualities": list(QUALITY),
     }
 
 
@@ -461,29 +528,49 @@ def _render_job(db: Session, render_id: str) -> Job:
     return job
 
 
-@router.get("/renders/{render_id}", dependencies=[Depends(require_key)])
-async def render_status(render_id: str, db: Session = Depends(get_db)) -> dict:
-    job = _render_job(db, render_id)
+def describe_render(db: Session, job: Job, detail: bool = True) -> dict:
     directory = job_dir(get_settings(), job.project_id, job.id)
-    steps_path = directory / "steps.json"
-    files = read_job_files(get_settings(), job, log_lines=12)
+    live = REMOTE.refresh(db, job) if REMOTE is not None and job.status in ("queued", "running") else None
+    if live is None:
+        live = live_state(directory, job.progress or 0.0, _timestamp(job.started_at))
+    result_path = directory / "outputs" / "result.json"
+    result = json.loads(result_path.read_text()) if result_path.is_file() else {}
     outputs = {}
     for name in OUTPUT_FILES:
         path = directory / "outputs" / name
         if path.is_file():
-            outputs[name] = {"bytes": path.stat().st_size, "url": f"/api/v1/remote/renders/{render_id}/files/{name}"}
-    return {
+            outputs[name] = {"bytes": path.stat().st_size, "url": f"/api/v1/remote/renders/{job.id}/files/{name}"}
+    summary = {
         "render_id": job.id,
         "project_id": job.project_id,
+        "name": job.project.name if job.project else None,
+        "created_at": _timestamp(job.created_at),
+        "started_at": _timestamp(job.started_at),
+        "finished_at": _timestamp(job.finished_at),
         "status": job.status,
         "stage": job.stage,
         "progress": job.progress,
+        "eta_seconds": live.get("eta_seconds") if job.status in ("queued", "running") else None,
         "error": job.error_message,
-        "steps": json.loads(steps_path.read_text()) if steps_path.is_file() else [],
+        "quality": result.get("quality"),
+        "best": result.get("best"),
         "outputs": outputs,
-        "best": (files.get("result") or {}).get("best"),
-        "log_tail": files.get("log_tail", []),
     }
+    if detail:
+        summary.update(steps=live.get("steps", []), log_tail=live.get("log_tail", []))
+    return summary
+
+
+@router.get("/renders", dependencies=[Depends(require_key)])
+async def list_renders(limit: int = 30, db: Session = Depends(get_db)) -> dict:
+    """The phone's scan history: every render sent to this server, newest first."""
+    jobs = db.scalars(select(Job).where(Job.kind == "phone.render").order_by(Job.created_at.desc()).limit(max(1, min(limit, 100))))
+    return {"renders": [describe_render(db, job, detail=False) for job in jobs]}
+
+
+@router.get("/renders/{render_id}", dependencies=[Depends(require_key)])
+async def render_status(render_id: str, db: Session = Depends(get_db)) -> dict:
+    return describe_render(db, _render_job(db, render_id))
 
 
 @router.get("/renders/{render_id}/files/{name}", dependencies=[Depends(require_key)])

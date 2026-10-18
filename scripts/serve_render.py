@@ -3,9 +3,9 @@
 Starts the NAMMA server with a fresh pairing key, opens a Cloudflare quick tunnel to it (free, no
 account; needs `cloudflared`: `brew install cloudflared` on a Mac), and prints:
 
-  * the phone link: the hosted recorder (GitHub Pages) with ?server=<tunnel>&key=<key>, which pairs
-    the phone with this laptop in one tap and is remembered on the phone;
-  * the same page served by the laptop itself through the tunnel, as a fallback.
+  * the phone link: the recorder page served by this server through the tunnel, with ?key=<key>, which
+    pairs the phone in one tap (the page is always the same version as the server);
+  * the hosted recorder (GitHub Pages) with ?server=<tunnel>&key=<key>, as an alternative.
 
 The tunnel is what makes this work on networks that block phone-to-laptop traffic (campus Wi-Fi),
 and it gives the HTTPS address WebXR needs. Uploads go in 8 MB chunks, under the tunnel's 100 MB
@@ -128,10 +128,11 @@ def main() -> int:
         print()
         print(f"Laptop ready: {hello['machine']}, can make {what}.")
         if public:
-            phone = f"{args.pages}?{query}"
-            print(f"\nOpen on the phone:\n  {phone}\n")
+            # The page this server serves is always the same version as the server; the hosted copy can lag.
+            phone = f"{public}/record/?{urllib.parse.urlencode({'key': key})}"
+            print(f"\nOpen on the phone (tap it if you are on the phone already):\n  {phone}\n")
             print_qr(phone)
-            print(f"\nSame page served by this laptop:\n  {public}/record/?key={urllib.parse.quote(key)}")
+            print(f"\nOr the hosted page, paired with this server:\n  {args.pages}?{query}")
         else:
             print(f"\nOn the same Wi-Fi, open on the phone:\n  {server_url}/record/?{query}")
             print("  WebXR needs HTTPS, so record on the hosted page, save the bundle, then open it on this page to send it.")

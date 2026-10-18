@@ -135,6 +135,19 @@ if (bundle) {
   await page.waitForTimeout(1500);
 }
 if (screenshot) await page.screenshot({ path: screenshot, fullPage: true });
+
+// ---- Part 3: scan history on the first screen, and opening a render from it -----------------------
+await page.goto(url);
+await page.waitForFunction(() => document.querySelectorAll('#history li').length > 0, null, { timeout: 20000 });
+const history = await page.evaluate(() => ({ shown: !document.getElementById('history-box').hidden,
+  items: [...document.querySelectorAll('#history li')].map((li) => li.textContent) }));
+check('history_listed', history.shown && history.items.length > 0, history.items.slice(0, 3));
+if (screenshot) await page.screenshot({ path: screenshot.replace(/\.png$/, '-history.png'), fullPage: true });
+if (bundle) {
+  await page.click('#history li button');
+  await page.waitForFunction(() => window.nammaStudio?.result, null, { timeout: 60000, polling: 1000 });
+  check('history_opens_result', true, await page.evaluate(() => window.nammaStudio.result.best));
+}
 report.ok = ok;
 console.log(JSON.stringify(report, null, 2));
 await browser.close();

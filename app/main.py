@@ -16,7 +16,8 @@ from app.services.jobs import recover_interrupted_jobs
 @asynccontextmanager
 async def lifespan(_: FastAPI):
     init_db()
-    recover_interrupted_jobs()
+    if not settings.jobs_run_elsewhere:  # cloud renders keep running while the web container sleeps
+        recover_interrupted_jobs()
     yield
 
 

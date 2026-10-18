@@ -1,4 +1,4 @@
-# Phone studio: quick model on the phone, photoreal render on the laptop
+# Phone studio: quick model on the phone, photoreal render in the cloud, on Colab or on the laptop
 
 The `/record/` page is now the whole capture-to-3D loop, no app install:
 
@@ -7,16 +7,48 @@ The `/record/` page is now the whole capture-to-3D loop, no app install:
 2. **Quick model, on the phone, in about a second:** ARCore depth back-projected with the ARCore pose and
    fused into a 3 cm voxel grid (`quick-model.js`), shown in a 3D viewer with the walked camera path and
    the floor grid. Saved as a .ply with one tap.
-3. **Send for render:** the bundle goes to the laptop in 8 MB resumable chunks (`remote.js`). The laptop
-   runs one job (`app/pipeline/stages/phone.py`, `POST /api/v1/remote/uploads/...`):
+3. **Send for render:** the bundle goes to a render server in 8 MB resumable chunks (`remote.js`): the
+   NAMMA cloud on Modal, a Colab GPU, or the laptop, which all run the same server and one job (`app/pipeline/stages/phone.py`, `POST /api/v1/remote/uploads/...`):
    unpack, triangulate on the ARCore poses + bundle adjustment, dense Depth Anything V2 points aligned to
    those poses, then a Gaussian splat initialised from the dense points (gsplat on an NVIDIA GPU / Colab,
    OpenSplat on a Mac, or any `GAUSSIAN_TRAINER_COMMAND`).
 4. **Result back on the phone:** the splat (`.splat`, rendered with Spark) or, without a trainer, the dense
-   points, in the same ARCore world frame as the quick model. The phone remembers the render, so
-   "Show my last render" works after a reload.
+   points, in the same ARCore world frame as the quick model.
+5. **Your scans:** the first screen lists every render the paired server has, newest first, with its
+   progress and time left while it runs (`GET /api/v1/remote/renders`). Tap one to open it. Time left
+   comes from the trainer's own step counter while it trains, otherwise from the pace so far, so it is
+   rough early on.
 
-## Run it
+## Run it from the phone only
+
+### NAMMA cloud (Modal): nothing to keep open
+
+`modal_app.py` runs the server on Modal: a small CPU container answers the phone and keeps the scan
+history, and each render gets its own GPU container (L4 by default, `NAMMA_GPU=T4` for cheaper) that is
+billed only while it renders. A render keeps going with the phone page closed. Modal's Starter plan
+gives $30 of free credit a month; at Modal's price list an L4 is about $0.80 an hour and a T4 about
+$0.59 an hour (not measured here).
+
+One-time setup, all in the phone's browser:
+
+1. Sign up at modal.com (GitHub sign-in works). Settings > API tokens > **New token**: it shows a token
+   id and a token secret.
+2. On github.com/RazyAnas/NAMMA: Settings > Secrets and variables > Actions > **New repository secret**,
+   three times: `MODAL_TOKEN_ID`, `MODAL_TOKEN_SECRET`, and `NAMMA_REMOTE_KEY` (any password you pick).
+3. Actions tab: enable workflows if GitHub asks (forks start with them off), open **Deploy render server
+   to Modal**, tap **Run workflow**. The first run builds the image (gsplat's GPU kernels are compiled
+   once, there); later pushes redeploy by themselves.
+4. The run's summary shows the phone link, `https://<you>--namma-web.modal.run/record/`. Open it, type
+   the pairing key once, and bookmark it.
+
+### Colab: free GPU while the notebook runs
+
+Tap **Start a free Colab GPU** on the page's first screen (or open `notebooks/phone_render_colab.ipynb`
+in Colab), sign in to Google, tap Runtime > **Run all** (the notebook asks for a T4 by itself), and tap
+the link the last cell prints: it opens the page served by that Colab, already paired. The server and
+its scans last only as long as the Colab session.
+
+## Run it on the laptop
 
 On the laptop (Mac: `brew install cloudflared` once):
 
@@ -25,12 +57,11 @@ python scripts/serve_render.py
 ```
 
 It starts the server with a fresh pairing key, opens a free Cloudflare quick tunnel, and prints a link
-(and a QR code if `pip install qrcode`) to the hosted recorder with `?server=...&key=...`. Open it on the
+(and a QR code if `pip install qrcode`) to the page served through the tunnel with `?key=...`, plus the
+hosted recorder with `?server=...&key=...`. Open it on the
 phone once; the pairing is remembered. The tunnel matters on networks that block phone-to-laptop traffic
 (campus Wi-Fi) and gives WebXR the HTTPS it needs. `--no-tunnel` uses the local network instead.
 
-For the photoreal splat without an NVIDIA laptop, open `notebooks/phone_render_colab.ipynb` in Colab
-(T4 GPU) and run all cells: it runs the same server with gsplat and prints the phone link.
 
 Quality presets (phone menu): fast = every 15th frame, 2,000 splat steps, half resolution; balanced =
 every 10th frame, 7,000 steps; best = every 5th frame, 15,000 steps, full resolution.
@@ -75,14 +106,21 @@ as `X-Namma-Key` or `?key=`). CORS is open because the page is served from GitHu
 
 ![Phone studio after a render](img/phone_studio_e2e.png)
 
+![Your scans on the first screen](img/phone_scans.png)
+
+- End to end again with scan history (2026-10-18, same bundle, fast, stand-in trainer): 446 s, 183,017
+  splats loaded; the first screen listed the renders and tapping one loaded its splat. While it ran, the
+  API reported "dense, running, 52%, 140 s left".
+
 ## Tests
 
 - `node --test tests/browser/quick_model.test.mjs`: back-projection, colour row order, fusion.
 - `pytest tests/test_phone_render.py`: chunked upload, missing chunks, idempotent finish, pairing key,
-  `.splat` conversion, render plan.
+  `.splat` conversion, render plan, best recipe, time left, scan history.
+- `pytest tests/test_modal_app.py`: the Modal web/GPU split with a stand-in `modal` package.
 - `node tests/browser/studio_e2e.mjs <server> <key> [bundle.zip] [shot.png]`: headless Chromium with a
   scripted WebXR + depth session (wall 2 m away, red above eye height, blue below), then a real
-  bundle sent for render against a running server.
+  bundle sent for render against a running server, then the scan history and opening a render from it.
 
 ## Not tested yet
 
@@ -92,3 +130,7 @@ as `X-Namma-Key` or `?key=`). CORS is open because the page is served from GitHu
 - `scripts/train_gsplat.py` on CUDA (adapted from the GPU handout trainer that ran on a T4; its dataset
   loading was checked here on the rendered bundle: 39 views, 5 held out) and the Colab notebook.
 - No held-out PSNR for a real splat from a phone bundle yet: the phone shows it once a real trainer runs.
+- Modal: the image build, volumes, GPU containers and the deploy workflow have not run (this container
+  cannot reach modal.com). The web/GPU hand-off in `modal_app.py` is tested in-process against a stand-in
+  for the `modal` package (`tests/test_modal_app.py`): upload, spawn, live progress, history, a dead
+  render container. The first deploy is the real test; its log is in the Actions tab.

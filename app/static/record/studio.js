@@ -1,7 +1,7 @@
 // Studio: what happens after a recording (or an opened file). Hybrid design:
 // 1. on the phone, seconds: quick 3D model from ARCore poses + ARCore depth (quick-model.js);
-// 2. "Send for render": the bundle goes to the laptop (or a Colab GPU running the same server),
-//    which runs the heavy pipeline (app/pipeline/stages/phone.py);
+// 2. "Send for render": the bundle goes to a render server running app/pipeline/stages/phone.py: the
+//    Modal cloud (modal_app.py), a Colab GPU or the laptop, all the same server;
 // 3. the photoreal splat (or dense points, if no splat trainer is available) comes back into the
 //    same viewer, in the same ARCore world frame as the quick model.
 
@@ -74,11 +74,14 @@ async function showQuickModel(blob, meta) {
 
 // ---- Pairing with the laptop ---------------------------------------------------------------------
 
+let machine = 'the render server';
+
 async function checkPairing() {
   $('server').value = pairing.server || '';
   $('key').value = pairing.key || '';
   if (!pairing.server) {
-    $('pair-status').textContent = 'Not paired: run scripts/serve_render.py on the laptop and open the link it prints on this phone.';
+    $('pair-status').textContent = 'Not paired: open this page from your cloud link, or tap the link Colab or the laptop prints.';
+    $('send-target').textContent = 'Not paired with a render server yet: see the first screen.';
     $('pair-box').open = true;
     $('send').disabled = true;
     return null;
@@ -87,11 +90,16 @@ async function checkPairing() {
   try {
     const hello = await new RenderClient(pairing.server, pairing.key).hello();
     const what = hello.photoreal ? `photoreal splats with ${hello.trainer}` : hello.dense_points ? 'dense 3D points (no splat trainer on it yet)' : 'sparse points only';
+    machine = hello.machine;
     $('pair-status').textContent = `Connected to ${hello.machine}: it can make ${what}.`;
+    $('send-target').textContent = `Renders on ${hello.machine} (${what}).`;
     $('send').disabled = !current;
+    if (hello.history) loadHistory();
     return hello;
   } catch (error) {
-    $('pair-status').textContent = `Can't reach the laptop (${error.message}). Is serve_render.py still running?`;
+    const why = error.status === 401 ? 'wrong pairing key' : error.message;
+    $('pair-status').textContent = `Can't reach ${pairing.server} (${why}). A Colab or laptop server stops when its tab or terminal closes.`;
+    $('send-target').textContent = `Can't reach the render server (${why}).`;
     $('pair-box').open = true;
     $('send').disabled = true;
     return null;
@@ -124,11 +132,19 @@ function showSteps(steps) {
   );
 }
 
+function formatLeft(seconds) {
+  if (seconds == null) return '';
+  if (seconds < 60) return 'under a minute left';
+  const minutes = Math.round(seconds / 60);
+  if (minutes < 90) return `about ${minutes} min left`;
+  return `about ${Math.floor(minutes / 60)} h ${minutes % 60} min left`;
+}
+
 async function loadResult(client, renderId, status) {
   const v = await getViewer();
   const best = status.best || Object.keys(status.outputs).find((n) => n !== 'result.json');
   if (!best) {
-    $('render-status').textContent = 'The laptop finished but produced no 3D output; see its log.';
+    $('render-status').textContent = 'The render finished but produced no 3D output; see the server log.';
     return;
   }
   $('render-status').textContent = `Downloading ${best} (${(status.outputs[best].bytes / 1e6).toFixed(1)} MB)…`;
@@ -153,10 +169,10 @@ async function loadResult(client, renderId, status) {
   }
   const psnr = info?.outputs?.['splat.splat']?.train_info?.heldout_psnr_mean;
   const label = { 'splat.splat': 'Photoreal splat', 'dense.ply': 'Dense points', 'sparse.ply': 'Sparse points' }[best];
-  $('render-status').textContent = `${label} from the laptop is in the viewer` +
+  $('render-status').textContent = `${label} is in the viewer` +
     (info ? `, made in ${Math.round(info.total_seconds)} s on ${info.machine}` : '') +
     (psnr ? `; held-out PSNR ${psnr} dB (measured on frames it did not train on).` : '.') +
-    (best !== 'splat.splat' ? ' Install a splat trainer on the laptop for the photoreal version.' : '');
+    (best !== 'splat.splat' ? ' This server has no splat trainer: render on the cloud or Colab for the photoreal version.' : '');
   window.nammaStudio.result = { best, bytes: bytes.byteLength, info };
 }
 
@@ -164,16 +180,18 @@ async function follow(client, renderId) {
   $('render-progress').hidden = false;
   const status = await client.wait(renderId, (s) => {
     if (s.status === 'unreachable') {
-      $('render-status').textContent = `Lost the laptop for a moment (${s.error}); still trying…`;
+      $('render-status').textContent = `Lost the render server for a moment (${s.error}); still trying…`;
       return;
     }
     $('render-progress').value = s.progress || 0;
     showSteps(s.steps || []);
-    $('render-status').textContent = s.status === 'queued' ? 'Waiting for the laptop…' : `Rendering on the laptop: ${s.stage || ''}`;
+    const left = formatLeft(s.eta_seconds);
+    $('render-status').textContent = s.status === 'queued' ? `Waiting for ${machine}…`
+      : `Rendering on ${machine}: ${s.stage || ''}${left ? ` · ${left}` : ''}. You can close this page; it shows up under Your scans.`;
   });
   $('render-progress').hidden = true;
   if (status.status === 'failed') {
-    $('render-status').textContent = `The laptop stopped: ${status.error || 'see its log'}`;
+    $('render-status').textContent = `The render stopped: ${status.error || 'see the server log'}`;
     return status;
   }
   await loadResult(client, renderId, status);
@@ -190,7 +208,7 @@ async function send() {
       quality: $('quality').value,
       onProgress: (f) => {
         $('render-progress').value = f;
-        $('render-status').textContent = `Sending to the laptop… ${Math.round(100 * f)}% of ${(current.blob.size / 1e6).toFixed(0)} MB`;
+        $('render-status').textContent = `Sending to ${machine}… ${Math.round(100 * f)}% of ${(current.blob.size / 1e6).toFixed(0)} MB`;
       },
     });
     try {
@@ -206,6 +224,69 @@ async function send() {
   } finally {
     $('send').disabled = false;
   }
+}
+
+// ---- Scan history (every render this server has, with progress and time left) -------------------
+
+let historyTimer = null;
+
+function historyItem(render) {
+  const li = document.createElement('li');
+  const button = document.createElement('button');
+  button.type = 'button';
+  button.dataset.status = render.status;
+  const title = document.createElement('strong');
+  title.textContent = render.name || 'Scan';
+  const meta = document.createElement('span');
+  meta.className = 'meta';
+  const when = render.created_at ? new Date(render.created_at * 1000).toLocaleString([], { dateStyle: 'medium', timeStyle: 'short' }) : '';
+  const quality = render.quality ? ` · ${render.quality}` : '';
+  const state = {
+    queued: 'waiting to start',
+    running: `rendering ${Math.round(100 * (render.progress || 0))}%${render.eta_seconds != null ? `, ${formatLeft(render.eta_seconds)}` : ''}`,
+    succeeded: { 'splat.splat': 'photoreal splat ready', 'dense.ply': 'dense points ready', 'sparse.ply': 'sparse points ready' }[render.best] || 'finished',
+    failed: `stopped: ${(render.error || '').slice(0, 80)}`,
+  }[render.status] || render.status;
+  meta.textContent = `${when}${quality} · ${state}`;
+  button.append(title, meta);
+  if (render.status === 'running' || render.status === 'queued') {
+    const bar = document.createElement('progress');
+    bar.max = 1;
+    bar.value = render.progress || 0;
+    button.append(bar);
+  }
+  button.addEventListener('click', () => openRender(render));
+  li.append(button);
+  return li;
+}
+
+async function loadHistory() {
+  clearTimeout(historyTimer);
+  if (!pairing.server || document.body.dataset.screen !== 'setup') return;
+  try {
+    const { renders } = await new RenderClient(pairing.server, pairing.key).json('/api/v1/remote/renders');
+    $('history-box').hidden = false;
+    $('history').replaceChildren(...renders.map(historyItem));
+    $('history-status').textContent = renders.length ? '' : 'No scans sent to this server yet.';
+    $('resume').hidden = true; // the list replaces "Show my last render"
+    if (renders.some((r) => r.status === 'running' || r.status === 'queued')) historyTimer = setTimeout(loadHistory, 10000);
+  } catch (error) {
+    $('history-status').textContent = `Can't load your scans: ${error.message}`;
+  }
+}
+
+async function openRender(render) {
+  clearTimeout(historyTimer);
+  document.body.dataset.screen = 'done';
+  $('done-title').textContent = render.name || 'Scan';
+  $('save').hidden = true;
+  $('send').disabled = true;
+  hint('');
+  await getViewer();
+  window.nammaStudio.renderId = render.render_id;
+  follow(new RenderClient(pairing.server, pairing.key), render.render_id).catch((error) => {
+    $('render-status').textContent = `Can't fetch this render: ${error.message}`;
+  });
 }
 
 // ---- Entry points --------------------------------------------------------------------------------
@@ -264,4 +345,5 @@ if (last?.renderId) {
 }
 
 // Exposed for the automated browser test.
-window.nammaStudio = { open, send, state: () => ({ current, pairing }) };
+window.nammaStudio = { open, send, loadHistory, state: () => ({ current, pairing }) };
+checkPairing();
