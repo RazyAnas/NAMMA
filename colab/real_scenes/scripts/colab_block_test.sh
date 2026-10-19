@@ -17,7 +17,8 @@ f=phone_frames; [ $s = lobby_ref ] && f=lobby_frames; W=/content/block/$s
 mkdir -p $W/data/color_raw $W/clean; cp $R/frames/$f/*.jpg $W/data/color_raw/; cp -r $R/scenes/$s/clean/. $W/clean/
 python3 $R/scripts/make_block_split.py $W | tee $W/split.txt
 L="--refine-every 100 --densify-from 500"
-RUN=b3k TOTAL=3000 EXTRA="$L --densify-until 2500" bash $R/scripts/run_scene.sh $W > $W/b3k.log 2>&1   # also builds the shared init project
-RUN=b30k_aniso TOTAL=30000 EXTRA="$L --densify-until 15000" OPENSPLAT_ANISO_MAX=10 bash $R/scripts/run_scene.sh $W > $W/b30k_aniso.log 2>&1 &
-RUN=b30k TOTAL=30000 EXTRA="$L --densify-until 15000" bash $R/scripts/run_scene.sh $W > $W/b30k.log 2>&1
-wait; for r in b3k b30k b30k_aniso; do echo $r $(cat $W/$r/score.txt 2>/dev/null | cut -c1-200); done; echo BLOCK_DONE
+[ -f $W/b3k/score.txt ] || RUN=b3k TOTAL=3000 EXTRA="$L --densify-until 2500" bash $R/scripts/run_scene.sh $W > $W/b3k.log 2>&1   # also builds the shared init project
+[ -n "$ONLY_3K" ] && { echo b3k $(cut -c1-200 $W/b3k/score.txt); echo BLOCK_3K_DONE; exit 0; }
+RUN=b30k TOTAL=30000 EXTRA="$L --densify-until 15000" bash $R/scripts/run_scene.sh $W > $W/b30k.log 2>&1   # one at a time: two OpenSplat runs OOM a T4
+RUN=b30k_aniso TOTAL=30000 EXTRA="$L --densify-until 15000" OPENSPLAT_ANISO_MAX=10 bash $R/scripts/run_scene.sh $W > $W/b30k_aniso.log 2>&1
+for r in b3k b30k b30k_aniso; do echo $r $(cat $W/$r/score.txt 2>/dev/null | cut -c1-200); done; echo BLOCK_DONE
