@@ -11,4 +11,5 @@ Pick a room on the start screen (or `?scene=phone|lobby|icl`); the "rooms" link 
 
 The phone-room and lobby `splat.ply` files are not in git (90 and 70 MB, trained on Colab): they come from
 `namma_phone_sfm_lobby_30k.zip` (`phone_sfm_run30k_splat.ply`, `lobby_ref_run30k_splat.ply`).
+Fly mode stays within 0.6 m of the capture path when the room has `cameras.json` (camera centres from `scenes/<scene>/clean/poses_w2c.json`): a splat is only reliable near where the phone filmed.
 Floors are built by `../scripts/build_walk_scene.py`.

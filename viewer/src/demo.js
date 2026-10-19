@@ -1,4 +1,5 @@
-// Self-contained walking demo: loads ./data/{splat.ply,navmesh.json,collision.glb}
+// Self-contained walking demo: loads ./data/{splat.ply,navmesh.json,collision.glb}, or with
+// ./data/scenes.json one of several rooms from ./data/<dir>/ (picked on the start screen, ?scene=<id>)
 // and walks it with keyboard + mouse on a laptop, or a touch stick, drag-to-look
 // and optional gyro look on a phone. Same Rapier walker as the main viewer.
 import * as THREE from 'three';
@@ -25,15 +26,54 @@ let viewer;
 let camera;
 let walker;
 let frame;
+// Optional data/<room>/cameras.json: the capture's camera centres in splat coordinates. A splat is only
+// trustworthy near where the phone filmed from, so flying is kept inside a tube of radius_m around them.
+let corridor = null;
+const nearest = new THREE.Vector3();
+
+function keepNearPath(position) {
+  if (!corridor) return;
+  let best = Infinity;
+  for (const c of corridor.centers) {
+    const d = c.distanceToSquared(position);
+    if (d < best) { best = d; nearest.copy(c); }
+  }
+  const radius = corridor.radius / frame.navigation.viewer_units_to_meters;
+  if (best > radius * radius) position.sub(nearest).setLength(radius).add(nearest);
+}
 
 const setProgress = (text) => { $('progress-text').textContent = text; };
 
+// Room list: data/scenes.json = [{ id, dir, title, lede }]; without it, the single room in data/.
+async function chooseScene() {
+  const scenes = await fetch('./data/scenes.json').then((r) => (r.ok ? r.json() : null)).catch(() => null);
+  if (!scenes?.length) return './data/';
+  const wanted = new URLSearchParams(location.search).get('scene');
+  const scene = scenes.find((s) => s.id === wanted) || scenes[0];
+  $('room-title').textContent = scene.title;
+  $('room-lede').textContent = scene.lede;
+  const list = $('rooms');
+  list.hidden = false;
+  for (const s of scenes) {
+    const link = document.createElement('a');
+    link.href = `?scene=${encodeURIComponent(s.id)}`;
+    link.textContent = s.title;
+    if (s === scene) link.setAttribute('aria-current', 'true');
+    list.append(link);
+  }
+  document.title = `NAMMA · ${scene.title}`;
+  return `./data/${scene.dir}/`;
+}
+
 async function load() {
-  const [navigation, collisionBuffer] = await Promise.all([
-    fetch('./data/navmesh.json').then((r) => { if (!r.ok) throw new Error('navmesh.json missing'); return r.json(); }),
-    fetch('./data/collision.glb').then((r) => (r.ok ? r.arrayBuffer() : null)),
+  const base = await chooseScene();
+  const [navigation, collisionBuffer, cameraPath] = await Promise.all([
+    fetch(`${base}navmesh.json`).then((r) => { if (!r.ok) throw new Error('navmesh.json missing'); return r.json(); }),
+    fetch(`${base}collision.glb`).then((r) => (r.ok ? r.arrayBuffer() : null)),
+    fetch(`${base}cameras.json`).then((r) => (r.ok ? r.json() : null)).catch(() => null),
     RAPIER.init({}),
   ]);
+  corridor = cameraPath?.centers?.length ? { centers: cameraPath.centers.map((c) => new THREE.Vector3(...c)), radius: cameraPath.radius_m ?? 0.6 } : null;
   frame = new NavFrame(navigation);
   const layers = await decodeMovementLayers(navigation);
   if (!layers) throw new Error('This NavMesh has no movement layers; rebuild it with the current backend.');
@@ -64,7 +104,7 @@ async function load() {
     sceneRevealMode: GaussianSplats3D.SceneRevealMode.Instant,
     freeIntermediateSplatData: true,
   });
-  await viewer.addSplatScene('./data/splat.ply', {
+  await viewer.addSplatScene(`${base}splat.ply`, {
     format: GaussianSplats3D.SceneFormat.Ply,
     splatAlphaRemovalThreshold: 5,
     showLoadingUI: false,
@@ -145,6 +185,7 @@ function step(dt) {
     const vertical = Number(keys.has('KeyE')) - Number(keys.has('KeyQ'));
     move.addScaledVector(up, vertical);
     camera.position.addScaledVector(move, (speed * dt) / frame.navigation.viewer_units_to_meters);
+    keepNearPath(camera.position);
     return;
   }
   const amount = Math.min(1, move.length());
