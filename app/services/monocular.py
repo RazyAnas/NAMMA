@@ -130,8 +130,9 @@ def run_monocular_geometry(
     settings: Settings,
 ) -> dict:
     depth_dir = output_dir / "monocular-depth"
-    if depth_dir.exists():
-        shutil.rmtree(depth_dir)
+    for stale in (depth_dir, output_dir / "monocular-depth-metric"):
+        if stale.exists():
+            shutil.rmtree(stale)
     predictor_manifest = _run_predictor(frames_dir, depth_dir, log_path, settings)
     reconstruction = pycolmap.Reconstruction(str(sparse_model_dir))
 
@@ -182,6 +183,10 @@ def run_monocular_geometry(
         distortion = _camera_distortion(camera)
         metric_depth = cv2.undistort(metric_depth, calibration, distortion)
         color = cv2.undistort(color, calibration, distortion)
+        # Metric depth per frame (0 = rejected), for trainers that place Gaussians per pixel (train_opensplat_best.py)
+        metric_dir = output_dir / "monocular-depth-metric"
+        metric_dir.mkdir(exist_ok=True)
+        np.save(metric_dir / f"{Path(image.name).stem}.npy", metric_depth.astype(np.float16), allow_pickle=False)
         stride = settings.monocular_pixel_stride
         ys, xs = np.mgrid[0 : metric_depth.shape[0] : stride, 0 : metric_depth.shape[1] : stride]
         z = metric_depth[::stride, ::stride]

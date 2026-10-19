@@ -67,7 +67,8 @@ def main() -> None:
     args = parser.parse_args()
     address = args.address or lan_address()
     cert, key = ensure_certificate(ROOT / "data" / "tls", address)
-    print(f"\n  On your phone (same Wi-Fi), open:  https://{address}:{args.port}/capture/\n")
+    print(f"\n  On your phone (same Wi-Fi), open:  https://{address}:{args.port}/capture/")
+    print(f"  Sensor recorder (video + AR pose + IMU): https://{address}:{args.port}/record/\n")
     uvicorn.run("app.main:app", host="0.0.0.0", port=args.port, ssl_certfile=str(cert), ssl_keyfile=str(key))
 
 
