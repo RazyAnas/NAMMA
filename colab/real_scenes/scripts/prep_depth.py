@@ -4,7 +4,7 @@
 # Usage: python prep_depth.py <work> <depth_anything_v2_vits.onnx>
 #    or: DEPTH_SRC=vggt python prep_depth.py <work> -   (VGGT-1B depth instead, fed as inverse depth to the same anchoring;
 #        writes clean/vggt_boot_depth/ so the DA-V2 maps the splat uses stay untouched; needs a CUDA GPU and the vggt package)
-import sys, os, json, time, numpy as np, cv2, onnxruntime as ort
+import sys, os, json, time, numpy as np, cv2
 from scipy.spatial import cKDTree
 W, ONNX = sys.argv[1:3]; t0 = time.time()
 st = json.load(open(f'{W}/clean/stats.json')); K = np.array(st['K']); H, Wd = st['height'], st['width']
@@ -25,6 +25,7 @@ if os.environ.get('DEPTH_SRC') == 'vggt':
         for f, di in zip(fr, d):
             da[f] = cv2.resize(1 / np.maximum(di, 1e-4), (Wd, H), interpolation=cv2.INTER_LINEAR).astype(np.float32)
 else:
+    import onnxruntime as ort
     prov = ['CUDAExecutionProvider', 'CPUExecutionProvider'] if os.environ.get('DA_GPU') else ['CPUExecutionProvider']
     sess = ort.InferenceSession(ONNX, providers=prov)
     mean, std = np.array([0.485, 0.456, 0.406]), np.array([0.229, 0.224, 0.225]); da = {}
