@@ -8,3 +8,5 @@
 - `scripts/run_local.sh`: the held-out-stretch test (`make_block_split.py`, frames 448-516) with OpenSplat 3k on CPU, built with
   `opensplat_namma.patch`, `opensplat_aniso.patch` and `opensplat_finite.patch` (the CPU backend lets a few Gaussians go NaN).
   Results in `results/`: default 15.40 dB, anisotropy cap 10 15.52 dB (+0.11, CI +0.05 to +0.18, 20 of 35 views).
+  Anisotropy cap 5 with weight 1.0: 15.48 dB (+0.08, CI -0.08 to +0.23, 26 of 35 views; SSIM 0.757 vs 0.752), not significant
+  and less stable (more NaN steps). Keep cap 10 / weight 0.1 if any.
