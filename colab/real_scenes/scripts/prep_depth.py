@@ -2,6 +2,8 @@
 # anchored to the SfM points (robust affine in disparity, then local kNN-weighted fit), multi-view filtered, then the
 # "boot" re-anchoring on the multi-view-consistent pixels. Writes clean/boot_depth/<frame>.png (uint16 mm).
 # Usage: python prep_depth.py <work> <depth_anything_v2_vits.onnx>
+#    or: DEPTH_SRC=vggt python prep_depth.py <work> -   (VGGT-1B depth instead, fed as inverse depth to the same anchoring;
+#        writes clean/vggt_boot_depth/ so the DA-V2 maps the splat uses stay untouched; needs a CUDA GPU and the vggt package)
 import sys, os, json, time, numpy as np, cv2, onnxruntime as ort
 from scipy.spatial import cKDTree
 W, ONNX = sys.argv[1:3]; t0 = time.time()
@@ -9,13 +11,27 @@ st = json.load(open(f'{W}/clean/stats.json')); K = np.array(st['K']); H, Wd = st
 P = json.load(open(f'{W}/clean/poses_w2c.json')); est = {int(k): np.array(v) for k, v in P.items()}
 train = st['train_frames']; Z = np.load(f'{W}/clean/sfm_obs.npz'); X3 = Z['X3'].astype(np.float64)
 obs = {f: (Z[f'uv_{f}'].astype(np.float64), Z[f'id_{f}']) for f in train}
-prov = ['CUDAExecutionProvider', 'CPUExecutionProvider'] if os.environ.get('DA_GPU') else ['CPUExecutionProvider']
-sess = ort.InferenceSession(ONNX, providers=prov)
-mean, std = np.array([0.485, 0.456, 0.406]), np.array([0.229, 0.224, 0.225]); da = {}
-for f in train:
-    im = cv2.cvtColor(cv2.imread(f'{W}/data/color_raw/{f:05d}.jpg'), cv2.COLOR_BGR2RGB)
-    x = cv2.resize(im / 255., (518, 518), interpolation=cv2.INTER_CUBIC); x = ((x - mean) / std).transpose(2, 0, 1)[None].astype(np.float32)
-    da[f] = cv2.resize(sess.run(None, {'l_x_': x})[0][0], (Wd, H), interpolation=cv2.INTER_LINEAR).astype(np.float32)
+if os.environ.get('DEPTH_SRC') == 'vggt':
+    import torch
+    from vggt.models.vggt import VGGT
+    model = VGGT.from_pretrained('facebook/VGGT-1B').to('cuda').eval(); da = {}
+    sc = 518 / max(H, Wd); th, tw = [max(14, int(round(x * sc / 14)) * 14) for x in (H, Wd)]
+    for c in range(0, len(train), 30):
+        fr = train[c:c + 30]
+        ims = [cv2.resize(cv2.cvtColor(cv2.imread(f'{W}/data/color_raw/{f:05d}.jpg'), cv2.COLOR_BGR2RGB), (tw, th), interpolation=cv2.INTER_AREA) for f in fr]
+        x = torch.from_numpy(np.stack(ims)).permute(0, 3, 1, 2).float().div(255).cuda()
+        with torch.no_grad(), torch.cuda.amp.autocast(dtype=torch.float16):
+            d = model(x)['depth'][0, ..., 0].float().cpu().numpy()
+        for f, di in zip(fr, d):
+            da[f] = cv2.resize(1 / np.maximum(di, 1e-4), (Wd, H), interpolation=cv2.INTER_LINEAR).astype(np.float32)
+else:
+    prov = ['CUDAExecutionProvider', 'CPUExecutionProvider'] if os.environ.get('DA_GPU') else ['CPUExecutionProvider']
+    sess = ort.InferenceSession(ONNX, providers=prov)
+    mean, std = np.array([0.485, 0.456, 0.406]), np.array([0.229, 0.224, 0.225]); da = {}
+    for f in train:
+        im = cv2.cvtColor(cv2.imread(f'{W}/data/color_raw/{f:05d}.jpg'), cv2.COLOR_BGR2RGB)
+        x = cv2.resize(im / 255., (518, 518), interpolation=cv2.INTER_CUBIC); x = ((x - mean) / std).transpose(2, 0, 1)[None].astype(np.float32)
+        da[f] = cv2.resize(sess.run(None, {'l_x_': x})[0][0], (Wd, H), interpolation=cv2.INTER_LINEAR).astype(np.float32)
 print('depth net', time.time() - t0, flush=True)
 v, u = np.mgrid[0:H, 0:Wd]
 
@@ -70,10 +86,10 @@ for f in train:
     D = loc_mv[f]; ys, xs = np.nonzero(np.isfinite(D[::6, ::6])); ys, xs = ys * 6, xs * 6
     uv0, d0 = sparse_obs(f); uv = np.vstack([uv0, np.stack([xs, ys], 1)]); d = np.concatenate([d0, D[ys, xs]])
     boot[f] = da_local(f, da[f], k=16, lam=1.0, anchors=(uv, d)) if len(d) > 50 else loc[f]
-bd = f'{W}/clean/boot_depth'; os.makedirs(bd, exist_ok=True)
+tag = 'vggt_' if os.environ.get('DEPTH_SRC') == 'vggt' else ''; bd = f'{W}/clean/{tag}boot_depth'; os.makedirs(bd, exist_ok=True)
 rel = []
 for f in train:
     cv2.imwrite(f'{bd}/{f:05d}.png', np.nan_to_num(np.clip(boot[f] * 1000, 0, 65535)).astype(np.uint16))
     uv, d = sparse_obs(f); b = boot[f][uv[:, 1].astype(int), uv[:, 0].astype(int)]; m = np.isfinite(b); rel.append(np.median(np.abs(b[m] - d[m]) / d[m]))
 res = dict(frames=len(train), anchor_rel_err_median=float(np.median(rel)), seconds=time.time() - t0)
-json.dump(res, open(f'{W}/clean/depth_stats.json', 'w')); print(json.dumps(res))
+json.dump(res, open(f'{W}/clean/{tag}depth_stats.json', 'w')); print(json.dumps(res))

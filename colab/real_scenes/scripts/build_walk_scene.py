@@ -5,6 +5,7 @@
 # normal within 25 deg of the mean camera image-up direction; its normal is the up axis.
 # --path-floor: when the depth gives no usable floor (the lobby: white walls, no floor peak), use a flat floor 1.45 m
 # below the cameras (the height its scale was set from) under the camera path widened by 0.6 m: you walk where the camera walked.
+# DEPTH_DIR=vggt_boot_depth uses the VGGT-anchored depth (the hybrid: VGGT for the floor, DA-V2 for the splat).
 # Usage: python build_walk_scene.py <scene dir with clean/> <NAMMA app root> <out dir> [max_depth_m=6] [--path-floor]
 import sys, json, os
 from pathlib import Path
@@ -19,7 +20,7 @@ st = json.load(open(W / 'clean/stats.json')); K = np.array(st['K']); w2c = json.
 fx, fy, cx, cy = K[0, 0], K[1, 1], K[0, 2], K[1, 2]; s = 4
 pts, centres, ups = [], [], []
 for f in st['train_frames']:
-    p = W / f'clean/boot_depth/{f:05d}.png'
+    p = W / f"clean/{os.environ.get('DEPTH_DIR', 'boot_depth')}/{f:05d}.png"
     if str(f) not in w2c or not p.exists(): continue
     T = np.linalg.inv(np.array(w2c[str(f)])); D = cv2.imread(str(p), -1).astype(np.float64)[::s, ::s] / 1000.
     v, u = np.mgrid[0:D.shape[0], 0:D.shape[1]] * s; ok = (D > 0.1) & (D < max_d); z = D[ok]
