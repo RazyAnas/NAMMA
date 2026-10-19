@@ -14,8 +14,9 @@ if [ ! -x /content/OpenSplat/build/opensplat ]; then
 fi
 echo BUILD_OK; export OS_BIN=/content/OpenSplat/build/opensplat
 f=phone_frames; [ $s = lobby_ref ] && f=lobby_frames; W=/content/block/$s
-mkdir -p $W/data/color_raw $W/clean; cp $R/frames/$f/*.jpg $W/data/color_raw/; cp -r $R/scenes/$s/clean/. $W/clean/
-python3 $R/scripts/make_block_split.py $W | tee $W/split.txt
+if [ ! -f $W/split.txt ]; then   # once: a second call must not rewrite frames another job is reading
+  mkdir -p $W/data/color_raw $W/clean; cp $R/frames/$f/*.jpg $W/data/color_raw/; cp -r $R/scenes/$s/clean/. $W/clean/
+  python3 $R/scripts/make_block_split.py $W > $W/split.txt; fi; cat $W/split.txt
 L="--refine-every 100 --densify-from 500"
 [ -f $W/b3k/score.txt ] || RUN=b3k TOTAL=3000 EXTRA="$L --densify-until 2500" bash $R/scripts/run_scene.sh $W > $W/b3k.log 2>&1   # also builds the shared init project
 [ -n "$ONLY_3K" ] && { echo b3k $(cut -c1-200 $W/b3k/score.txt); echo BLOCK_3K_DONE; exit 0; }
