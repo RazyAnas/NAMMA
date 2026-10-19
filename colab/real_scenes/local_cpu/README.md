@@ -10,3 +10,6 @@
   Results in `results/`: default 15.40 dB, anisotropy cap 10 15.52 dB (+0.11, CI +0.05 to +0.18, 20 of 35 views).
   Anisotropy cap 5 with weight 1.0: 15.48 dB (+0.08, CI -0.08 to +0.23, 26 of 35 views; SSIM 0.757 vs 0.752), not significant
   and less stable (more NaN steps). Keep cap 10 / weight 0.1 if any.
+- `scripts/run_local4.sh`, same stretch: TSDF mesh from our depth 18.76 dB (SSIM 0.811); mesh textured from the 4 nearest
+  frames 18.84 (0.824); splat initialised on that mesh, same 3k recipe, 14.59 (0.720), worse than the default 15.40. A good start
+  alone does not hold: without a geometry loss, training pulls the Gaussians off the surface again.

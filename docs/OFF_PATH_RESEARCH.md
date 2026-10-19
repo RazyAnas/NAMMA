@@ -18,7 +18,9 @@ Labels: **[M]** measured in this project, **[Q]** quoted from a paper, not repro
 | Same cleanups, rendered 0.6 m back and 0.4 m sideways from four test cameras | No visible improvement: the streaks and smears are the same | M |
 | Hold out a stretch of the walk (frames 448-516, 35 views, median 18.5 cm from the nearest training camera), OpenSplat 3k on the Mac CPU, default recipe | **15.40 dB** (20.14 after an affine colour fit), SSIM 0.752. Same scene on the path: ~34 dB | M |
 | ... with the anisotropy cap (max/min 10, weight 0.1) | 15.52 dB (20.33): +0.11 dB, 95% CI +0.05 to +0.18, better on 20 of 35. Real but small | M |
-| ... TSDF mesh from our anchored depth (other work stream, same split) | 18.76 dB: the plain mesh beats the splat off the path by ~3 dB, so geometry is the weak part | M |
+| ... TSDF mesh from our anchored depth (other work stream; reproduced here) | 18.76 dB, SSIM 0.811: the plain mesh beats the splat off the path by ~3.4 dB, so geometry is the weak part | M |
+| ... same mesh textured from the 4 nearest frames (photogrammetry / SkyeBrowse style) | 18.84 dB, SSIM 0.824 | M |
+| ... splat initialised on that mesh, same 3k OpenSplat recipe | 14.59 dB: worse than default. The start alone does not hold without a geometry loss (depth / normal / surfel) during training | M |
 | ... anisotropy cap 5, weight 1.0 | 15.48 dB: +0.08, 95% CI -0.08 to +0.23, not significant; training less stable | M |
 | ... SH degree 1 | not run locally (the error-compensation step needs SH 3); in Kaggle round 3 (`SH_MAX=1`) | P |
 | Same on Colab / Kaggle T4: gsplat default / MCMC / depth / DN-style / 2DGS, OpenSplat 30k with and without the cap | scripts ready (`colab_bakeoff.sh`, `kaggle_bakeoff.ipynb`), not run yet | P |

@@ -1,0 +1,1 @@
+{'n_views': 35, 'resolution': '432x960', 'voxel_m': 0.01, 'fused_frames': 215, 'triangles': 1718308, 'psnr_mean': 18.836340775576097, 'psnr_median': 18.628543289191423, 'psnr_min': 15.13297167125975, 'psnr_max': 21.669015342815765, 'ssim_mean': 0.8237924105434453, 'coverage_mean': 0.857551601080247, 'texture': 4, 'textured_frac': 0.3553725897439601}
