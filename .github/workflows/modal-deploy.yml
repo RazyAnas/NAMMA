@@ -36,18 +36,18 @@ jobs:
           NAMMA_GPU: ${{ inputs.gpu }}
         run: |
           set -o pipefail
-          modal deploy modal_app.py 2>&1 | tee deploy.log
+          modal deploy modal_app.py 2>&1 | tee "$RUNNER_TEMP/deploy.log"  # outside the repo, which the image copies while this runs
       - name: Check the server answers
         run: |
-          url=$(grep -oE 'https://[a-z0-9-]+--namma-web[a-z0-9-]*\.modal\.run' deploy.log | head -1)
+          url=$(grep -oE 'https://[a-z0-9-]+--namma-web[a-z0-9-]*\.modal\.run' "$RUNNER_TEMP/deploy.log" | head -1)
           [ -n "$url" ] || url="https://${MODAL_WORKSPACE}--namma-web.modal.run"
           code=000
           for attempt in 1 2 3 4 5 6; do
-            code=$(curl -s -m 120 -o hello.json -w '%{http_code}' "$url/api/v1/remote/hello" || true)
+            code=$(curl -s -m 120 -o "$RUNNER_TEMP/hello.json" -w '%{http_code}' "$url/api/v1/remote/hello" || true)
             [ "$code" = 200 ] || [ "$code" = 401 ] && break
             sleep 20
           done
-          echo "hello: HTTP $code $(cat hello.json 2>/dev/null)"
+          echo "hello: HTTP $code $(cat "$RUNNER_TEMP/hello.json" 2>/dev/null)"
           [ "$code" = 200 ] || [ "$code" = 401 ] || { echo "The server did not answer"; exit 1; }
           echo "::notice title=Phone link::$url/record/"
           {
@@ -56,7 +56,7 @@ jobs:
             echo "**$url/record/**"
             echo
             echo "Workspace: $MODAL_WORKSPACE, GPU: ${{ inputs.gpu }}."
-            if [ "$code" = 200 ] && grep -q '"claimable":true' hello.json; then
+            if [ "$code" = 200 ] && grep -q '"claimable":true' "$RUNNER_TEMP/hello.json"; then
               echo "The first phone that opens the link pairs with this server by itself."
             else
               echo "Already paired: the phone that paired it keeps working; another phone needs its key (Change server on that phone)."
