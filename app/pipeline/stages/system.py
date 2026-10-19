@@ -36,6 +36,8 @@ STATUS = {
     "walk.collision_dense": "wired",
     "export.splat_pack": "wired",
     "pipeline.run": "verified",
+    "phone.dataset": "verified",
+    "phone.render": "verified",
 }
 
 DEFAULT_PLAN = ["capture.frames", "tracking.sfm", "points.monocular", "splats.train"]

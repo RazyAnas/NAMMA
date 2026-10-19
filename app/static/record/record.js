@@ -19,6 +19,7 @@ const $ = (id) => document.getElementById(id);
 const KEYFRAME_INTERVAL = 30;
 const MAX_ENCODE_QUEUE = 4;
 const DEPTH_EVERY = 6;
+const SNAPSHOT_WIDTH = 80; // colour for the on-phone quick model, saved next to each depth frame
 const IMU_FREQUENCY_HZ = 200; // a request; Chrome clamps it (60 Hz on current Android builds, per Chromium source)
 
 let rec = null;
@@ -234,8 +235,8 @@ function blitProgram(gl) {
   return { program, buffer, attribute: gl.getAttribLocation(program, 'a') };
 }
 
-function drawTexture(gl, blit, texture, width, height) {
-  gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+function drawTexture(gl, blit, texture, width, height, framebuffer = null) {
+  gl.bindFramebuffer(gl.FRAMEBUFFER, framebuffer);
   gl.viewport(0, 0, width, height);
   gl.useProgram(blit.program);
   gl.bindBuffer(gl.ARRAY_BUFFER, blit.buffer);
@@ -269,6 +270,7 @@ async function startAr() {
   const blit = blitProgram(gl);
   r.features = session.enabledFeatures || [];
   r.depthOn = r.features.includes('depth-sensing');
+  r.depthFormat = r.depthOn ? session.depthDataFormat || null : null;
   // A tap on the overlay would otherwise also fire an XR "select" (lesson from sixthsense-lab).
   $('hud').addEventListener('beforexrselect', (e) => e.preventDefault());
   session.addEventListener('end', () => finish());
@@ -307,6 +309,7 @@ async function startAr() {
         if (texture) {
           drawTexture(gl, blit, texture, camera.width, camera.height);
           videoTs = encode(r, canvas, t);
+          if (r.depthOn && index % DEPTH_EVERY === 0) r.pendingSnapshot = snapshot(gl, blit, texture, r);
         }
       } else if (encoderPending) {
         r.dropped++;
@@ -327,12 +330,46 @@ async function startAr() {
         camera?.height,
       ])
     );
-    if (r.depthOn && view && index % DEPTH_EVERY === 0) recordDepth(r, frame, view, index, t);
+    if (r.depthOn && view && index % DEPTH_EVERY === 0) recordDepth(r, frame, view, index, t, r.pendingSnapshot);
+    r.pendingSnapshot = null;
     if (index % 10 === 0) updateHud(r, t, tracking);
   });
 }
 
-function recordDepth(r, frame, view, index, t) {
+// A small copy of the camera image (rows bottom-up, as readPixels returns them) so the phone can
+// colour its quick model; the full-resolution colour stays in the video for the laptop.
+function snapshot(gl, blit, texture, r) {
+  if (!r.snap) {
+    const width = SNAPSHOT_WIDTH;
+    const height = Math.max(1, Math.round((SNAPSHOT_WIDTH * r.camera.height) / r.camera.width));
+    const target = gl.createTexture();
+    gl.bindTexture(gl.TEXTURE_2D, target);
+    gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, width, height, 0, gl.RGBA, gl.UNSIGNED_BYTE, null);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
+    const framebuffer = gl.createFramebuffer();
+    gl.bindFramebuffer(gl.FRAMEBUFFER, framebuffer);
+    gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, target, 0);
+    r.snap = { width, height, framebuffer, rgba: new Uint8Array(width * height * 4) };
+  }
+  const { width, height, framebuffer, rgba } = r.snap;
+  try {
+    drawTexture(gl, blit, texture, width, height, framebuffer);
+    gl.readPixels(0, 0, width, height, gl.RGBA, gl.UNSIGNED_BYTE, rgba);
+  } catch {
+    return null;
+  } finally {
+    gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+  }
+  const rgb = new Uint8Array(width * height * 3);
+  for (let i = 0, j = 0; i < rgba.length; i += 4, j += 3) {
+    rgb[j] = rgba[i];
+    rgb[j + 1] = rgba[i + 1];
+    rgb[j + 2] = rgba[i + 2];
+  }
+  return rgb;
+}
+
+function recordDepth(r, frame, view, index, t, colour) {
   let depth;
   try {
     depth = frame.getDepthInformation(view);
@@ -344,6 +381,11 @@ function recordDepth(r, frame, view, index, t) {
   const file = new BundleFile(name);
   file.write(new Uint8Array(depth.data.slice(0)));
   r.depthFiles.push(file);
+  if (colour) {
+    const snap = new BundleFile(name.replace(/\.bin$/, '.rgb'));
+    snap.write(colour);
+    r.depthFiles.push(snap);
+  }
   const n = depth.normDepthBufferFromNormView?.matrix;
   r.depthIndex.write(csvRow([index, t, name, depth.width, depth.height, depth.rawValueToMeters, ...(n ? Array.from(n) : Array(16).fill(null))]));
 }
@@ -412,6 +454,8 @@ async function finish() {
     camera: r.camera,
     codec: r.codec,
     xr_features: r.features || [],
+    depth_format: r.depthFormat || null,
+    depth_color_size: r.snap ? [r.snap.width, r.snap.height] : null,
     frames: r.frameCount,
     frames_encoded: r.encoded,
     frames_dropped: r.dropped,
@@ -432,6 +476,8 @@ async function finish() {
   link.href = URL.createObjectURL(blob);
   link.download = name;
   showSummary(meta, blob.size);
+  // The studio (quick model, send for render) picks the recording up from here.
+  window.dispatchEvent(new CustomEvent('namma:bundle', { detail: { blob, name, meta } }));
 }
 
 // ---- UI ----------------------------------------------------------------------------------------

@@ -1,0 +1,64 @@
+# Puts the phone's render server on Modal (modal_app.py) with no stored secrets:
+#   1. Actions tab > "Deploy render server to Modal" > Run workflow (pick the GPU).
+#   2. Open the run: a "Sign in to Modal" notice at the top has a link. Open it on the phone, sign in
+#      with the Modal account that should pay, approve. The token lasts 2 hours and is never saved.
+#   3. The run's summary shows the phone link. The first phone that opens it pairs with it by itself.
+# Another Modal account = run it again and approve with that account (its own link and scan history).
+name: Deploy render server to Modal
+
+on:
+  workflow_dispatch:
+    inputs:
+      gpu:
+        description: GPU for renders (billed only while rendering)
+        type: choice
+        options: [T4, L4, A10G]
+        default: T4
+
+concurrency:
+  group: modal-deploy
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - run: pip install -q modal==1.6.2
+      - name: Sign in to Modal (open the link in the notice above, on your phone)
+        run: python scripts/modal_login.py --wait 1800 --expires-in 7200
+      - name: Deploy
+        env:
+          NAMMA_GPU: ${{ inputs.gpu }}
+        run: |
+          set -o pipefail
+          modal deploy modal_app.py 2>&1 | tee "$RUNNER_TEMP/deploy.log"  # outside the repo, which the image copies while this runs
+      - name: Check the server answers
+        run: |
+          url=$(grep -oE 'https://[a-z0-9-]+--namma-web[a-z0-9-]*\.modal\.run' "$RUNNER_TEMP/deploy.log" | head -1)
+          [ -n "$url" ] || url="https://${MODAL_WORKSPACE}--namma-web.modal.run"
+          code=000
+          for attempt in 1 2 3 4 5 6; do
+            code=$(curl -s -m 120 -o "$RUNNER_TEMP/hello.json" -w '%{http_code}' "$url/api/v1/remote/hello" || true)
+            [ "$code" = 200 ] || [ "$code" = 401 ] && break
+            sleep 20
+          done
+          echo "hello: HTTP $code $(cat "$RUNNER_TEMP/hello.json" 2>/dev/null)"
+          [ "$code" = 200 ] || [ "$code" = 401 ] || { echo "The server did not answer"; exit 1; }
+          echo "::notice title=Phone link::$url/record/"
+          {
+            echo "## Phone link"
+            echo
+            echo "**$url/record/**"
+            echo
+            echo "Workspace: $MODAL_WORKSPACE, GPU: ${{ inputs.gpu }}."
+            if [ "$code" = 200 ] && grep -q '"claimable":true' "$RUNNER_TEMP/hello.json"; then
+              echo "The first phone that opens the link pairs with this server by itself."
+            else
+              echo "Already paired: the phone that paired it keeps working; another phone needs its key (Change server on that phone)."
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"

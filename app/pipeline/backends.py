@@ -98,6 +98,7 @@ def capabilities() -> dict[str, bool]:
         "cuda": devices["cuda"],
         "mps": devices["mps"],
         "opensplat": opensplat_binary() is not None,
+        "gsplat": _has_module("gsplat"),
         "gaussian_trainer_command": bool(settings.gaussian_trainer_command),
         "restormer": restormer_code.is_dir() and restormer_weights.is_file(),
         "modp": modp_ready(),

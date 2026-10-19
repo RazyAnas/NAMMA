@@ -22,15 +22,22 @@ from app.services.storage import ensure_project_dirs, safe_filename, save_upload
 
 router = APIRouter(prefix="/api/v1/pipeline", tags=["4 splats"])
 
-TRAINER_REQUIREMENTS = {"opensplat": ("opensplat",), "splatfacto": ("cuda",), "command": ("gaussian_trainer_command",)}
+TRAINER_REQUIREMENTS = {
+    "opensplat": ("opensplat",),
+    "gsplat": ("cuda", "gsplat"),
+    "splatfacto": ("cuda",),
+    "command": ("gaussian_trainer_command",),
+}
 
 
 class TrainRequest(BaseModel):
-    trainer: str = Field("opensplat", pattern="^(opensplat|splatfacto|command)$")
+    trainer: str = Field("opensplat", pattern="^(opensplat|gsplat|splatfacto|command)$")
     iterations: int = Field(7000, ge=100, le=100000)
     downscale: float = Field(1.0, ge=1.0, le=8.0)
     init: str = Field("sparse", pattern="^(sparse|monocular)$", description="monocular = points from points/monocular")
     max_init_points: int = Field(200000, ge=1000, le=5000000)
+    recipe: str = Field("plain", pattern="^(plain|best)$",
+                        description="best = OpenSplat with MODP placement, error compensation and 3DGS densification")
 
 
 def monocular_dataset(ctx: TaskContext, max_points: int) -> Path:
@@ -70,14 +77,24 @@ def train_splats(ctx: TaskContext) -> dict:
     dataset = ctx.paths["training"] / "dataset"
     if not (dataset / "sparse" / "0").is_dir():
         raise TaskError("Run tracking/sfm first; it exports the splat dataset.")
-    if p.get("init") == "monocular":
-        ctx.progress("monocular_init", 0.05)
-        dataset = monocular_dataset(ctx, int(p.get("max_init_points", 200000)))
     trainer = p.get("trainer", "opensplat")
     iterations = int(p.get("iterations", 7000))
-    if trainer == "opensplat":
+    best = p.get("recipe") == "best" and trainer == "opensplat"
+    depth = ctx.paths["artifacts"] / "geometry" / "monocular-depth-metric"
+    if best and not depth.is_dir():
+        raise TaskError("recipe=best needs points/monocular first (it places Gaussians from the metric depth).")
+    if p.get("init") == "monocular" and not best:
+        ctx.progress("monocular_init", 0.05)
+        dataset = monocular_dataset(ctx, int(p.get("max_init_points", 200000)))
+    if best:
+        command = (f'"{ctx.python()}" scripts/train_opensplat_best.py --dataset {{dataset}} --output {{output}} '
+                   f'--depth "{depth}" --iterations {iterations} --downscale {p.get("downscale", 1.0)}')
+    elif trainer == "opensplat":
         command = (f'"{ctx.python()}" scripts/train_opensplat.py --dataset {{dataset}} --output {{output}} '
                    f'--iterations {iterations} --downscale {p.get("downscale", 1.0)}')
+    elif trainer == "gsplat":
+        command = (f'"{ctx.python()}" scripts/train_gsplat.py --dataset {{dataset}} --output {{output}} '
+                   f'--steps {iterations} --downscale {int(p.get("downscale", 1.0))}')
     elif trainer == "splatfacto":
         command = f'"{ctx.python()}" scripts/train_splatfacto.py --dataset {{dataset}} --output {{output}} --iterations {iterations}'
     else:
@@ -87,7 +104,8 @@ def train_splats(ctx: TaskContext) -> dict:
     manifest = run_gaussian_training(dataset, ctx.paths["artifacts"] / "gaussian", ctx.log_path, ctx.override(gaussian_trainer_command=command))
     ctx.project.status = ProjectStatus.READY
     ctx.db.commit()
-    return {"trainer": trainer, "iterations": iterations, "init": p.get("init", "sparse"), "manifest": manifest}
+    return {"trainer": trainer, "iterations": iterations, "init": "modp" if best else p.get("init", "sparse"),
+            "recipe": "best" if best else "plain", "manifest": manifest}
 
 
 class ModpRequest(BaseModel):

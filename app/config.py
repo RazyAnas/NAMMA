@@ -25,6 +25,8 @@ class Settings(BaseSettings):
     log_dir: Path = Path("./logs")
     database_url: str = "sqlite:///./data/namma.db"
     max_concurrent_jobs: int = 1
+    # True on the Modal web container: jobs run on GPU containers, so a restart must not mark them failed.
+    jobs_run_elsewhere: bool = False
     max_upload_mb: int = 2048
     frame_sample_fps: float = 2.0
     frame_max_width: int = 1280
