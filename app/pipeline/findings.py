@@ -34,6 +34,8 @@ FINDINGS = {
         {"claim": "Exposure solve: 22.6 -> 26.5 dB render PSNR under lighting changes (clean 28.3)", "label": "M"},
         {"claim": "Real lobby video: OpenSplat CPU 4000 steps, held-out PSNR 27.7 mean / 29.7 median", "label": "M", "data": "real video"},
         {"claim": "MODP 25.45 dB TUM / 35.85 dB Replica (different data, GPU)", "label": "Q"},
+        {"claim": "MODP with post-refinement: Aria 26.62 dB / 0.693 SSIM / 0.324 LPIPS at 4.6 FPS on an RTX 4090, scored on input frames", "label": "Q"},
+        {"claim": "MODP ships no trained scene model: it optimises per video; its only pretrained weights are DepthCov scannet.ckpt", "label": "M", "data": "read from MODP code"},
     ],
     "walking": [
         {"claim": "Synthetic room floor reachable 91% vs 71% before (2% before with stray points)", "label": "M"},

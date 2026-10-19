@@ -112,6 +112,11 @@ def job_dir(settings: Settings, project_id: str, job_id: str) -> Path:
     return directory
 
 
+# Runs a submitted job somewhere else instead of this process's worker thread. modal_app.py sets it so
+# phone renders go to a GPU container while the web container only answers the phone.
+REMOTE_RUNNER: Callable[[Job], None] | None = None
+
+
 def submit_task(db: Session, project_id: str, kind: str, params: dict[str, Any] | None = None) -> Job:
     spec = TASKS.get(kind)
     if spec is None:
@@ -137,8 +142,16 @@ def submit_task(db: Session, project_id: str, kind: str, params: dict[str, Any] 
     (directory / "params.json").write_text(json.dumps(params, indent=2), encoding="utf-8")
     job.log_path = str(directory / "log.txt")
     db.commit()
-    legacy_jobs.executor.submit(run_task, job.id)
+    dispatch(job)
     return job
+
+
+def dispatch(job: Job) -> None:
+    """Hands a queued job to whatever runs jobs here: another machine (REMOTE_RUNNER) or this one's worker pool."""
+    if REMOTE_RUNNER is not None:
+        REMOTE_RUNNER(job)
+    else:
+        legacy_jobs.executor.submit(run_task, job.id)
 
 
 def run_task(job_id: str) -> None:

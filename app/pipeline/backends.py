@@ -61,6 +61,24 @@ def restormer_paths() -> tuple[Path, Path]:
     return code, weights
 
 
+def modp_paths() -> tuple[Path, Path]:
+    """MODP (facebookresearch/Online-3DGS-Monocular) checkout and the python of its own CUDA 11.8 environment."""
+    code = Path(os.environ.get("MODP_DIR", PROJECT_ROOT / "tools" / "Online-3DGS-Monocular"))
+    python = Path(os.environ.get("MODP_PYTHON", PROJECT_ROOT / "tools" / "modp_env" / "bin" / "python"))
+    return code, python
+
+
+def modp_ready() -> bool:
+    """MODP needs Linux + an NVIDIA GPU; scripts/modp/setup_modp.sh installs it. Never true on a Mac."""
+    code, python = modp_paths()
+    return (
+        (code / "slam_new.py").is_file()
+        and (code / "DepthCov-Modified" / "models" / "scannet.ckpt").is_file()
+        and python.is_file()
+        and shutil.which("nvidia-smi") is not None
+    )
+
+
 def depth_model_path(model: str = "vits") -> Path:
     return MODELS_DIR / f"depth_anything_v2_{model}.onnx"
 
@@ -80,8 +98,10 @@ def capabilities() -> dict[str, bool]:
         "cuda": devices["cuda"],
         "mps": devices["mps"],
         "opensplat": opensplat_binary() is not None,
+        "gsplat": _has_module("gsplat"),
         "gaussian_trainer_command": bool(settings.gaussian_trainer_command),
         "restormer": restormer_code.is_dir() and restormer_weights.is_file(),
+        "modp": modp_ready(),
         "depth_anything_vits": depth_model_path("vits").is_file(),
     }
 
@@ -110,5 +130,6 @@ def describe() -> dict:
             "Everything except splatfacto training and COLMAP dense stereo has a CPU or Apple silicon path.",
             "Splat training on a Mac: build OpenSplat (Metal) and set OPENSPLAT_BIN.",
             "Depth Anything V2 runs through ONNX Runtime; on a Mac the Core ML provider is used when present.",
+            "MODP (splats/modp) needs Linux + NVIDIA: run scripts/modp/setup_modp.sh tools, or use the Colab handout.",
         ],
     }
