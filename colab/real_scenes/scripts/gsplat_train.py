@@ -5,6 +5,11 @@
 #   depth    mcmc + L1 in disparity against our boot depth (simple_trainer's depth loss, dense instead of sparse)
 #   dn       depth + DN-Splatter-style normal loss (normals of rendered depth vs normals of boot depth) + flatten loss
 #   2dgs     2D Gaussian surfels (rasterization_2dgs), normal consistency from 7k and distortion from 3k (of 30k, scaled), depth loss
+# Env switches (all off by default, so the five variants above are unchanged):
+#   DEPTH_DIR=<dir under clean/>  depth for the depth losses (default boot_depth; e.g. vda_depth, cons_depth)
+#   APP=1     per-training-image affine colour (3x3 + bias, starts at identity) so exposure changes are not baked into
+#             geometry; a test view uses the affine of its nearest training camera
+#   SH_MAX=k  cap the SH degree (default 3); 1 limits view-dependent colour that over-fits the walked path
 # Writes <out>/test_XXXXX.png for every test frame (score with score_whole.py) and <out>/splat.ply (3DGS ply).
 # Usage: python gsplat_train.py <work> <init xyzrgb.ply> <out> <variant> [steps=30000]
 import sys, os, json, math, time, numpy as np, cv2, torch, torch.nn.functional as F
@@ -25,7 +30,7 @@ imgs = {f: torch.from_numpy(cv2.cvtColor(cv2.imread(f'{W}/data/color_raw/{f:05d}
 deps = {}
 if USE_DEPTH:
     for f in train:
-        d = cv2.imread(f'{W}/clean/boot_depth/{f:05d}.png', cv2.IMREAD_UNCHANGED)
+        d = cv2.imread(f"{W}/clean/{os.environ.get('DEPTH_DIR', 'boot_depth')}/{f:05d}.png", cv2.IMREAD_UNCHANGED)
         if d is not None: deps[f] = torch.from_numpy(d.astype(np.float32) / 1000)
 VM = {f: view(f) for f in train + test}
 cams = torch.stack([torch.linalg.inv(VM[f])[:3, 3] for f in train]); scene_scale = float((cams - cams.mean(0)).norm(dim=1).max()) * 1.1
@@ -44,6 +49,14 @@ opt = {k: torch.optim.Adam([{'params': splats[k], 'lr': lr, 'name': k}], eps=1e-
 sched = torch.optim.lr_scheduler.ExponentialLR(opt['means'], gamma=0.01 ** (1.0 / STEPS))
 if MCMC: strat = MCMCStrategy(cap_max=int(os.environ.get('CAP_MAX', 1_000_000)), refine_stop_iter=int(STEPS * 0.83) if STEPS < 30000 else 25000)
 else: strat = DefaultStrategy(refine_stop_iter=STEPS // 2, reset_every=3000, key_for_gradient='gradient_2dgs' if TWO_D else 'means2d')
+APP = os.environ.get('APP') == '1'; SH_MAX = int(os.environ.get('SH_MAX', 3)); tidx = {f: i for i, f in enumerate(train)}
+if APP:
+    aff = torch.nn.Parameter(torch.cat([torch.eye(3), torch.zeros(3, 1)], 1)[None].repeat(len(train), 1, 1).to(dev))
+    aff_opt = torch.optim.Adam([aff], lr=1e-3)
+def apply_aff(rgb, f):
+    if not APP: return rgb
+    if f not in tidx: f = min(train, key=lambda q: float((cams[tidx[q]] - torch.linalg.inv(VM[f])[:3, 3]).norm()))
+    A = aff[tidx[f]]; return rgb @ A[:, :3].T + A[:, 3]
 strat.check_sanity(splats, opt); state = strat.initialize_state() if MCMC else strat.initialize_state(scene_scale=scene_scale)
 
 def render(vm, sh_deg, mode='RGB+ED'):
@@ -67,10 +80,10 @@ def dnormal(d, vm):   # world-frame normals of a z-depth map [H, W]
 order = []
 for step in range(STEPS):
     if not order: order = list(np.random.permutation(train))
-    f = int(order.pop()); vm = VM[f]; gt = imgs[f].to(dev); sh_deg = min(3, step // 1000)
+    f = int(order.pop()); vm = VM[f]; gt = imgs[f].to(dev); sh_deg = min(SH_MAX, step // 1000)
     col, alpha, info, ex = render(vm, sh_deg)
     strat.step_pre_backward(splats, opt, state, step, info)
-    rgb_, dep = col[..., :3], col[..., 3]
+    rgb_, dep = apply_aff(col[..., :3], f), col[..., 3]
     loss = 0.8 * (rgb_ - gt).abs().mean() + 0.2 * (1 - ssim(rgb_, gt))
     if USE_DEPTH and f in deps:
         dg = deps[f].to(dev); m = dg > 0.05
@@ -83,9 +96,11 @@ for step in range(STEPS):
     if TWO_D:
         if step > 7000 * STEPS // 30000: loss = loss + 0.05 * (1 - (ex['normals'] * (ex['surf'] * alpha.detach())).sum(-1)).mean()
         if step > 3000 * STEPS // 30000: loss = loss + 1e-2 * ex['dist'].mean()
+    if APP: loss = loss + 1e-3 * (aff[tidx[f]] - torch.cat([torch.eye(3, device=dev), torch.zeros(3, 1, device=dev)], 1)).abs().mean()
     if MCMC: loss = loss + 0.01 * torch.sigmoid(splats['opacities']).mean() + 0.01 * torch.exp(splats['scales']).mean()
     loss.backward()
     for o in opt.values(): o.step(); o.zero_grad(set_to_none=True)
+    if APP: aff_opt.step(); aff_opt.zero_grad(set_to_none=True)
     sched.step()
     if MCMC: strat.step_post_backward(splats, opt, state, step, info, lr=sched.get_last_lr()[0])
     else: strat.step_post_backward(splats, opt, state, step, info, packed=False)
@@ -93,7 +108,7 @@ for step in range(STEPS):
 
 with torch.no_grad():
     for f in test:
-        col = render(VM[f], 3, 'RGB')[0][..., :3].clamp(0, 1)
+        col = apply_aff(render(VM[f], SH_MAX, 'RGB')[0][..., :3], f).clamp(0, 1)
         cv2.imwrite(f'{OUT}/test_{f:05d}.png', cv2.cvtColor((col.cpu().numpy() * 255 + 0.5).astype(np.uint8), cv2.COLOR_RGB2BGR))
     s = {k: splats[k].detach().cpu().numpy() for k in splats}; n = len(s['means'])
     if TWO_D: s['scales'][:, 2] = np.log(1e-6)   # flat surfel as a thin 3DGS Gaussian for the viewer
@@ -104,5 +119,5 @@ with torch.no_grad():
     a = np.empty(n, dtype=[(k, 'f4') for k, _ in cols])
     for k, x in cols: a[k] = x
     PlyData([PlyElement.describe(a, 'vertex')]).write(f'{OUT}/splat.ply')
-json.dump(dict(variant=VAR, steps=STEPS, gaussians=n, seconds=time.time() - t0, scene_scale=scene_scale), open(f'{OUT}/train_stats.json', 'w'))
+json.dump(dict(variant=VAR, steps=STEPS, app=APP, sh_max=SH_MAX, depth_dir=os.environ.get('DEPTH_DIR', 'boot_depth'), gaussians=n, seconds=time.time() - t0, scene_scale=scene_scale), open(f'{OUT}/train_stats.json', 'w'))
 print('done', VAR, n, 'gaussians', round(time.time() - t0), 's')

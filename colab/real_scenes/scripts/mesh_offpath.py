@@ -4,7 +4,8 @@
 # are filled with the image mean so holes cost what a grey guess costs, and coverage is reported.
 # TEXTURE=k colours each hit from the k training frames nearest the test camera that see that point (depth test against their
 # own depth maps), weighted by viewing-angle similarity: photogrammetry-style image texturing; vertex colour where none does.
-# Usage: [TEXTURE=4] python mesh_offpath.py <work with block split> <out dir> [voxel_m=0.01] [trunc_vox=4] [depth_max_m=4]
+# DEPTH_DIR picks the fused depth (default boot_depth); texturing's visibility test always uses boot_depth.
+# Usage: [TEXTURE=4] [DEPTH_DIR=cons_depth] python mesh_offpath.py <work with block split> <out dir> [voxel_m=0.01] [trunc_vox=4] [depth_max_m=4]
 import sys, os, json, numpy as np, cv2, open3d as o3d
 from skimage.metrics import structural_similarity
 W, O = sys.argv[1:3]; vox = float(sys.argv[3]) if len(sys.argv) > 3 else 0.01
@@ -18,8 +19,9 @@ Kt = oc.Tensor(K, oc.float64)
 vbg = o3d.t.geometry.VoxelBlockGrid(attr_names=('tsdf', 'weight', 'color'), attr_dtypes=(oc.float32, oc.float32, oc.float32),
                                     attr_channels=((1), (1), (3)), voxel_size=vox, block_resolution=16, block_count=30000, device=oc.Device('CPU:0'))
 used = 0
+DD = os.environ.get('DEPTH_DIR', 'boot_depth')   # e.g. cons_depth from depth_consistency.py
 for f in st['train_frames']:
-    p = f'{W}/clean/boot_depth/{f:05d}.png'
+    p = f'{W}/clean/{DD}/{f:05d}.png'
     if not os.path.exists(p): continue
     d = cv2.imread(p, -1); c = col(f)
     if c.shape[:2] != d.shape: c = cv2.resize(c, (d.shape[1], d.shape[0]), interpolation=cv2.INTER_AREA)
