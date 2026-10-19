@@ -60,24 +60,27 @@ async function probe() {
   $('start-camera').disabled = !(capabilities.secure && codec && navigator.mediaDevices);
 }
 
-async function pickCodec(width, height) {
+async function pickCodec(width, height, fps = 30) {
   // Baseline H.264 first: hardware-encoded on Android and never uses B-frames, so decode order is
   // display order and the k-th decoded frame is the k-th chunk logged in video.csv.
-  const level = width * height > 1920 * 1088 ? '33' : '28';
-  const bitrate = Math.round(Math.min(40e6, (width * height * 30 * 0.17)));
-  const candidates = [
-    { codec: `avc1.42E0${level}`, avc: { format: 'annexb' }, container: 'h264' },
-    { codec: `avc1.4D40${level}`, avc: { format: 'annexb' }, container: 'h264' },
-    { codec: 'vp8', container: 'ivf', fourcc: 'VP80' },
-    { codec: 'vp09.00.40.08', container: 'ivf', fourcc: 'VP90' },
-  ];
-  for (const { container, fourcc, ...candidate } of candidates) {
-    const config = { ...candidate, width, height, bitrate, framerate: 30, latencyMode: 'quality' };
-    try {
-      const { supported } = await VideoEncoder.isConfigSupported(config);
-      if (supported) return { ...config, container, fourcc };
-    } catch {
-      // try the next codec
+  // Level 4.0 covers 1080p30, 4.2 1080p60, 5.1 anything larger. Falls back to a 30 fps config.
+  for (const rate of fps > 30 ? [fps, 30] : [30]) {
+    const level = width * height > 1920 * 1088 ? '33' : rate > 30 ? '2A' : '28';
+    const bitrate = Math.round(Math.min(40e6, (width * height * rate * 0.17)));
+    const candidates = [
+      { codec: `avc1.42E0${level}`, avc: { format: 'annexb' }, container: 'h264' },
+      { codec: `avc1.4D40${level}`, avc: { format: 'annexb' }, container: 'h264' },
+      { codec: 'vp8', container: 'ivf', fourcc: 'VP80' },
+      { codec: 'vp09.00.40.08', container: 'ivf', fourcc: 'VP90' },
+    ];
+    for (const { container, fourcc, ...candidate } of candidates) {
+      const config = { ...candidate, width, height, bitrate, framerate: rate, latencyMode: 'quality' };
+      try {
+        const { supported } = await VideoEncoder.isConfigSupported(config);
+        if (supported) return { ...config, container, fourcc };
+      } catch {
+        // try the next codec
+      }
     }
   }
   return null;
@@ -166,11 +169,11 @@ function stopImu(r) {
 
 // ---- Video encoding ----------------------------------------------------------------------------
 
-async function startEncoder(r, width, height) {
+async function startEncoder(r, width, height, fps = 30) {
   // H.264 needs even dimensions.
   width -= width % 2;
   height -= height % 2;
-  const config = await pickCodec(width, height);
+  const config = await pickCodec(width, height, fps);
   if (!config) throw new Error(`No video encoder for ${width}x${height}.`);
   const { container, fourcc, ...encoderConfig } = config;
   r.codec = { ...encoderConfig, container };
@@ -392,10 +395,51 @@ function recordDepth(r, frame, view, index, t, colour) {
 
 // ---- Camera mode (getUserMedia, no pose) -------------------------------------------------------
 
+// Splat training assumes every frame sees the same colours: auto exposure and white balance that
+// drift between bright and dark parts of a room cost about 4 dB in our tests, and 60 fps halves
+// motion blur at walking speed. So camera mode asks for 60 fps and the widest lens, lets the
+// camera settle, then freezes exposure and white balance at what it chose. Each lock is applied
+// on its own (phones support different subsets) and what actually took is saved in meta.json.
+// AR mode cannot do this: ARCore owns the camera there.
+const SETTLE_MS = 1500;
+
+async function applyOne(track, constraint) {
+  try {
+    await track.applyConstraints({ advanced: [constraint] });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+async function lockCamera(track) {
+  const caps = track.getCapabilities?.() || {};
+  const locks = {};
+  if (caps.zoom && caps.zoom.min < 1) locks.wide_lens = await applyOne(track, { zoom: caps.zoom.min });
+  await new Promise((resolve) => setTimeout(resolve, SETTLE_MS));
+  const now = track.getSettings?.() || {};
+  if (caps.exposureMode?.includes('manual')) {
+    const exposure = { exposureMode: 'manual' };
+    if (caps.exposureTime && now.exposureTime) exposure.exposureTime = now.exposureTime;
+    if (caps.iso && now.iso) exposure.iso = now.iso;
+    locks.exposure = await applyOne(track, exposure);
+  } else {
+    locks.exposure = false;
+  }
+  if (caps.whiteBalanceMode?.includes('manual')) {
+    const balance = { whiteBalanceMode: 'manual' };
+    if (caps.colorTemperature && now.colorTemperature) balance.colorTemperature = now.colorTemperature;
+    locks.white_balance = await applyOne(track, balance);
+  } else {
+    locks.white_balance = false;
+  }
+  return locks;
+}
+
 async function startCamera() {
   const stream = await navigator.mediaDevices.getUserMedia({
     audio: false,
-    video: { facingMode: { ideal: 'environment' }, width: { ideal: 1920 }, height: { ideal: 1080 }, frameRate: { ideal: 30 } },
+    video: { facingMode: { ideal: 'environment' }, width: { ideal: 1920 }, height: { ideal: 1080 }, frameRate: { ideal: 60 } },
   });
   const r = newRecording('camera');
   rec = r;
@@ -403,8 +447,14 @@ async function startCamera() {
   video.srcObject = stream;
   await video.play();
   r.track = stream.getVideoTracks()[0];
-  r.camera = { width: video.videoWidth, height: video.videoHeight, settings: r.track.getSettings?.() };
-  await startEncoder(r, video.videoWidth, video.videoHeight);
+  log('Hold still: setting exposure…');
+  const locks = await lockCamera(r.track);
+  log('');
+  r.startedAt = performance.now(); // the recording starts after the settle, not at getUserMedia
+  r.startedWall = new Date().toISOString();
+  const settings = r.track.getSettings?.() || {};
+  r.camera = { width: video.videoWidth, height: video.videoHeight, settings, locks };
+  await startEncoder(r, video.videoWidth, video.videoHeight, Math.round(settings.frameRate || 30));
   startImu(r);
   showHud();
   const onFrame = (now, metadata) => {
@@ -504,6 +554,7 @@ function showSummary(meta, bytes) {
     ['Mode', meta.mode],
     ['Duration', `${meta.duration_s.toFixed(1)} s`],
     ['Camera image', meta.camera ? `${meta.camera.width} x ${meta.camera.height}` : 'none'],
+    ['Camera locks', meta.camera?.locks ? Object.entries(meta.camera.locks).map(([k, v]) => `${k.replace('_', ' ')} ${v ? 'on' : 'not supported'}`).join(', ') : 'n/a (AR mode)'],
     ['Codec', meta.codec?.codec || 'none'],
     ['Frames encoded', `${meta.frames_encoded} of ${meta.frames} (${(meta.frames_encoded / meta.duration_s).toFixed(1)} fps)`],
     ['Pose tracked', meta.mode === 'ar' ? `${((100 * meta.frames_tracked) / Math.max(1, meta.frames)).toFixed(0)}% of frames` : 'n/a'],
