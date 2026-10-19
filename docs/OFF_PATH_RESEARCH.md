@@ -16,13 +16,16 @@ Labels: **[M]** measured in this project, **[Q]** quoted from a paper, not repro
 | ... drop Gaussians within 25 cm of a training camera | -4.21 dB (worst view 15.8 dB): in a small room those are real surfaces | M |
 | ... drop large faint Gaussians (> 10 cm, opacity < 0.35) | -1.59 dB | M |
 | Same cleanups, rendered 0.6 m back and 0.4 m sideways from four test cameras | No visible improvement: the streaks and smears are the same | M |
-| Hold out a stretch of the walk (frames 448-516, median 18.5 cm from the nearest training camera), train 3k on CPU: default vs anisotropy cap 10 | running | P |
+| Hold out a stretch of the walk (frames 448-516, 35 views, median 18.5 cm from the nearest training camera), OpenSplat 3k on the Mac CPU, default recipe | **15.40 dB** (20.14 after an affine colour fit), SSIM 0.752. Same scene on the path: ~34 dB | M |
+| ... with the anisotropy cap (max/min 10, weight 0.1) | 15.52 dB (20.33): +0.11 dB, 95% CI +0.05 to +0.18, better on 20 of 35. Real but small | M |
+| ... TSDF mesh from our anchored depth (other work stream, same split) | 18.76 dB: the plain mesh beats the splat off the path by ~3 dB, so geometry is the weak part | M |
+| ... SH degree 1; anisotropy cap 5 with weight 1.0 | running | P |
 | Same on Colab / Kaggle T4: gsplat default / MCMC / depth / DN-style / 2DGS, OpenSplat 30k with and without the cap | scripts ready (`colab_bakeoff.sh`, `kaggle_bakeoff.ipynb`), not run yet | P |
 | Difix3D+ on the best round-1 splat, same held-out stretch | scripts ready (`colab_round2.sh`) | P |
 | VGGT second opinion on the lobby poses (is the 20 dB middle a pose problem?) | scripts ready (`colab_round2.sh`) | P |
 | Earlier: VGGT depth vs DA-V2 for the walkable floor (ICL) | 199 / 300 true floor cells vs 22; splat 0.22 dB worse, so floors only | M |
 
-**Conclusion so far.** A finished splat cannot be edited into good off-path views: every cleanup costs on-path quality
+**Conclusion so far.** Off the path we lose ~19 dB within 18 cm. A finished splat cannot be edited into good off-path views: every cleanup costs on-path quality
 and none fixes the off-path renders. The fix has to come from (a) more viewpoints at capture, (b) training that
 constrains geometry, or (c) a generative prior that supplies what was never filmed.
 
