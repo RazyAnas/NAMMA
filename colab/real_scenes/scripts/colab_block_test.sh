@@ -8,6 +8,7 @@ if [ ! -x /content/OpenSplat/build/opensplat ]; then
   apt-get -qq update > /dev/null; apt-get -qq install -y libopencv-dev > /dev/null
   rm -rf OpenSplat && git clone -q https://github.com/pierotofy/OpenSplat && cd OpenSplat && git checkout -q 688944f01291a1939f688b49feef6936620b47b8
   git apply $R/opensplat_namma.patch && git apply $R/opensplat_aniso.patch; CC=$(nvidia-smi --query-gpu=compute_cap --format=csv,noheader | head -1 | tr -d .)
+  export LIBRARY_PATH=/usr/local/nvidia/lib64:/usr/local/cuda/lib64/stubs:$LIBRARY_PATH   # Kaggle: libcuda.so lives in /usr/local/nvidia/lib64, not on the default link path
   mkdir build && cd build && cmake .. -DCMAKE_BUILD_TYPE=Release -DGPU_RUNTIME=CUDA -DCMAKE_CUDA_ARCHITECTURES=$CC \
     -DCMAKE_PREFIX_PATH=$(python -c 'import torch;print(torch.utils.cmake_prefix_path)') > /tmp/cmake.log 2>&1 && make -j$(nproc) > /tmp/make.log 2>&1
   cd /content; [ -x /content/OpenSplat/build/opensplat ] || { echo BUILD_FAILED; exit 1; }
