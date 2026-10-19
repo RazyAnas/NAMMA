@@ -1,0 +1,21 @@
+diff --git a/model.cpp b/model.cpp
+index 8b49d35..eac3206 100644
+--- a/model.cpp
++++ b/model.cpp
+@@ -1044,6 +1044,16 @@ torch::Tensor Model::mainLoss(torch::Tensor &rgb, torch::Tensor &gt, torch::Tens
+             : absDiff.sum() / (static_cast<float>(gt.numel()) + 1e-8f);
+     }
+ 
++    // Anisotropy cap (NAMMA): penalise Gaussians whose longest axis is more than OPENSPLAT_ANISO_MAX times their
++    // shortest, weight OPENSPLAT_ANISO_W. Off unless set. Stops the needle-shaped splats that streak off the camera path.
++    static const float anisoMax = std::getenv("OPENSPLAT_ANISO_MAX") ? std::atof(std::getenv("OPENSPLAT_ANISO_MAX")) : 0.0f;
++    static const float anisoW = std::getenv("OPENSPLAT_ANISO_W") ? std::atof(std::getenv("OPENSPLAT_ANISO_W")) : 0.1f;
++    if (anisoMax > 1.0f){
++        // scales are log-scales: log(max/min) = max - min
++        torch::Tensor logRatio = std::get<0>(scales.max(1)) - std::get<0>(scales.min(1));
++        loss = loss + anisoW * torch::relu(logRatio - std::log(anisoMax)).mean();
++    }
++
+     // Segment-mode opacity penalty: push alpha to 0 in masked areas
+     if (hasMask && lastAlpha.defined() && lastAlpha.numel() == mask.numel()){
+         loss = loss + (lastAlpha * (1.0f - mask).pow(2.0f)).mean();
