@@ -5,9 +5,11 @@
   "type": "module",
   "scripts": {
     "build": "vite build",
-    "dev": "vite --host 127.0.0.1"
+    "dev": "vite --host 127.0.0.1",
+    "build:demo": "vite build --config vite.demo.config.js"
   },
   "dependencies": {
+    "@dimforge/rapier3d-compat": "^0.19.3",
     "@mkkellogg/gaussian-splats-3d": "0.4.7",
     "three": "0.180.0"
   },
