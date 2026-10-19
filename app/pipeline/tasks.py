@@ -142,11 +142,16 @@ def submit_task(db: Session, project_id: str, kind: str, params: dict[str, Any] 
     (directory / "params.json").write_text(json.dumps(params, indent=2), encoding="utf-8")
     job.log_path = str(directory / "log.txt")
     db.commit()
+    dispatch(job)
+    return job
+
+
+def dispatch(job: Job) -> None:
+    """Hands a queued job to whatever runs jobs here: another machine (REMOTE_RUNNER) or this one's worker pool."""
     if REMOTE_RUNNER is not None:
         REMOTE_RUNNER(job)
     else:
         legacy_jobs.executor.submit(run_task, job.id)
-    return job
 
 
 def run_task(job_id: str) -> None:

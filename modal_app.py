@@ -1,13 +1,17 @@
 """The phone's render server on Modal: "Send for render" with no laptop and no Colab tab.
 
-Two functions share one image:
+One deployed function and one sandbox per render, sharing one image:
 
 * `web` (CPU, a single container that sleeps when nobody calls it): the same FastAPI app the laptop
   runs, so the phone page, pairing key, chunked upload and scan history all work unchanged. It keeps
   the history in sqlite on the `namma-db` volume and the uploads and results on `namma-data`.
-* `render` (GPU, one container per render, billed only while it renders): runs the `phone.render`
-  job on a private copy of the job's rows and publishes its live state (steps, log tail, time left)
-  to the `namma-live` dict every few seconds; the results land on `namma-data`.
+* each render is a GPU sandbox started by `web` (billed only while it renders) running
+  scripts/cloud_render.py on a private copy of the job's rows; `web` reads its live state (steps, log
+  tail, time left) from the sandbox while it runs and its end state from `namma-data` when it exits.
+
+Nothing GPU is deployed, so the server deploys on any Modal account, card or not. A GPU is asked for only
+when a render starts; if the account cannot have one yet (Modal wants a card on file before GPUs), the
+phone says so with a link to Modal's billing page and a "Try again" button, and the scan stays saved.
 
 The web container never shares the sqlite file with a GPU container (sqlite on a shared volume is not
 safe), and a render keeps going when the phone closes the page or the web container goes to sleep.
@@ -17,19 +21,19 @@ open the Modal sign-in link it shows, approve with whichever Modal account shoul
 there (scripts/modal_login.py). The phone link is https://<workspace>--namma-web.modal.run/record/ ; the
 first phone that opens it pairs with it by itself (a random key, kept on the `namma-db` volume).
 
-    NAMMA_GPU=T4 modal deploy modal_app.py     # cheaper, slower GPU (default L4)
+    NAMMA_GPU=L4 modal deploy modal_app.py     # faster, dearer GPU (default T4)
 """
 
 from __future__ import annotations
 
+import json
 import os
 from pathlib import Path
-import threading
 import time
 
 import modal
 
-GPU = os.environ.get("NAMMA_GPU", "L4")
+GPU = os.environ.get("NAMMA_GPU", "T4")
 ROOT = Path(__file__).resolve().parent
 REMOTE_ROOT = "/root/NAMMA"
 DEPTH_MODEL = "https://github.com/fabio-sim/Depth-Anything-ONNX/releases/download/v2.0.0/depth_anything_v2_vits.onnx"
@@ -52,8 +56,9 @@ image = (
         gpu="T4",
     )
     .run_commands(f"mkdir -p /models && curl -fsSL -o /models/depth_anything_v2_vits.onnx {DEPTH_MODEL}")
-    .add_local_dir(ROOT, REMOTE_ROOT, ignore=[".git", "data", "logs", "tmp", "tools", "gpu-handout", "research",
-                                              "**/__pycache__", "tests/.test-data", "node_modules"])
+    # copy=True bakes the repo into the image: render sandboxes start from the image alone.
+    .add_local_dir(ROOT, REMOTE_ROOT, copy=True, ignore=[".git", "data", "logs", "tmp", "tools", "gpu-handout",
+                                                         "research", "**/__pycache__", "tests/.test-data", "node_modules"])
 )
 
 app = modal.App("namma")
@@ -62,7 +67,11 @@ database = modal.Volume.from_name("namma-db", create_if_missing=True)
 live = modal.Dict.from_name("namma-live", create_if_missing=True)
 
 COMMON_ENV = {"DATA_DIR": "/data", "LOG_DIR": "/tmp/logs"}  # nothing held open on /data, so the web side can reload it
-STALE_SECONDS = 90  # no heartbeat for this long: ask Modal whether the render container is still alive
+RENDER_ENV = {**COMMON_ENV, "DATABASE_URL": "sqlite:////tmp/render.db"}  # a private copy of the job's rows
+RENDER_TIMEOUT = 4 * 3600
+POLL_SECONDS = 3  # the phone and its history poll often; ask the sandbox at most this often per render
+SAVE_GRACE_SECONDS = 300  # after the sandbox exits, how long its results may take to show up on the volume
+BILLING_URL = "https://modal.com/settings"
 
 
 def _enter_repo() -> None:
@@ -73,75 +82,61 @@ def _enter_repo() -> None:
         sys.path.insert(0, REMOTE_ROOT)
 
 
-# ---- GPU side -------------------------------------------------------------------------------------
 
-@app.function(image=image, gpu=GPU, volumes={"/data": data}, timeout=4 * 3600,
-              env={**COMMON_ENV, "DATABASE_URL": "sqlite:////tmp/render.db"})
-def render(job: dict) -> dict:
-    """Runs one phone.render job (rows copied from the web container's history) and returns its end state."""
-    _enter_repo()
-    data.reload()
-    from app.database import SessionLocal, init_db
-    from app.models import Job, Project
-    from app.pipeline.stages.phone import live_state
-    from app.pipeline.tasks import job_dir, run_task
-    from app.config import get_settings
+# ---- GPU side: one sandbox per render ------------------------------------------------------------
 
-    init_db()
-    with SessionLocal() as db:
-        db.merge(Project(**job["project"]))
-        db.merge(Job(id=job["id"], project_id=job["project"]["id"], kind="phone.render", log_path=job.get("log_path")))
-        db.commit()
-    directory = job_dir(get_settings(), job["project"]["id"], job["id"])
-    started = time.time()
-    call_id = modal.current_function_call_id()
-    done = threading.Event()
+def needs_card(message: str) -> bool:
+    """Modal's refusal for accounts with no payment method: "Please add a payment method to use T4 GPU functions"."""
+    return "payment method" in message.lower()
 
-    def state() -> dict:
-        with SessionLocal() as db:
-            row = db.get(Job, job["id"])
-            current = {"status": row.status, "stage": row.stage, "progress": row.progress, "error": row.error_message}
-        return {**current, **live_state(directory, current["progress"] or 0.0, started), "started": started,
-                "updated": time.time(), "call_id": call_id}
 
-    def publish() -> None:
-        while not done.wait(4):
-            try:
-                live[job["id"]] = state()
-            except Exception as exc:  # a missed heartbeat only delays the phone's progress bar
-                print(f"live update failed: {exc}")
+def card_action() -> dict:
+    return {
+        "kind": "billing",
+        "message": f"Your Modal account needs a card on file before it can use a {GPU} GPU (Modal's rule; your monthly "
+                   "free credit still applies). Add one under Settings, Billing, then tap Try again. Your scan is saved.",
+        "url": BILLING_URL,
+        "label": "Add a card on Modal",
+        "retry": True,
+    }
 
-    threading.Thread(target=publish, daemon=True).start()
-    try:
-        run_task(job["id"])
-    finally:
-        done.set()
-        final = state()
-        data.commit()  # results must be on the volume before the web container is told the job ended
-        live[job["id"]] = final
-    return final
+
+def start_sandbox(payload: dict):
+    return modal.Sandbox.create(
+        "python", f"{REMOTE_ROOT}/scripts/cloud_render.py", json.dumps(payload),
+        image=image, gpu=GPU, volumes={"/data": data}, timeout=RENDER_TIMEOUT, workdir=REMOTE_ROOT, env=RENDER_ENV,
+    )
 
 
 # ---- Web side -------------------------------------------------------------------------------------
 
 class CloudRenders:
-    """phone.REMOTE on the web container: sends jobs to `render` and reads their live state back."""
+    """phone.REMOTE on the web container: starts a GPU sandbox per job and reads its state back."""
 
     def hello(self) -> dict:
         return {"machine": f"the NAMMA cloud ({GPU} GPU, only while rendering)", "trainer": "gsplat",
-                "photoreal": True, "dense_points": True, "cuda": True, "cloud": True}
+                "photoreal": True, "dense_points": True, "cuda": True, "cloud": True, "retry": True}
 
     def submit(self, row) -> None:
         payload = {
             "id": row.id,
             "log_path": row.log_path,
             "project": {c: getattr(row.project, c) for c in ("id", "name", "status", "source_filename", "source_path",
-                                                             "source_sha256", "source_size_bytes", "created_at")},
+                                                             "source_sha256", "source_size_bytes")},
         }
-        data.commit()  # the upload and params.json have to be visible to the GPU container
-        call = render.spawn(payload)
-        live[row.id] = {"status": "queued", "stage": "starting a GPU", "progress": 0.0, "call_id": call.object_id,
-                        "updated": time.time(), "steps": [], "log_tail": [], "eta_seconds": None}
+        payload["project"]["created_at"] = row.project.created_at.isoformat() if row.project.created_at else None
+        data.commit()  # the upload and params.json have to be visible to the GPU sandbox
+        try:
+            sandbox = start_sandbox(payload)
+        except Exception as exc:  # most often: no card on the Modal account yet
+            live[row.id] = self._failed(str(exc))
+            return
+        live[row.id] = {"status": "queued", "stage": "starting a GPU", "progress": 0.0, "sandbox_id": sandbox.object_id,
+                        "updated": time.time(), "checked": 0.0, "steps": [], "log_tail": [], "eta_seconds": None}
+
+    def action(self, row) -> dict | None:
+        state = live.get(row.id)
+        return state.get("action") if state else None
 
     def refresh(self, db, row) -> dict | None:
         from datetime import datetime, timezone
@@ -149,8 +144,9 @@ class CloudRenders:
         state = live.get(row.id)
         if state is None:
             return None
-        if state.get("status") not in ("succeeded", "failed") and time.time() - state.get("updated", 0) > STALE_SECONDS:
-            state = self._check_container(row.id, state)
+        if state.get("status") not in ("succeeded", "failed") and time.time() - state.get("checked", 0) > POLL_SECONDS:
+            state = self._check_sandbox(row, state)
+            live[row.id] = state
         row.stage = (state.get("stage") or row.stage)[:64]
         row.progress = state.get("progress") or row.progress
         if state.get("started") and row.started_at is None:
@@ -160,31 +156,54 @@ class CloudRenders:
         if state.get("status") in ("succeeded", "failed"):
             row.error_message = state.get("error")
             row.finished_at = datetime.now(timezone.utc)
-            try:
-                data.reload()  # pick up the results the GPU container committed
-            except Exception as exc:  # open files: the next poll tries again
-                print(f"reload failed: {exc}")
-                row.status = "running"
         db.commit()
         return state
 
-    def _check_container(self, job_id: str, state: dict) -> dict:
-        call_id = state.get("call_id")
-        if not call_id:
-            return state
+    @staticmethod
+    def _failed(message: str) -> dict:
+        state = {"status": "failed", "stage": "failed", "progress": 0.0, "error": message[:2000], "updated": time.time(),
+                 "steps": [], "log_tail": [], "eta_seconds": None}
+        if needs_card(message):
+            state.update(error="Needs a card on your Modal account before it can use a GPU.", action=card_action())
+        return state
+
+    def _check_sandbox(self, row, state: dict) -> dict:
+        from app.config import get_settings
+        from app.pipeline.tasks import job_dir
+
+        state = {**state, "checked": time.time()}
+        sandbox = modal.Sandbox.from_id(state["sandbox_id"])
+        code = sandbox.poll()
+        if code is None:
+            try:
+                return {**state, **json.loads(sandbox.filesystem.read_text("/tmp/live.json")), "checked": time.time()}
+            except Exception:  # still starting, or between two writes
+                return state
+        final_path = job_dir(get_settings(), row.project_id, row.id) / "cloud_state.json"
         try:
-            result = modal.FunctionCall.from_id(call_id).get(timeout=0)
-        except TimeoutError:
-            return state  # still running (or still waiting for a GPU)
-        except Exception as exc:
-            result = {**state, "status": "failed", "error": f"The render container stopped: {exc}"[:2000]}
-        live[job_id] = result
-        return result
+            data.reload()  # pick up the results the sandbox saved
+        except Exception as exc:  # open files: the next poll tries again
+            print(f"reload failed: {exc}")
+        if final_path.is_file():
+            final = json.loads(final_path.read_text())
+            if final.get("status") in ("succeeded", "failed"):
+                return {**final, "checked": time.time()}
+            return self._failed(f"The GPU sandbox stopped (exit code {code}) before the render finished.")
+        exited = state.get("exited") or time.time()
+        if time.time() - exited < SAVE_GRACE_SECONDS:
+            return {**state, "exited": exited, "stage": state.get("stage") or "saving the result"}
+        why = ""
+        try:
+            why = sandbox.stderr.read()[-1500:]
+        except Exception:
+            pass
+        return self._failed(why if needs_card(why) else f"The GPU sandbox stopped (exit code {code}) without saving "
+                                                         f"a result. {why}".strip())
 
 
 @app.function(image=image, volumes={"/data": data, "/db": database}, max_containers=1, scaledown_window=300, timeout=3600,
               env={**COMMON_ENV, "DATABASE_URL": "sqlite:////db/namma.db", "JOBS_RUN_ELSEWHERE": "true",
-                   "NAMMA_REMOTE_KEY_FILE": "/db/pairing_key"})
+                   "NAMMA_REMOTE_KEY_FILE": "/db/pairing_key", "NAMMA_GPU": GPU})
 @modal.concurrent(max_inputs=50)
 @modal.asgi_app()
 def web():

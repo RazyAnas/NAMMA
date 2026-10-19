@@ -196,7 +196,32 @@ async function loadResult(client, renderId, status) {
   window.nammaStudio.result = { best, bytes: bytes.byteLength, info };
 }
 
+// A render the person can fix and run again (the cloud account needs a card first): what to do, a link, Try again.
+function showAction(client, renderId, status) {
+  const action = status.action;
+  $('render-action').hidden = !action;
+  if (!action) return;
+  $('render-status').textContent = action.message || `The render stopped: ${status.error}`;
+  $('render-action-link').hidden = !action.url;
+  $('render-action-link').href = action.url || '#';
+  $('render-action-link').textContent = action.label || 'Open';
+  $('retry').hidden = !action.retry;
+  $('retry').onclick = async () => {
+    $('retry').disabled = true;
+    try {
+      await client.retry(renderId);
+      $('render-action').hidden = true;
+      await follow(client, renderId);
+    } catch (error) {
+      $('render-status').textContent = `Couldn't start it again: ${error.message}`;
+    } finally {
+      $('retry').disabled = false;
+    }
+  };
+}
+
 async function follow(client, renderId) {
+  $('render-action').hidden = true;
   $('render-progress').hidden = false;
   const status = await client.wait(renderId, (s) => {
     if (s.status === 'unreachable') {
@@ -212,6 +237,7 @@ async function follow(client, renderId) {
   $('render-progress').hidden = true;
   if (status.status === 'failed') {
     $('render-status').textContent = `The render stopped: ${status.error || 'see the server log'}`;
+    showAction(client, renderId, status);
     return status;
   }
   await loadResult(client, renderId, status);
@@ -265,7 +291,7 @@ function historyItem(render) {
     queued: 'waiting to start',
     running: `rendering ${Math.round(100 * (render.progress || 0))}%${render.eta_seconds != null ? `, ${formatLeft(render.eta_seconds)}` : ''}`,
     succeeded: { 'splat.splat': 'photoreal splat ready', 'dense.ply': 'dense points ready', 'sparse.ply': 'sparse points ready' }[render.best] || 'finished',
-    failed: `stopped: ${(render.error || '').slice(0, 80)}`,
+    failed: render.action ? `needs you: ${render.action.label || 'tap to see'}` : `stopped: ${(render.error || '').slice(0, 80)}`,
   }[render.status] || render.status;
   meta.textContent = `${when}${quality} · ${state}`;
   button.append(title, meta);

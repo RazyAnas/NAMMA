@@ -24,7 +24,7 @@ The `/record/` page is now the whole capture-to-3D loop, no app install:
 ### NAMMA cloud (Modal): nothing to keep open
 
 `modal_app.py` runs the server on Modal: a small CPU container answers the phone and keeps the scan
-history, and each render gets its own GPU container (L4 by default, `NAMMA_GPU=T4` for cheaper) that is
+history, and each render gets its own GPU sandbox (T4 by default, `NAMMA_GPU=L4` for faster) that is
 billed only while it renders. A render keeps going with the phone page closed. Modal's Starter plan
 gives $30 of free credit a month; at Modal's price list an L4 is about $0.80 an hour and a T4 about
 $0.59 an hour (not measured here).
@@ -32,7 +32,7 @@ $0.59 an hour (not measured here).
 Deploy, all in the phone's browser, with no token or secret stored anywhere:
 
 1. github.com/RazyAnas/NAMMA > Actions > **Deploy render server to Modal** > **Run workflow** (pick the
-   GPU; L4 is the default).
+   GPU; T4 is the default).
 2. Open the run. A **Sign in to Modal** notice at the top has a link: open it, sign in to the Modal
    account that should pay, approve. The token it hands the run lasts 2 hours and is never saved
    (`scripts/modal_login.py`, Modal's own `modal token new` sign-in).
@@ -44,6 +44,11 @@ Deploy, all in the phone's browser, with no token or secret stored anywhere:
 
 Another Modal account is the same steps with that account: it gets its own link, GPU bill and scan
 history (each account has its own volumes).
+
+Modal turns GPUs on only for accounts with a card on file (its error: "Please add a payment method to use
+T4 GPU functions"). Nothing GPU is deployed, so the server deploys on any account; the GPU is asked for
+when a render starts. If Modal refuses it, the phone says so with an **Add a card on Modal** button
+(modal.com settings) and **Try again** (`POST /api/v1/remote/renders/{id}/retry`), and the scan stays saved.
 
 ### Colab: free GPU while the notebook runs
 
@@ -137,7 +142,7 @@ repository's Actions log can only hand a token to that run, for whoever approves
 - `scripts/train_gsplat.py` on CUDA (adapted from the GPU handout trainer that ran on a T4; its dataset
   loading was checked here on the rendered bundle: 39 views, 5 held out) and the Colab notebook.
 - No held-out PSNR for a real splat from a phone bundle yet: the phone shows it once a real trainer runs.
-- Modal: the image build, volumes, GPU containers and the deploy workflow have not run (this container
-  cannot reach modal.com). The web/GPU hand-off in `modal_app.py` is tested in-process against a stand-in
-  for the `modal` package (`tests/test_modal_app.py`): upload, spawn, live progress, history, a dead
-  render container. The first deploy is the real test; its log is in the Actions tab.
+- Modal: the image builds there (2026-10-19, gsplat kernels compiled on a T4), and the sign-in from the
+  phone worked; the sandbox renders have not run on Modal yet. The web/GPU hand-off in `modal_app.py` is
+  tested in-process against a stand-in for the `modal` package (`tests/test_modal_app.py`): upload,
+  sandbox, live progress, history, a dead sandbox, and a refused GPU (no card) that is tried again.

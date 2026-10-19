@@ -1,14 +1,16 @@
 """modal_app.py's web/GPU split, run in-process against a stand-in for the `modal` package.
 
-What it checks: an upload on the web side spawns the GPU function with the job's rows, the GPU side
-publishes live state that the phone's status and history calls show, and the end state (including a
-render container that died) lands in the web side's history. What it cannot check: Modal itself
-(image build, volumes, GPUs); the deploy workflow does that.
+What it checks: an upload on the web side starts a GPU sandbox running scripts/cloud_render.py with the
+job's rows, the phone's status and history calls show the sandbox's live state, and the end state lands
+in the web side's history; a sandbox that dies, and an account Modal refuses a GPU (no card yet), end
+as failed renders the phone can explain and try again. What it cannot check: Modal itself (image build,
+volumes, GPUs); the deploy workflow does that.
 """
 
 import importlib
 import io
 import json
+from pathlib import Path
 import sys
 import threading
 import time
@@ -40,44 +42,50 @@ class _Volume:
         self.reloads += 1
 
 
-class _Call:
-    calls = {}
+class _Sandbox:
+    boxes = {}
+    refuse = None  # set to Modal's error text to refuse the GPU, as for an account with no card
 
-    def __init__(self, function, args):
-        self.object_id = f"fc-{len(self.calls)}"
-        self.result, self.error = None, None
-        _Call.calls[self.object_id] = self
-        self.thread = threading.Thread(target=self._run, args=(function, args))
+    def __init__(self, args, kwargs):
+        self.object_id = f"sb-{len(self.boxes)}"
+        self.kwargs = kwargs
+        self.live = Path(_fake.tmp) / f"{self.object_id}.json"
+        self.code = None
+        _Sandbox.boxes[self.object_id] = self
+        payload = json.loads(args[-1])
+        self.thread = threading.Thread(target=self._run, args=(payload,))
         self.thread.start()
+        self.filesystem = types.SimpleNamespace(read_text=lambda path: self.live.read_text())
+        self.stderr = types.SimpleNamespace(read=lambda: "")
 
-    def _run(self, function, args):
-        _fake.current = self.object_id
+    def _run(self, payload):
+        sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "scripts"))
+        import cloud_render
+
         try:
-            self.result = function(*args)
-        except Exception as exc:  # noqa: BLE001
-            self.error = exc
+            self.code = cloud_render.main(payload, live=self.live)
+        except Exception:  # noqa: BLE001
+            self.code = 1
 
     @classmethod
-    def from_id(cls, call_id):
-        return cls.calls[call_id]
+    def create(cls, *args, **kwargs):
+        if cls.refuse:
+            raise RuntimeError(cls.refuse)
+        return cls(args, kwargs)
 
-    def get(self, timeout=None):
-        self.thread.join(timeout)
-        if self.thread.is_alive():
-            raise TimeoutError
-        if self.error:
-            raise self.error
-        return self.result
+    @classmethod
+    def from_id(cls, sandbox_id):
+        return cls.boxes[sandbox_id]
+
+    def poll(self):
+        return None if self.thread.is_alive() else self.code
 
 
 def _function(**_):
-    def wrap(function):
-        function.spawn = lambda *args: _Call(function, args)
-        return function
-    return wrap
+    return lambda function: function
 
 
-_fake = types.SimpleNamespace(current=None)
+_fake = types.SimpleNamespace(tmp=None)
 
 
 def _fake_modal():
@@ -87,19 +95,21 @@ def _fake_modal():
     module.Volume = types.SimpleNamespace(from_name=lambda name, **k: _Volume())
     module.Dict = types.SimpleNamespace(from_name=lambda name, **k: {})
     module.Secret = types.SimpleNamespace(from_name=lambda name: object())
-    module.FunctionCall = _Call
+    module.Sandbox = _Sandbox
     module.concurrent = lambda **k: (lambda f: f)
     module.asgi_app = lambda: (lambda f: f)
-    module.current_function_call_id = lambda: _fake.current
     return module
 
 
 @pytest.fixture
-def cloud(monkeypatch):
+def cloud(monkeypatch, tmp_path):
+    _fake.tmp = tmp_path
+    _Sandbox.refuse = None
     monkeypatch.setitem(sys.modules, "modal", _fake_modal())
     sys.modules.pop("modal_app", None)
     module = importlib.import_module("modal_app")
     monkeypatch.setattr(module, "_enter_repo", lambda: None)
+    monkeypatch.setattr(module, "POLL_SECONDS", 0)
     monkeypatch.setattr(phone, "REMOTE", None)
     monkeypatch.setattr(tasks, "REMOTE_RUNNER", None)
     module.web()  # installs the hooks, as the Modal web container does
@@ -122,7 +132,7 @@ async def _send(client) -> str:
     return (await client.post(f"/api/v1/remote/uploads/{start['upload_id']}/finish", json={"quality": "fast"})).json()["render_id"]
 
 
-async def _until(client, render_id, done, seconds=10):
+async def _until(client, render_id, done, seconds=20):
     deadline = time.time() + seconds
     while time.time() < deadline:
         status = (await client.get(f"/api/v1/remote/renders/{render_id}")).json()
@@ -146,7 +156,7 @@ async def test_cloud_render_reports_progress_and_lands_in_history(client, cloud,
             db.commit()
             directory = tasks.job_dir(get_settings(), job.project_id, job_id)
         (directory / "steps.json").write_text(json.dumps([{"key": "splat", "label": "Photoreal splat", "state": "running"}]))
-        gate.wait(10)
+        gate.wait(20)
         (directory / "outputs").mkdir(exist_ok=True)
         (directory / "outputs" / "splat.splat").write_bytes(b"\0" * 32)
         (directory / "outputs" / "result.json").write_text(json.dumps({"best": "splat.splat", "quality": "fast"}))
@@ -166,18 +176,52 @@ async def test_cloud_render_reports_progress_and_lands_in_history(client, cloud,
     assert history[0]["render_id"] == render_id and history[0]["name"] == "Lobby" and history[0]["status"] == "running"
     gate.set()
     done = await _until(client, render_id, lambda s: s["status"] == "succeeded")
-    assert done["best"] == "splat.splat" and "splat.splat" in done["outputs"] and cloud.data.reloads >= 1
+    assert done["best"] == "splat.splat" and "splat.splat" in done["outputs"]
     assert (await client.get("/api/v1/remote/renders")).json()["renders"][0]["status"] == "succeeded"
 
 
-async def test_a_dead_render_container_marks_the_render_failed(client, cloud, monkeypatch):
-    def crash(job_id):
+async def test_a_dead_render_sandbox_marks_the_render_failed(client, cloud, monkeypatch):
+    def killed(job_id):  # the sandbox is gone before it could save anything
         raise RuntimeError("GPU container lost")
 
-    monkeypatch.setattr(tasks, "run_task", crash)
-    monkeypatch.setattr(cloud, "STALE_SECONDS", 0)
+    monkeypatch.setattr(tasks, "run_task", killed)
+    monkeypatch.setattr(cloud, "SAVE_GRACE_SECONDS", 0)
     render_id = await _send(client)
-    _Call.calls[cloud.live[render_id]["call_id"]].thread.join(10)
-    cloud.live[render_id] = {**cloud.live[render_id], "status": "running", "updated": 0}  # its last heartbeat, long ago
+    box = _Sandbox.boxes[cloud.live[render_id]["sandbox_id"]]
+    box.thread.join(10)
+    assert box.kwargs["gpu"] == cloud.GPU and "/data" in box.kwargs["volumes"]
     failed = await _until(client, render_id, lambda s: s["status"] == "failed")
-    assert "GPU container lost" in failed["error"]
+    assert "stopped" in failed["error"] and failed["action"] is None
+    assert cloud.data.reloads >= 1  # looked for the saved result on the volume before giving up
+
+
+async def test_no_card_on_modal_is_explained_on_the_phone_and_can_be_tried_again(client, cloud, monkeypatch):
+    def fake_run_task(job_id):
+        from app.config import get_settings
+        from app.database import SessionLocal
+        from app.models import Job
+
+        with SessionLocal() as db:
+            job = db.get(Job, job_id)
+            directory = tasks.job_dir(get_settings(), job.project_id, job_id)
+            (directory / "outputs").mkdir(exist_ok=True)
+            (directory / "outputs" / "splat.splat").write_bytes(b"\0" * 32)
+            (directory / "outputs" / "result.json").write_text(json.dumps({"best": "splat.splat", "quality": "fast"}))
+            job.status, job.stage, job.progress = "succeeded", "complete", 1.0
+            db.commit()
+
+    monkeypatch.setattr(tasks, "run_task", fake_run_task)
+    _Sandbox.refuse = "Please add a payment method to use T4 GPU functions."
+    render_id = await _send(client)
+    failed = (await client.get(f"/api/v1/remote/renders/{render_id}")).json()
+    assert failed["status"] == "failed" and failed["action"]["retry"]
+    assert failed["action"]["url"].startswith("https://modal.com/") and "card" in failed["action"]["message"]
+    history = (await client.get("/api/v1/remote/renders")).json()["renders"]
+    assert history[0]["action"]["kind"] == "billing"
+    _Sandbox.refuse = None  # the person added a card
+    retried = (await client.post(f"/api/v1/remote/renders/{render_id}/retry")).json()
+    assert retried["status"] in ("queued", "running") and retried["error"] is None
+    done = await _until(client, render_id, lambda s: s["status"] == "succeeded")
+    assert done["best"] == "splat.splat" and done["action"] is None
+    again = await client.post(f"/api/v1/remote/renders/{render_id}/retry")
+    assert again.status_code == 409

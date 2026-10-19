@@ -72,6 +72,10 @@ export class RenderClient {
   }
 
   // Polls until the render finishes; onUpdate(status) on every poll.
+  retry(renderId) {
+    return this.json(`/api/v1/remote/renders/${renderId}/retry`, { method: 'POST' });
+  }
+
   async wait(renderId, onUpdate = () => {}, intervalMs = 3000) {
     for (;;) {
       let status;

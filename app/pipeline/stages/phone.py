@@ -47,7 +47,7 @@ from app.database import get_db
 from app.models import Job, Project
 from app.pipeline.backends import capabilities, describe, missing_requirements
 from app.pipeline.stages.export import read_splat_ply, walk_scene_files
-from app.pipeline.tasks import TASKS, TaskContext, TaskError, job_dir, submit_task, task
+from app.pipeline.tasks import TASKS, TaskContext, TaskError, dispatch, job_dir, submit_task, task
 from app.services.storage import ALLOWED_VIDEO_SUFFIXES, ensure_project_dirs, safe_filename
 
 
@@ -76,6 +76,9 @@ class RemoteRenders(Protocol):
 
     def refresh(self, db: Session, job: Job) -> dict | None:
         """Live state of a queued/running job (steps, log_tail, eta_seconds); updates the job row when it ends."""
+
+    def action(self, job: Job) -> dict | None:
+        """What the person can do about a failed job (e.g. add a card on the cloud account): message, url, label, retry."""
 
 
 REMOTE: RemoteRenders | None = None
@@ -591,6 +594,7 @@ def describe_render(db: Session, job: Job, detail: bool = True) -> dict:
         "progress": job.progress,
         "eta_seconds": live.get("eta_seconds") if job.status in ("queued", "running") else None,
         "error": job.error_message,
+        "action": REMOTE.action(job) if REMOTE is not None and job.status == "failed" else None,
         "quality": result.get("quality"),
         "best": result.get("best"),
         "outputs": outputs,
@@ -610,6 +614,19 @@ async def list_renders(limit: int = 30, db: Session = Depends(get_db)) -> dict:
 @router.get("/renders/{render_id}", dependencies=[Depends(require_key)])
 async def render_status(render_id: str, db: Session = Depends(get_db)) -> dict:
     return describe_render(db, _render_job(db, render_id))
+
+
+@router.post("/renders/{render_id}/retry", dependencies=[Depends(require_key)])
+async def retry_render(render_id: str, db: Session = Depends(get_db)) -> dict:
+    """Runs a failed render again from the scan already on this server (e.g. after adding a card on the cloud account)."""
+    job = _render_job(db, render_id)
+    if job.status != "failed":
+        raise HTTPException(status_code=409, detail="Only a stopped render can be tried again.")
+    job.status, job.stage, job.progress, job.error_message = "queued", "queued", 0.0, None
+    job.started_at = job.finished_at = None
+    db.commit()
+    dispatch(job)
+    return describe_render(db, job)
 
 
 @router.get("/renders/{render_id}/files/{name}", dependencies=[Depends(require_key)])
