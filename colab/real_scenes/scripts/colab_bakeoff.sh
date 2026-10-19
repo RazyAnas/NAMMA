@@ -4,7 +4,7 @@
 # usage: nohup bash colab_bakeoff.sh > /content/bakeoff.log 2>&1 &     progress: grep -a "DONE\|dB\|psnr" /content/bakeoff.log
 D=$(cd $(dirname $0); pwd); export PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True
 ONLY_3K=1 bash $D/colab_block_test.sh phone_sfm
-bash $D/colab_gsplat_test.sh phone_sfm 30000 "mcmc depth dn 2dgs default"
+bash $D/colab_gsplat_test.sh phone_sfm ${STEPS:-7000} "mcmc depth dn 2dgs default"   # 7k: free Colab runtimes drop after a few hours
 bash $D/colab_block_test.sh phone_sfm
 bash $D/colab_vggt_floor.sh lobby_ref   # phone VGGT floor already measured: NavMesh rejected it
 echo BAKEOFF_DONE
