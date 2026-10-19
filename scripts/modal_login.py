@@ -27,19 +27,25 @@ async def login(wait: float, expires_in: int) -> tuple[str, str, str]:
     from modal.config import config
     from modal.token_flow import _TokenFlow
 
+    from modal.exception import PermissionDeniedError
+
+    deadline = time.time() + wait
     async with _Client.anonymous(config.get("server_url")) as client:
-        flow = _TokenFlow(client)
-        async with flow.start("namma-github-actions", None, expires_in) as (_, web_url, code):
-            notice("Sign in to Modal", f"Open {web_url} on your phone and approve" + (f" (code {code})" if code else ""))
-            print(f"\nSign in to Modal here:\n\n    {web_url}\n", flush=True)
-            if code:
-                print(f"Code: {code}\n", flush=True)
-            deadline = time.time() + wait
-            while time.time() < deadline:
-                result = await flow.finish(timeout=min(40.0, max(1.0, deadline - time.time())))
-                if result is not None:
-                    return result.token_id, result.token_secret, result.workspace_username
-                print("Still waiting for the sign-in…", flush=True)
+        while time.time() < deadline:
+            flow = _TokenFlow(client)
+            async with flow.start("namma-github-actions", None, expires_in) as (_, web_url, code):
+                notice("Sign in to Modal", f"Open {web_url} on your phone and approve" + (f" (code {code})" if code else ""))
+                print(f"\nSign in to Modal here:\n\n    {web_url}\n", flush=True)
+                if code:
+                    print(f"Code: {code}\n", flush=True)
+                try:
+                    while time.time() < deadline:
+                        result = await flow.finish(timeout=min(40.0, max(1.0, deadline - time.time())))
+                        if result is not None:
+                            return result.token_id, result.token_secret, result.workspace_username
+                        print("Still waiting for the sign-in…", flush=True)
+                except PermissionDeniedError:  # Modal ends a link after about 15 minutes: start a fresh one
+                    print("That sign-in link expired; here is a new one (open the newest link).", flush=True)
     raise TimeoutError(f"Nobody approved the Modal sign-in within {wait:.0f} s; run the workflow again.")
 
 
