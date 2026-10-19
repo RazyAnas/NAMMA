@@ -4,7 +4,7 @@
 #   mcmc     3DGS-MCMC (MCMCStrategy: relocate dead Gaussians, add up to cap, position noise; opacity + scale reg 0.01)
 #   depth    mcmc + L1 in disparity against our boot depth (simple_trainer's depth loss, dense instead of sparse)
 #   dn       depth + DN-Splatter-style normal loss (normals of rendered depth vs normals of boot depth) + flatten loss
-#   2dgs     2D Gaussian surfels (rasterization_2dgs), normal consistency from 7k and distortion from 3k, depth loss
+#   2dgs     2D Gaussian surfels (rasterization_2dgs), normal consistency from 7k and distortion from 3k (of 30k, scaled), depth loss
 # Writes <out>/test_XXXXX.png for every test frame (score with score_whole.py) and <out>/splat.ply (3DGS ply).
 # Usage: python gsplat_train.py <work> <init xyzrgb.ply> <out> <variant> [steps=30000]
 import sys, os, json, math, time, numpy as np, cv2, torch, torch.nn.functional as F
@@ -76,13 +76,13 @@ for step in range(STEPS):
         dg = deps[f].to(dev); m = dg > 0.05
         lam = 0.2 if step < STEPS // 2 else 0.05   # strong while densifying, weaker while refining
         loss = loss + lam * scene_scale * (1 / dep.clamp_min(1e-3)[m] - 1 / dg[m]).abs().mean()
-        if VAR == 'dn' and step > 3000:
+        if VAR == 'dn' and step > 3000 * STEPS // 30000:
             ng, nr = dnormal(dg, vm), dnormal(dep, vm); mm = m & (ng.norm(dim=-1) > 0.5) & (nr.norm(dim=-1) > 0.5)
             loss = loss + 0.05 * (1 - (ng[mm].detach() * nr[mm]).sum(-1)).mean()
     if VAR == 'dn': loss = loss + 0.01 * torch.exp(splats['scales']).min(1).values.mean() / max(scene_scale, 1e-6) * 10
     if TWO_D:
-        if step > 7000: loss = loss + 0.05 * (1 - (ex['normals'] * (ex['surf'] * alpha.detach())).sum(-1)).mean()
-        if step > 3000: loss = loss + 1e-2 * ex['dist'].mean()
+        if step > 7000 * STEPS // 30000: loss = loss + 0.05 * (1 - (ex['normals'] * (ex['surf'] * alpha.detach())).sum(-1)).mean()
+        if step > 3000 * STEPS // 30000: loss = loss + 1e-2 * ex['dist'].mean()
     if MCMC: loss = loss + 0.01 * torch.sigmoid(splats['opacities']).mean() + 0.01 * torch.exp(splats['scales']).mean()
     loss.backward()
     for o in opt.values(): o.step(); o.zero_grad(set_to_none=True)
