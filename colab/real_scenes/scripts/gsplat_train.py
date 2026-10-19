@@ -63,7 +63,7 @@ def render(vm, sh_deg, mode='RGB+ED'):
     kw = dict(means=splats['means'], quats=splats['quats'], scales=torch.exp(splats['scales']), opacities=torch.sigmoid(splats['opacities']),
               colors=torch.cat([splats['sh0'], splats['shN']], 1), viewmats=vm[None], Ks=K[None], width=Wd, height=H, sh_degree=sh_deg, render_mode=mode)
     if TWO_D:
-        c, a, n, ns, dist_, med, info = rasterization_2dgs(**kw, distloss=True)
+        c, a, n, ns, dist_, med, info = rasterization_2dgs(**kw, distloss=mode != 'RGB')   # distortion needs depth; test renders are RGB only
         return c[0], a[0], info, dict(normals=n[0], surf=ns[0], dist=dist_[0])
     c, a, info = rasterization(**kw, packed=False, absgrad=False)
     return c[0], a[0], info, {}
