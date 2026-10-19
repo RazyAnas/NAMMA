@@ -12,8 +12,8 @@ on:
       gpu:
         description: GPU for renders (billed only while rendering)
         type: choice
-        options: [L4, T4, A10G]
-        default: L4
+        options: [T4, L4, A10G]
+        default: T4
 
 concurrency:
   group: modal-deploy
@@ -34,7 +34,9 @@ jobs:
       - name: Deploy
         env:
           NAMMA_GPU: ${{ inputs.gpu }}
-        run: modal deploy modal_app.py 2>&1 | tee deploy.log
+        run: |
+          set -o pipefail
+          modal deploy modal_app.py 2>&1 | tee deploy.log
       - name: Check the server answers
         run: |
           url=$(grep -oE 'https://[a-z0-9-]+--namma-web[a-z0-9-]*\.modal\.run' deploy.log | head -1)
