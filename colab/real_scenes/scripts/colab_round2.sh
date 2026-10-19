@@ -30,5 +30,5 @@ python3 $R/scripts/vggt_pose_check.py $R/frames/lobby_frames $R/scenes/lobby_ref
   > /content/lobby_pose_check.log 2>&1 || { echo POSE_CHECK_FAILED; tail -15 /content/lobby_pose_check.log; }
 grep -A6 "^worst" /content/lobby_pose_check.log; echo POSE_CHECK_DONE
 
-cd /content && zip -qr /content/round2_results.zip $O/*/scores.json $O/*/score.txt $O/difix_stats.json $O/difix3d/splat.ply \
+cd /content && zip -qr /content/round2_results.zip $O/*/test_*.png $O/*/scores.json $O/*/score.txt $O/difix_stats.json $O/difix3d/splat.ply \
   /content/lobby_pose_check.json $W/gs_*/scores.json 2>/dev/null; ls -la /content/round2_results.zip; echo ROUND2_DONE
