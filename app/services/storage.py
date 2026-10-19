@@ -36,9 +36,11 @@ def ensure_project_dirs(settings: Settings, project_id: str) -> dict[str, Path]:
     return paths
 
 
-async def save_upload(upload: UploadFile, destination: Path, max_bytes: int) -> tuple[int, str]:
+async def save_upload(
+    upload: UploadFile, destination: Path, max_bytes: int, allowed_suffixes: set[str] = ALLOWED_VIDEO_SUFFIXES
+) -> tuple[int, str]:
     suffix = Path(upload.filename or "").suffix.lower()
-    if suffix not in ALLOWED_VIDEO_SUFFIXES:
+    if suffix not in allowed_suffixes:
         raise ValueError(f"Unsupported video type '{suffix or 'unknown'}'.")
 
     digest = sha256()

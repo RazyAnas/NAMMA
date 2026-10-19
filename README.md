@@ -11,6 +11,10 @@ This repository now contains the first local pipeline for a laptop-only video-to
 
 The photorealistic MODP mapper, dense collision geometry, NavMesh and viewer are later milestones.
 
+## Unified pipeline API
+
+Every stage (capture, tracking, points, splats, walking, export) is also exposed as a background job under `/api/v1/pipeline`, with a CPU / Apple silicon / CUDA switch and a one-call full run. See [docs/PIPELINE_API.md](docs/PIPELINE_API.md) for endpoints, what has been run, and the known gaps.
+
 ## Run the API
 
 ```powershell
@@ -86,6 +90,30 @@ If quality fails, the backend returns HTTP 409 instead of spending GPU time on a
 - `scripts/train_splatfacto.py` enables splatfacto's per-image bilateral grid and SO3xR3 pose refinement
   (`--no-bilateral-grid`, `--camera-optimizer off` to disable).
 
+## Recording video, AR pose and IMU from a phone browser
+
+`https://<laptop-ip>:8443/record/` (served by the same `scripts/serve_live.py`) records on Android Chrome, with
+no app install, the camera video, the ARCore pose and intrinsics of every frame through WebXR, and raw gyroscope
+and accelerometer samples on one clock, then saves one `.zip` bundle. On the laptop:
+
+```bash
+python scripts/ingest_sensor_bundle.py namma-ar-....zip data/bundles/room1 --stride 10
+```
+
+This writes frames, a COLMAP model with the metric AR poses (`colmap_known_poses/`), pose priors, an MP4 the
+normal upload accepts, and a report with measured rates, tracking loss and the IMU-to-camera time offset. See
+[docs/SENSOR_CAPTURE.md](docs/SENSOR_CAPTURE.md) for what each stream is for, what Android Chrome can deliver,
+what was tested without a phone, and the phone test steps.
+
+## Phone studio: quick 3D on the phone, photoreal render in the cloud
+
+After recording, the phone builds a rough 3D model from ARCore depth in about a second; **Send for
+render** uploads the recording to a render server and the photoreal splat comes back into the same
+viewer, with every scan listed (progress and time left while it runs). The server can be the NAMMA cloud
+on Modal (`modal_app.py`, deployed from GitHub Actions, GPU billed only while rendering), a Colab GPU
+(`notebooks/phone_render_colab.ipynb`, Run all from the phone) or a laptop (`python scripts/serve_render.py`).
+See [docs/PHONE_STUDIO.md](docs/PHONE_STUDIO.md).
+
 ## Live capture from a phone browser
 
 No app install: the phone opens a web page served by this backend and streams keyframes while the laptop
@@ -118,7 +146,12 @@ What happens during capture:
 
 The proof-of-concept viewer is served by the same FastAPI process at `http://127.0.0.1:8000/viewer/`.
 It lists completed projects, streams the published Gaussian PLY, and provides pointer-lock free roaming with
-W/A/S/D, Q/E, mouse look, Shift sprint, and mouse-wheel speed control. Build its static assets after cloning:
+W/A/S/D, Q/E, mouse look, Shift sprint, and mouse-wheel speed control. When an approved NavMesh with
+movement layers is available, the viewer switches to physics walking: a Rapier character controller keeps a
+1.7 m body on the floor with gravity, 25 cm auto-step, a 35 degree slope limit and wall sliding against the
+collision mesh and the NavMesh floor-height map (F toggles walk/fly, Space jumps). To test walking against known
+geometry, `python scripts/build_walk_test_scene.py --output data/walk-test-room` builds a synthetic room, and
+`node bench/walk_bench.mjs ../data/walk-test-room` (from `viewer/`) compares old and new movement against it. Build its static assets after cloning:
 
 ```powershell
 Set-Location viewer

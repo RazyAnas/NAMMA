@@ -1,10 +1,11 @@
 import * as THREE from 'three';
 import * as GaussianSplats3D from '@mkkellogg/gaussian-splats-3d';
 import './style.css';
+import { NavFrame, Walker, decodeMovementLayers, readGlbTriangles } from './walker.js';
 
 const ui = Object.fromEntries(
   ['project', 'load', 'launcher', 'loading', 'progress', 'progress-bar', 'loading-detail', 'error',
-    'hud', 'controls', 'crosshair', 'enter', 'status', 'status-dot', 'project-name', 'model-size', 'fps', 'nav-status']
+    'hud', 'controls', 'crosshair', 'enter', 'status', 'status-dot', 'project-name', 'model-size', 'fps', 'nav-status', 'move-help']
     .map((id) => [id, document.getElementById(id)])
 );
 const canvas = document.getElementById('scene');
@@ -13,6 +14,13 @@ let viewer;
 let camera;
 let renderer;
 let navigation;
+let walker;
+let navFrame;
+let flying = false;
+// Rotates three.js's +Y onto the reconstruction's real up direction, so mouse
+// yaw turns around the floor normal instead of rolling the horizon.
+const level = new THREE.Quaternion();
+const look = new THREE.Euler(0, 0, 0, 'YXZ');
 let previousFrame = performance.now();
 let fpsFrames = 0;
 let fpsStarted = previousFrame;
@@ -86,6 +94,27 @@ async function loadNavigation(projectId) {
   return { ...manifest, walkable: bytes };
 }
 
+// Physics walking needs the movement layers; the calibrated collision mesh
+// sharpens walls and furniture but the height field alone is enough to walk.
+async function createWalker(projectId) {
+  if (!navigation?.navmesh_ready || !navigation.movement) return null;
+  const [{ default: RAPIER }, layers] = await Promise.all([
+    import('@dimforge/rapier3d-compat'),
+    decodeMovementLayers(navigation),
+  ]);
+  await RAPIER.init({});
+  let collision = null;
+  try {
+    const response = await fetch(`/api/v1/projects/${projectId}/collision-model`);
+    if (response.ok) collision = readGlbTriangles(await response.arrayBuffer());
+  } catch (error) {
+    console.warn('Collision mesh unavailable; walking on the height field only.', error);
+  }
+  const created = new Walker(RAPIER, { navigation, layers, collision });
+  created.spawn();
+  return created;
+}
+
 function transformPoint(matrix, point) {
   if (!Array.isArray(matrix) || matrix.length !== 4) return point;
   const [x, y, z] = point;
@@ -96,6 +125,11 @@ function transformPoint(matrix, point) {
     (matrix[1][0] * x + matrix[1][1] * y + matrix[1][2] * z + matrix[1][3]) / divisor,
     (matrix[2][0] * x + matrix[2][1] * y + matrix[2][2] * z + matrix[2][3]) / divisor,
   ];
+}
+
+function applyLook() {
+  look.set(pitch, yaw, 0);
+  camera.quaternion.setFromEuler(look).premultiply(level);
 }
 
 function frameCamera(manifest) {
@@ -110,14 +144,23 @@ function frameCamera(manifest) {
     const extent = bounds.min.map((value, index) => bounds.max[index] - value);
     distance = Math.max(1, Math.max(...extent) * 0.9);
   }
-  if (navigation?.navmesh_ready && Array.isArray(spawn) && spawn.length === 3) {
+  const up = navFrame ? new THREE.Vector3(...navFrame.viewerUp) : new THREE.Vector3(0, 1, 0);
+  level.setFromUnitVectors(new THREE.Vector3(0, 1, 0), up);
+  if (walker) {
+    camera.position.fromArray(navFrame.navToViewer(walker.eye));
+  } else if (navigation?.navmesh_ready && Array.isArray(spawn) && spawn.length === 3) {
     camera.position.fromArray(transformPoint(navigation.source_to_viewer, spawn));
   } else {
-    camera.position.set(target[0], target[1] + distance * 0.15, target[2] + distance);
+    camera.position.copy(up).multiplyScalar(distance * 0.15).add(new THREE.Vector3(target[0], target[1], target[2] + distance));
   }
-  camera.lookAt(new THREE.Vector3(...target));
-  yaw = camera.rotation.y;
-  pitch = camera.rotation.x;
+  // Express the view direction in the levelled frame to get yaw and pitch.
+  const toTarget = new THREE.Vector3(...target).sub(camera.position);
+  toTarget.applyQuaternion(level.clone().invert());
+  if (toTarget.lengthSq() < 1e-9) toTarget.set(0, 0, -1);
+  toTarget.normalize();
+  yaw = Math.atan2(-toTarget.x, -toTarget.z);
+  pitch = walker ? 0 : Math.asin(Math.max(-1, Math.min(1, toTarget.y)));
+  applyLook();
 }
 
 async function loadModel() {
@@ -134,8 +177,13 @@ async function loadModel() {
     if (!manifestResponse.ok) throw new Error('The Gaussian model manifest is not available.');
     const manifest = await manifestResponse.json();
     navigation = null;
+    walker = null;
+    navFrame = null;
+    flying = false;
     try {
       navigation = await loadNavigation(projectId);
+      if (navigation?.navmesh_ready) navFrame = new NavFrame(navigation);
+      walker = await createWalker(projectId);
     } catch (navigationError) {
       console.warn(navigationError);
     }
@@ -181,7 +229,7 @@ async function loadModel() {
     const option = ui.project.selectedOptions[0];
     ui['project-name'].textContent = option?.textContent || 'Reconstruction';
     ui['model-size'].textContent = formatBytes(manifest.size_bytes);
-    ui['nav-status'].textContent = navigation?.navmesh_ready ? 'collision on' : 'review required';
+    updateModeLabels();
     ui.loading.hidden = true;
     ui.hud.hidden = false;
     ui.controls.hidden = false;
@@ -219,20 +267,42 @@ function frame(now) {
   requestAnimationFrame(frame);
 }
 
+function updateModeLabels() {
+  if (walker && !flying) {
+    ui['nav-status'].textContent = 'walking · collision on';
+    ui['move-help'].textContent = 'W A S D · Space jump';
+  } else {
+    ui['nav-status'].textContent = walker ? 'flying · no collision' : (navigation?.navmesh_ready ? 'collision on' : 'review required');
+    ui['move-help'].textContent = 'W A S D · Q / E down/up';
+  }
+}
+
 function updateMovement(delta) {
   if (document.pointerLockElement !== canvas) return;
   const forward = Number(keys.has('KeyW')) - Number(keys.has('KeyS'));
   const strafe = Number(keys.has('KeyD')) - Number(keys.has('KeyA'));
   const vertical = Number(keys.has('KeyE')) - Number(keys.has('KeyQ'));
   const multiplier = keys.has('ShiftLeft') || keys.has('ShiftRight') ? 3 : 1;
+  if (walker && !flying) {
+    // Walk on the level plane: pitch never changes height, gravity does.
+    direction.set(strafe, 0, -forward);
+    if (direction.lengthSq() > 0) direction.normalize();
+    direction.applyEuler(new THREE.Euler(0, yaw, 0)).applyQuaternion(level);
+    const nav = navFrame.viewerDirToNav(direction.toArray());
+    const horizontal = Math.hypot(nav[0], nav[2]);
+    const scale = horizontal > 1e-6 ? (speed * multiplier) / horizontal : 0;
+    walker.step([nav[0] * scale, nav[2] * scale], delta, keys.has('Space'));
+    camera.position.fromArray(navFrame.navToViewer(walker.eye));
+    return;
+  }
   direction.set(strafe, 0, -forward);
   if (direction.lengthSq() > 0) direction.normalize();
   direction.applyQuaternion(camera.quaternion);
-  direction.y += vertical;
+  direction.addScaledVector(new THREE.Vector3(0, 1, 0).applyQuaternion(level), vertical);
   if (direction.lengthSq() > 0) direction.normalize();
   const sourceUnitsToMeters = navigation?.navmesh_ready ? navigation.viewer_units_to_meters : 1;
   velocity.copy(direction).multiplyScalar((speed * multiplier * delta) / sourceUnitsToMeters);
-  if (!navigation?.navmesh_ready) {
+  if (!navigation?.navmesh_ready || flying) {
     camera.position.add(velocity);
     return;
   }
@@ -245,6 +315,21 @@ function updateMovement(delta) {
     if (!isWalkable(candidate)) break;
     camera.position.copy(candidate);
   }
+}
+
+function toggleFlying() {
+  if (!walker) return;
+  flying = !flying;
+  if (!flying) {
+    // Land where the camera is if that spot is walkable, otherwise go back
+    // to the last walking position.
+    const [x, , z] = navFrame.viewerToNav(camera.position.toArray());
+    if (walker.standable(x, z)) walker.placeFeet(x, z);
+    camera.position.fromArray(navFrame.navToViewer(walker.eye));
+    pitch = Math.max(-1.2, Math.min(1.2, pitch));
+    applyLook();
+  }
+  updateModeLabels();
 }
 
 function isWalkable(position) {
@@ -269,14 +354,18 @@ document.addEventListener('mousemove', (event) => {
   yaw -= event.movementX * 0.002;
   pitch -= event.movementY * 0.002;
   pitch = Math.max(-Math.PI / 2 + 0.02, Math.min(Math.PI / 2 - 0.02, pitch));
-  camera.rotation.set(pitch, yaw, 0);
+  applyLook();
 });
 document.addEventListener('pointerlockchange', () => {
   const locked = document.pointerLockElement === canvas;
   ui.crosshair.hidden = !locked;
   ui.enter.textContent = locked ? 'Esc to release cursor' : 'Click to roam';
 });
-document.addEventListener('keydown', (event) => keys.add(event.code));
+document.addEventListener('keydown', (event) => {
+  if (event.code === 'KeyF' && !event.repeat && document.pointerLockElement === canvas) toggleFlying();
+  if (event.code === 'Space' && document.pointerLockElement === canvas) event.preventDefault();
+  keys.add(event.code);
+});
 document.addEventListener('keyup', (event) => keys.delete(event.code));
 canvas.addEventListener('click', lockPointer);
 ui.enter.addEventListener('click', lockPointer);
