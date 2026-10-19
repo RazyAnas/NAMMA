@@ -13,6 +13,6 @@ The phone-room and lobby `splat.ply` files are not in git (90 and 70 MB, trained
 `namma_phone_sfm_lobby_30k.zip` (`phone_sfm_run30k_splat.ply`, `lobby_ref_run30k_splat.ply`).
 Fly mode stays within 0.6 m of the capture path when the room has `cameras.json` (camera centres from `scenes/<scene>/clean/poses_w2c.json`): a splat is only reliable near where the phone filmed.
 Hybrid view: when a room has `mesh.glb` (`../scripts/make_demo_mesh.py`: TSDF of the anchored depth, 300k triangles,
-vertex colours), the mesh is drawn behind the splat. M cycles fill (default: mesh only plugs the splat's holes) / auto (fade
+vertex colours, then `npx gltfpack -cc -vp 14`: 6.1 MB to 1.2 MB), the mesh is drawn behind the splat. M cycles fill (default: mesh only plugs the splat's holes) / auto (fade
 to the mesh 0.15-0.6 m from the capture path) / splat / mesh. Off the path the mesh scores 18.8 dB vs 15.3-16.6 for the splats.
 Floors are built by `../scripts/build_walk_scene.py`.

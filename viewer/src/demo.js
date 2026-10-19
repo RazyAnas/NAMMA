@@ -6,6 +6,7 @@ import * as THREE from 'three';
 import * as GaussianSplats3D from '@mkkellogg/gaussian-splats-3d';
 import RAPIER from '@dimforge/rapier3d-compat';
 import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
+import { MeshoptDecoder } from 'three/examples/jsm/libs/meshopt_decoder.module.js';
 import './style.css';
 import './demo.css';
 import { NavFrame, Walker, decodeMovementLayers, readGlbTriangles } from './walker.js';
@@ -73,7 +74,8 @@ function blendSplatAndMesh() {
 async function loadRoomMesh(url) {
   const buffer = await fetch(url).then((r) => (r.ok ? r.arrayBuffer() : null)).catch(() => null);
   if (!buffer) return null;
-  const gltf = await new GLTFLoader().parseAsync(buffer, '');
+  // mesh.glb is packed with gltfpack (meshopt compression, ~5x smaller); plain GLBs load too.
+  const gltf = await new GLTFLoader().setMeshoptDecoder(MeshoptDecoder).parseAsync(buffer, '');
   const scene = new THREE.Scene();
   gltf.scene.traverse((o) => {
     if (!o.isMesh) return;
