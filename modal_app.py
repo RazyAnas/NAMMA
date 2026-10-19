@@ -42,7 +42,9 @@ CUDA_ARCHS = "7.5;8.0;8.6;8.9"
 
 image = (
     modal.Image.from_registry("nvidia/cuda:12.4.1-cudnn-devel-ubuntu22.04", add_python="3.11")
-    .apt_install("git", "curl", "ffmpeg", "libgl1", "libglib2.0-0", "libgomp1", "build-essential")
+    # open3d needs EGL, X11, libusb and libudev even headless (the first deploy crash-looped on libEGL.so.1).
+    .apt_install("git", "curl", "ffmpeg", "libgl1", "libegl1", "libx11-6", "libusb-1.0-0", "libudev1", "libglib2.0-0",
+                 "libgomp1", "build-essential")
     .pip_install("torch==2.4.1", "torchvision==0.19.1", index_url="https://download.pytorch.org/whl/cu124")
     .pip_install(
         "fastapi==0.115.14", "starlette==0.46.2", "uvicorn[standard]", "python-multipart", "pydantic-settings",
@@ -59,6 +61,8 @@ image = (
     # copy=True bakes the repo into the image: render sandboxes start from the image alone.
     .add_local_dir(ROOT, REMOTE_ROOT, copy=True, ignore=[".git", "data", "logs", "tmp", "tools", "gpu-handout",
                                                          "research", "**/__pycache__", "tests/.test-data", "node_modules"])
+    # A missing system library fails the build here instead of crash-looping the deployed server.
+    .run_commands(f"cd {REMOTE_ROOT} && python -c 'import app.main, scripts.cloud_render'")
 )
 
 app = modal.App("namma")
