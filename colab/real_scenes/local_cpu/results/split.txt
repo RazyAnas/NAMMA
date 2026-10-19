@@ -1,0 +1,1 @@
+{"train": 215, "test": 35, "test_range": [448, 516], "test_to_nearest_train_m": {"median": 0.185, "max": 0.421}}
