@@ -48,6 +48,24 @@ the plain mesh is still ~2 dB ahead. Longer training (3k to 30k) helps a little 
 the overfitting trap it could have been, but no recipe closes the gap. Next: round 3 (mesh-initialised + depth loss,
 video depth, per-image colour) and round 2 (Difix3D+) are queued in the same session.
 
+### Round 3 and round 2, same stretch (Kaggle, 2026-10-19) [M]
+
+| Run | PSNR | SSIM |
+|---|---|---|
+| TSDF mesh from Video Depth Anything | 17.42 | 0.727 |
+| gsplat depth + per-image colour + SH 1 | 14.92 | 0.756 |
+| ... initialised on the boot-depth mesh | 15.22 | 0.766 |
+| ... VDA depth loss + VDA mesh init | 16.07 | 0.723 |
+| Difix3D on the best splat (gs_depth, 16.61): 3 rounds of cleaned renders stepped toward the held-out cameras | **16.98** (+0.37) | **0.789** (+0.021) |
+| Difix3D+ (also cleaned at render time) | 16.76 | 0.776 |
+
+Difix3D helps, in line with the paper (+0.8 dB on Nerfbusters / DL3DV): the best splat so far, but still ~1.8 dB under the
+plain mesh. The extra render-time pass (Difix3D+) costs PSNR but is meant for perceptual quality; judge by the renders.
+VGGT lobby pose check: in its worst windows (frames 1558-1780, 2351-3330, 3581-3817, 4380-4615, all inside the ~20 dB
+middle) VGGT and our poses disagree by 9-11 cm median over 0.7-0.8 m of walk, about 13% of the path, while the end window
+6468-6699 agrees to 3 cm. That points at our lobby poses in the middle stretch. The rotation column of that check is not
+reliable yet (values near 160 deg suggest a convention mismatch in the script), so only positions are used here.
+
 **Conclusion so far.** Off the path we lose ~19 dB within 18 cm. A finished splat cannot be edited into good off-path views: every cleanup costs on-path quality
 and none fixes the off-path renders. The fix has to come from (a) more viewpoints at capture, (b) training that
 constrains geometry, or (c) a generative prior that supplies what was never filmed.
