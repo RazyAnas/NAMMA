@@ -12,6 +12,8 @@ if ! python -c "import gsplat, gsplat.cuda._wrapper" 2>/dev/null; then
   pip -q install gsplat --index-url https://docs.gsplat.studio/whl/${TV}${CU} >> /tmp/pip_ls.log 2>&1 || pip -q install gsplat==1.5.3 >> /tmp/pip_ls.log 2>&1
 fi
 python -c "import gsplat; print('gsplat', gsplat.__version__)" || { echo GSPLAT_INSTALL_FAILED; tail /tmp/pip_ls.log; exit 1; }
+# A pip-built gsplat compiles its CUDA kernels on first use; do it once here, or two parallel runs race on the build folder.
+python -c "from gsplat.cuda._backend import _C; print('gsplat kernels ready', _C is not None)" 2>&1 | tail -1
 run() { o=$W/gs_$1; CUDA_VISIBLE_DEVICES=$2 python3 $R/scripts/gsplat_train.py $W $W/clean/init_quick_xyzrgb.ply $o $1 $S > $W/gs_$1.log 2>&1 && \
   python3 $R/scripts/score_whole.py $o $W/data/color_raw $o/scores.json > $o/score.txt; echo "$1 $(cut -c1-220 $o/score.txt 2>/dev/null || tail -3 $W/gs_$1.log)"; }
 G=$(nvidia-smi -L | wc -l); run default 0 & if [ $G -gt 1 ]; then run mcmc 1 & else wait; run mcmc 0; fi; wait
