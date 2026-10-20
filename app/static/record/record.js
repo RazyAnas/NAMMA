@@ -28,9 +28,9 @@ const IMU_FREQUENCY_HZ = 200; // a request; Chrome clamps it (60 Hz on current A
 const SENSOR_FRESH_MS = 100;
 // AR origin resets: when ARCore loses tracking and cannot find its old origin, the WebXR reference space fires
 // 'reset' and every later pose is in a shifted frame (the same wall then appears twice in a model). Each reset, and
-// any pose jump faster than JUMP_SPEED_MPS, starts a new segment; frames within SETTLE_MS of it are rejected.
+// any pose jump faster than JUMP_SPEED_MPS, starts a new segment; frames within RESET_SETTLE_MS of it are rejected.
 const JUMP_SPEED_MPS = 3;
-const SETTLE_MS = 500;
+const RESET_SETTLE_MS = 500;
 
 let rec = null;
 
@@ -68,7 +68,7 @@ async function probe() {
   flag('cap-imu', sensors.length || 'DeviceMotionEvent' in window, sensors.length ? sensors.join(', ') : 'DeviceMotion only');
   $('start-ar').disabled = !(capabilities.secure && capabilities.ar && capabilities.rawCamera && codec);
   const cameraOk = capabilities.secure && codec && navigator.mediaDevices;
-  const syncCamera = () => { $('start-camera').disabled = !cameraOk || $('strict').checked; };
+  const syncCamera = () => { $('start-camera').disabled = !cameraOk; };
   $('strict').addEventListener('change', syncCamera);
   syncCamera();
 }
@@ -362,7 +362,7 @@ async function startAr() {
       }
       r.lastPos = { t, p: pos };
     }
-    const settling = t - r.segmentStart < SETTLE_MS;
+    const settling = t - r.segmentStart < RESET_SETTLE_MS;
     if (tracking === 0) r.tracked++;
     else r.lost++;
     const view = pose?.views[0];
@@ -551,7 +551,10 @@ async function startCamera() {
     // captureTime is when the sensor exposed the frame; fall back to presentation time.
     const t = metadata?.captureTime || metadata?.expectedDisplayTime || now;
     const index = r.frameCount++;
-    const videoTs = encode(r, video, t);
+    // Camera mode has no AR pose, so strict mode checks only the motion sensors here.
+    const missing = r.strict ? missingSensors(r, 0) : null;
+    if (missing) reject(r, index, t, missing);
+    const videoTs = missing ? null : encode(r, video, t);
     r.frames.write(csvRow([index, t, videoTs, 3, screen.orientation?.angle ?? 0, ...Array(20).fill(null), video.videoWidth, video.videoHeight, 0]));
     if (index % 10 === 0) updateHud(r, t, 3);
     video.requestVideoFrameCallback(onFrame);
@@ -602,7 +605,7 @@ async function finish() {
     frames_tracked: r.tracked,
     frames_tracking_lost: r.lost,
     strict: r.strict,
-    strict_rule: r.strict ? `kept only with a tracked AR pose and gyro, accelerometer and gravity samples no older than ${SENSOR_FRESH_MS} ms` : null,
+    strict_rule: r.strict ? `kept only with ${r.mode === 'ar' ? 'a tracked AR pose and ' : ''}gyro, accelerometer and gravity samples no older than ${SENSOR_FRESH_MS} ms` : null,
     gravity_source: r.hasGravitySensor ? 'GravitySensor' : 'accelerometer (includes gravity)',
     frames_rejected: r.rejected,
     ar_segments: r.segment + 1,
