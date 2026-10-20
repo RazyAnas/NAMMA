@@ -28,9 +28,9 @@ const IMU_FREQUENCY_HZ = 200; // a request; Chrome clamps it (60 Hz on current A
 const SENSOR_FRESH_MS = 100;
 // AR origin resets: when ARCore loses tracking and cannot find its old origin, the WebXR reference space fires
 // 'reset' and every later pose is in a shifted frame (the same wall then appears twice in a model). Each reset, and
-// any pose jump faster than JUMP_SPEED_MPS, starts a new segment; frames within SETTLE_MS of it are rejected.
+// any pose jump faster than JUMP_SPEED_MPS, starts a new segment; frames within RESET_SETTLE_MS of it are rejected.
 const JUMP_SPEED_MPS = 3;
-const SETTLE_MS = 500;
+const RESET_SETTLE_MS = 500;
 
 let rec = null;
 
@@ -362,7 +362,7 @@ async function startAr() {
       }
       r.lastPos = { t, p: pos };
     }
-    const settling = t - r.segmentStart < SETTLE_MS;
+    const settling = t - r.segmentStart < RESET_SETTLE_MS;
     if (tracking === 0) r.tracked++;
     else r.lost++;
     const view = pose?.views[0];
