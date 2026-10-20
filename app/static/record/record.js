@@ -25,6 +25,11 @@ const IMU_FREQUENCY_HZ = 200; // a request; Chrome clamps it (60 Hz on current A
 // samples (each no older than SENSOR_FRESH_MS). Rejected frames still get their pose row (video_ts empty, which the
 // laptop already skips) and a line in rejects.csv saying why.
 const SENSOR_FRESH_MS = 100;
+// AR origin resets: when ARCore loses tracking and cannot find its old origin, the WebXR reference space fires
+// 'reset' and every later pose is in a shifted frame (the same wall then appears twice in a model). Each reset, and
+// any pose jump faster than JUMP_SPEED_MPS, starts a new segment; frames within SETTLE_MS of it are rejected.
+const JUMP_SPEED_MPS = 3;
+const SETTLE_MS = 500;
 
 let rec = null;
 
@@ -107,6 +112,10 @@ function newRecording(mode) {
     lastImu: {},
     rejected: 0,
     rejectReasons: {},
+    segment: 0,
+    segmentStart: -Infinity,
+    resets: [],
+    lastPos: null,
     depthFiles: [],
     video: null,
     encoder: null,
@@ -124,7 +133,7 @@ function newRecording(mode) {
     stopping: false,
   };
   r.frames.write(
-    csvRow(['frame', 't_ms', 'video_ts_us', 'tracking', 'screen_angle', ...Array.from({ length: 16 }, (_, i) => `m${i}`), 'p0', 'p5', 'p8', 'p9', 'image_w', 'image_h'])
+    csvRow(['frame', 't_ms', 'video_ts_us', 'tracking', 'screen_angle', ...Array.from({ length: 16 }, (_, i) => `m${i}`), 'p0', 'p5', 'p8', 'p9', 'image_w', 'image_h', 'segment'])
   );
   r.videoIndex.write(csvRow(['chunk', 'ts_us', 'key', 'bytes']));
   r.imu.write(csvRow(['t_ms', 'sensor', 'x', 'y', 'z', 't_sensor_ms']));
@@ -308,6 +317,13 @@ async function startAr() {
   session.updateRenderState({ baseLayer: layer });
   const binding = new XRWebGLBinding(session, gl);
   const space = await session.requestReferenceSpace('local-floor');
+  space.addEventListener('reset', (event) => {
+    const t = performance.now();
+    r.resets.push({ t_ms: t, kind: 'reset', transform: event.transform ? Array.from(event.transform.matrix) : null });
+    r.segment++;
+    r.segmentStart = t;
+    r.lastPos = null;
+  });
   const blit = blitProgram(gl);
   r.features = session.enabledFeatures || [];
   r.depthOn = r.features.includes('depth-sensing');
@@ -330,6 +346,21 @@ async function startAr() {
     // Tracking loss shows up as emulatedPosition (orientation keeps updating, position freezes),
     // not as a missing pose; mark it so the laptop can drop or bridge those frames.
     const tracking = !pose ? 2 : pose.emulatedPosition ? 1 : 0;
+    if (tracking === 0) {
+      const mm = pose.transform.matrix;
+      const pos = [mm[12], mm[13], mm[14]];
+      if (r.lastPos) {
+        const dt = Math.max(1e-3, (t - r.lastPos.t) / 1000);
+        const step = Math.hypot(pos[0] - r.lastPos.p[0], pos[1] - r.lastPos.p[1], pos[2] - r.lastPos.p[2]);
+        if (step / dt > JUMP_SPEED_MPS) {
+          r.resets.push({ t_ms: t, kind: 'jump', metres: +step.toFixed(3) });
+          r.segment++;
+          r.segmentStart = t;
+        }
+      }
+      r.lastPos = { t, p: pos };
+    }
+    const settling = t - r.segmentStart < SETTLE_MS;
     if (tracking === 0) r.tracked++;
     else r.lost++;
     const view = pose?.views[0];
@@ -345,7 +376,7 @@ async function startAr() {
           log(error.message);
         });
       }
-      const missing = r.strict ? missingSensors(r, tracking) : null;
+      const missing = settling ? 'ar_origin_reset' : r.strict ? missingSensors(r, tracking) : null;
       if (missing) {
         reject(r, index, t, missing);
       } else if (r.encoder) {
@@ -372,9 +403,10 @@ async function startAr() {
         p?.[0], p?.[5], p?.[8], p?.[9],
         camera?.width,
         camera?.height,
+        r.segment,
       ])
     );
-    if (r.depthOn && view && index % DEPTH_EVERY === 0) recordDepth(r, frame, view, index, t, r.pendingSnapshot);
+    if (r.depthOn && view && !settling && index % DEPTH_EVERY === 0) recordDepth(r, frame, view, index, t, r.pendingSnapshot);
     r.pendingSnapshot = null;
     if (index % 10 === 0) updateHud(r, t, tracking);
   });
@@ -504,7 +536,7 @@ async function startCamera() {
     const t = metadata?.captureTime || metadata?.expectedDisplayTime || now;
     const index = r.frameCount++;
     const videoTs = encode(r, video, t);
-    r.frames.write(csvRow([index, t, videoTs, 3, screen.orientation?.angle ?? 0, ...Array(20).fill(null), video.videoWidth, video.videoHeight]));
+    r.frames.write(csvRow([index, t, videoTs, 3, screen.orientation?.angle ?? 0, ...Array(20).fill(null), video.videoWidth, video.videoHeight, 0]));
     if (index % 10 === 0) updateHud(r, t, 3);
     video.requestVideoFrameCallback(onFrame);
   };
@@ -557,6 +589,8 @@ async function finish() {
     strict_rule: r.strict ? `kept only with a tracked AR pose and gyro, accelerometer and gravity samples no older than ${SENSOR_FRESH_MS} ms` : null,
     gravity_source: r.hasGravitySensor ? 'GravitySensor' : 'accelerometer (includes gravity)',
     frames_rejected: r.rejected,
+    ar_segments: r.segment + 1,
+    ar_resets: r.resets,
     reject_reasons: r.rejectReasons,
     imu_rates_hz: rates,
     devicemotion_interval_ms: r.dmIntervalMs || null,
@@ -590,8 +624,10 @@ function updateHud(r, t, tracking) {
   const gyro = r.imuCounts.gyro || r.imuCounts.dm_gyro || 0;
   $('hud-imu').textContent = seconds > 1 ? `${(gyro / seconds).toFixed(0)} Hz` : '…';
   const labels = ['tracking', 'tracking lost: slow down, aim at texture', 'no pose', 'camera only'];
-  const reason = r.strict ? missingSensors(r, tracking === 3 ? 0 : tracking) : null;
-  $('hud-track').textContent = reason ? `rejecting frames: ${reason.replaceAll('_', ' ').replaceAll('+', ', ')} missing` : labels[tracking];
+  const reset = r.resets.length && t - r.resets[r.resets.length - 1].t_ms < 3000;
+  const reason = reset ? 'ar_origin_reset' : r.strict ? missingSensors(r, tracking === 3 ? 0 : tracking) : null;
+  $('hud-track').textContent = reset ? 'AR tracking reset: walk back to an area you already scanned'
+    : reason ? `rejecting frames: ${reason.replaceAll('_', ' ').replaceAll('+', ', ')} missing` : labels[tracking];
   $('hud-track').dataset.ok = !reason && (tracking === 0 || tracking === 3) ? 'yes' : 'no';
   $('hud-rejected').textContent = r.strict ? `${r.rejected}` : 'off';
 }
