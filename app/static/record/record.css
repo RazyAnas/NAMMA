@@ -19,7 +19,7 @@ button:disabled { opacity: 0.4; }
 #error { color: #ff6b5c; font-weight: 600; }
 .hud { display: none; position: fixed; left: 12px; right: 12px; bottom: calc(env(safe-area-inset-bottom) + 12px); padding: 12px; border-radius: 12px; background: #07110fcc; font-size: 14px; }
 body[data-screen="recording"] .hud { display: block; }
-.hud dl { display: grid; grid-template-columns: repeat(3, auto 1fr); gap: 2px 8px; margin: 0; }
+.hud dl { display: grid; grid-template-columns: repeat(2, auto 1fr); gap: 2px 8px; margin: 0; }
 #hud-track { margin: 8px 0 0; font-weight: 600; color: #b8ff66; }
 #hud-track[data-ok="no"] { color: #ff6b5c; }
 h2 { font-size: 18px; margin: 24px 0 4px; }

@@ -21,6 +21,10 @@ const MAX_ENCODE_QUEUE = 4;
 const DEPTH_EVERY = 6;
 const SNAPSHOT_WIDTH = 80; // colour for the on-phone quick model, saved next to each depth frame
 const IMU_FREQUENCY_HZ = 200; // a request; Chrome clamps it (60 Hz on current Android builds, per Chromium source)
+// Strict mode: a frame is kept (encoded) only if it has a tracked AR pose and fresh gyro, accelerometer and gravity
+// samples (each no older than SENSOR_FRESH_MS). Rejected frames still get their pose row (video_ts empty, which the
+// laptop already skips) and a line in rejects.csv saying why.
+const SENSOR_FRESH_MS = 100;
 
 let rec = null;
 
@@ -57,7 +61,10 @@ async function probe() {
   capabilities.sensors = sensors;
   flag('cap-imu', sensors.length || 'DeviceMotionEvent' in window, sensors.length ? sensors.join(', ') : 'DeviceMotion only');
   $('start-ar').disabled = !(capabilities.secure && capabilities.ar && capabilities.rawCamera && codec);
-  $('start-camera').disabled = !(capabilities.secure && codec && navigator.mediaDevices);
+  const cameraOk = capabilities.secure && codec && navigator.mediaDevices;
+  const syncCamera = () => { $('start-camera').disabled = !cameraOk || $('strict').checked; };
+  $('strict').addEventListener('change', syncCamera);
+  syncCamera();
 }
 
 async function pickCodec(width, height, fps = 30) {
@@ -95,6 +102,11 @@ function newRecording(mode) {
     videoIndex: new BundleFile('video.csv'),
     imu: new BundleFile('imu.csv'),
     depthIndex: new BundleFile('depth.csv'),
+    rejects: new BundleFile('rejects.csv'),
+    strict: $('strict').checked,
+    lastImu: {},
+    rejected: 0,
+    rejectReasons: {},
     depthFiles: [],
     video: null,
     encoder: null,
@@ -116,6 +128,7 @@ function newRecording(mode) {
   );
   r.videoIndex.write(csvRow(['chunk', 'ts_us', 'key', 'bytes']));
   r.imu.write(csvRow(['t_ms', 'sensor', 'x', 'y', 'z', 't_sensor_ms']));
+  r.rejects.write(csvRow(['frame', 't_ms', 'reason']));
   r.depthIndex.write(csvRow(['frame', 't_ms', 'file', 'width', 'height', 'raw_to_m', ...Array.from({ length: 16 }, (_, i) => `n${i}`)]));
   return r;
 }
@@ -126,6 +139,30 @@ function imuSample(sensor, t, x, y, z, tSensor) {
   if (!rec || rec.stopping) return;
   rec.imu.write(csvRow([t, sensor, x, y, z, tSensor]));
   rec.imuCounts[sensor] = (rec.imuCounts[sensor] || 0) + 1;
+  // Freshness per quantity, whichever API delivered it (Generic Sensor or DeviceMotion).
+  const quantity = { gyro: 'gyro', dm_gyro: 'gyro', accel: 'accel', dm_accel: 'accel', gravity: 'gravity' }[sensor];
+  if (quantity) rec.lastImu[quantity] = performance.now();
+  if (sensor === 'gravity') rec.hasGravitySensor = true;
+}
+
+// Why a frame fails strict mode, or null if it has everything. Gravity comes from GravitySensor once it delivers;
+// where Chrome has none or blocks it, the accelerometer (which includes gravity) stands in, and meta.json says so.
+function missingSensors(r, tracking) {
+  const now = performance.now();
+  const stale = (q) => !(now - (r.lastImu[q] ?? -Infinity) <= SENSOR_FRESH_MS);
+  const missing = [];
+  if (tracking !== 0) missing.push(tracking === 1 ? 'ar_tracking_lost' : 'no_ar_pose');
+  if (stale('gyro')) missing.push('gyro');
+  if (stale('accel')) missing.push('accel');
+  if (r.hasGravitySensor ? stale('gravity') : stale('accel')) missing.push('gravity');
+  return missing.length ? missing.join('+') : null;
+}
+
+function reject(r, index, t, reason) {
+  r.rejected++;
+  r.rejectReasons[reason] = (r.rejectReasons[reason] || 0) + 1;
+  r.rejects.write(csvRow([index, t, reason]));
+  r.lastReject = reason;
 }
 
 function onDeviceMotion(event) {
@@ -146,6 +183,7 @@ function startImu(r) {
   }
   window.addEventListener('devicemotion', onDeviceMotion);
   const kinds = { Gyroscope: 'gyro', Accelerometer: 'accel', GravitySensor: 'gravity' };
+  r.hasGravitySensor = false; // set by the first GravitySensor reading; a blocked or absent sensor leaves the accelerometer
   for (const [name, tag] of Object.entries(kinds)) {
     if (!(name in window)) continue;
     try {
@@ -307,7 +345,10 @@ async function startAr() {
           log(error.message);
         });
       }
-      if (r.encoder) {
+      const missing = r.strict ? missingSensors(r, tracking) : null;
+      if (missing) {
+        reject(r, index, t, missing);
+      } else if (r.encoder) {
         const texture = binding.getCameraImage(camera);
         if (texture) {
           drawTexture(gl, blit, texture, camera.width, camera.height);
@@ -512,13 +553,18 @@ async function finish() {
     chunks: r.chunks,
     frames_tracked: r.tracked,
     frames_tracking_lost: r.lost,
+    strict: r.strict,
+    strict_rule: r.strict ? `kept only with a tracked AR pose and gyro, accelerometer and gravity samples no older than ${SENSOR_FRESH_MS} ms` : null,
+    gravity_source: r.hasGravitySensor ? 'GravitySensor' : 'accelerometer (includes gravity)',
+    frames_rejected: r.rejected,
+    reject_reasons: r.rejectReasons,
     imu_rates_hz: rates,
     devicemotion_interval_ms: r.dmIntervalMs || null,
     errors: r.errors,
   };
   const metaFile = new BundleFile('meta.json');
   metaFile.write(JSON.stringify(meta, null, 2));
-  const files = [metaFile, r.frames, r.videoIndex, r.imu, ...(r.video ? [r.video] : [])];
+  const files = [metaFile, r.frames, r.videoIndex, r.imu, r.rejects, ...(r.video ? [r.video] : [])];
   if (r.depthFiles.length) files.push(r.depthIndex, ...r.depthFiles);
   const blob = new Blob(zipParts(files), { type: 'application/zip' });
   const name = `namma-${r.mode}-${r.startedWall.replace(/[:.]/g, '-').slice(0, 19)}.zip`;
@@ -544,8 +590,10 @@ function updateHud(r, t, tracking) {
   const gyro = r.imuCounts.gyro || r.imuCounts.dm_gyro || 0;
   $('hud-imu').textContent = seconds > 1 ? `${(gyro / seconds).toFixed(0)} Hz` : '…';
   const labels = ['tracking', 'tracking lost: slow down, aim at texture', 'no pose', 'camera only'];
-  $('hud-track').textContent = labels[tracking];
-  $('hud-track').dataset.ok = tracking === 0 || tracking === 3 ? 'yes' : 'no';
+  const reason = r.strict ? missingSensors(r, tracking === 3 ? 0 : tracking) : null;
+  $('hud-track').textContent = reason ? `rejecting frames: ${reason.replaceAll('_', ' ').replaceAll('+', ', ')} missing` : labels[tracking];
+  $('hud-track').dataset.ok = !reason && (tracking === 0 || tracking === 3) ? 'yes' : 'no';
+  $('hud-rejected').textContent = r.strict ? `${r.rejected}` : 'off';
 }
 
 function showSummary(meta, bytes) {
@@ -557,6 +605,7 @@ function showSummary(meta, bytes) {
     ['Camera locks', meta.camera?.locks ? Object.entries(meta.camera.locks).map(([k, v]) => `${k.replace('_', ' ')} ${v ? 'on' : 'not supported'}`).join(', ') : 'n/a (AR mode)'],
     ['Codec', meta.codec?.codec || 'none'],
     ['Frames encoded', `${meta.frames_encoded} of ${meta.frames} (${(meta.frames_encoded / meta.duration_s).toFixed(1)} fps)`],
+    ['Frames rejected', meta.strict ? `${meta.frames_rejected} (${Object.entries(meta.reject_reasons).map(([k, v]) => `${k.replaceAll('_', ' ')} ${v}`).join(', ') || 'none'})` : 'strict mode off'],
     ['Pose tracked', meta.mode === 'ar' ? `${((100 * meta.frames_tracked) / Math.max(1, meta.frames)).toFixed(0)}% of frames` : 'n/a'],
     ['IMU rates', Object.entries(meta.imu_rates_hz).map(([k, v]) => `${k} ${v} Hz`).join(', ') || 'none'],
     ['Depth', meta.xr_features.includes('depth-sensing') ? 'on' : 'off'],
