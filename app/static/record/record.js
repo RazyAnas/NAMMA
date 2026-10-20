@@ -21,6 +21,12 @@ const MAX_ENCODE_QUEUE = 4;
 const DEPTH_EVERY = 6;
 const SNAPSHOT_WIDTH = 80; // colour for the on-phone quick model, saved next to each depth frame
 const IMU_FREQUENCY_HZ = 200; // a request; Chrome clamps it (60 Hz on current Android builds, per Chromium source)
+// Strict mode keeps a frame only if every stream it needs is live: a tracked AR pose (AR mode),
+// a gyro sample and a gravity sample (accelerometer including gravity, or the gravity sensor)
+// that arrived within IMU_FRESH_MS. At 60 Hz a sample arrives every ~17 ms, so 100 ms means the
+// sensor really stopped. A rejected frame is not encoded (video_ts_us stays empty), so the
+// laptop never sees it; its pose row is still written so tracking statistics stay honest.
+const IMU_FRESH_MS = 100;
 
 let rec = null;
 
@@ -103,6 +109,10 @@ function newRecording(mode) {
     encoded: 0,
     chunks: 0,
     dropped: 0,
+    strict: $('strict')?.checked ?? true,
+    rejected: { no_pose: 0, no_imu: 0, no_gravity: 0 },
+    lastGyro: -Infinity,
+    lastGravity: -Infinity,
     tracked: 0,
     lost: 0,
     imuCounts: {},
@@ -126,6 +136,18 @@ function imuSample(sensor, t, x, y, z, tSensor) {
   if (!rec || rec.stopping) return;
   rec.imu.write(csvRow([t, sensor, x, y, z, tSensor]));
   rec.imuCounts[sensor] = (rec.imuCounts[sensor] || 0) + 1;
+  if (sensor === 'gyro' || sensor === 'dm_gyro') rec.lastGyro = performance.now();
+  else rec.lastGravity = performance.now();
+}
+
+// Why this frame lacks data, or null if it has everything. Pose first: in AR mode it matters most.
+function missingData(r, tracking) {
+  if (!r.strict) return null;
+  const now = performance.now();
+  if (r.mode === 'ar' && tracking !== 0) return 'no_pose';
+  if (now - r.lastGyro > IMU_FRESH_MS) return 'no_imu';
+  if (now - r.lastGravity > IMU_FRESH_MS) return 'no_gravity';
+  return null;
 }
 
 function onDeviceMotion(event) {
@@ -297,6 +319,9 @@ async function startAr() {
     const view = pose?.views[0];
     const camera = view?.camera;
     let videoTs = null;
+    const missing = missingData(r, tracking);
+    if (missing) r.rejected[missing]++;
+    r.lastMissing = missing;
     if (camera) {
       if (!r.camera) {
         r.camera = { width: camera.width, height: camera.height };
@@ -307,14 +332,14 @@ async function startAr() {
           log(error.message);
         });
       }
-      if (r.encoder) {
+      if (r.encoder && !missing) {
         const texture = binding.getCameraImage(camera);
         if (texture) {
           drawTexture(gl, blit, texture, camera.width, camera.height);
           videoTs = encode(r, canvas, t);
           if (r.depthOn && index % DEPTH_EVERY === 0) r.pendingSnapshot = snapshot(gl, blit, texture, r);
         }
-      } else if (encoderPending) {
+      } else if (encoderPending && !missing) {
         r.dropped++;
       }
     }
@@ -333,7 +358,7 @@ async function startAr() {
         camera?.height,
       ])
     );
-    if (r.depthOn && view && index % DEPTH_EVERY === 0) recordDepth(r, frame, view, index, t, r.pendingSnapshot);
+    if (r.depthOn && view && !missing && index % DEPTH_EVERY === 0) recordDepth(r, frame, view, index, t, r.pendingSnapshot);
     r.pendingSnapshot = null;
     if (index % 10 === 0) updateHud(r, t, tracking);
   });
@@ -462,7 +487,10 @@ async function startCamera() {
     // captureTime is when the sensor exposed the frame; fall back to presentation time.
     const t = metadata?.captureTime || metadata?.expectedDisplayTime || now;
     const index = r.frameCount++;
-    const videoTs = encode(r, video, t);
+    const missing = missingData(r, 3);
+    if (missing) r.rejected[missing]++;
+    r.lastMissing = missing;
+    const videoTs = missing ? null : encode(r, video, t);
     r.frames.write(csvRow([index, t, videoTs, 3, screen.orientation?.angle ?? 0, ...Array(20).fill(null), video.videoWidth, video.videoHeight]));
     if (index % 10 === 0) updateHud(r, t, 3);
     video.requestVideoFrameCallback(onFrame);
@@ -509,6 +537,9 @@ async function finish() {
     frames: r.frameCount,
     frames_encoded: r.encoded,
     frames_dropped: r.dropped,
+    strict_sensor_check: r.strict,
+    imu_fresh_ms: IMU_FRESH_MS,
+    frames_rejected: r.rejected,
     chunks: r.chunks,
     frames_tracked: r.tracked,
     frames_tracking_lost: r.lost,
@@ -546,6 +577,13 @@ function updateHud(r, t, tracking) {
   const labels = ['tracking', 'tracking lost: slow down, aim at texture', 'no pose', 'camera only'];
   $('hud-track').textContent = labels[tracking];
   $('hud-track').dataset.ok = tracking === 0 || tracking === 3 ? 'yes' : 'no';
+  const hints = { no_pose: 'not saving: no AR pose', no_imu: 'not saving: no gyro data', no_gravity: 'not saving: no gravity data' };
+  if (r.lastMissing && r.lastMissing !== 'no_pose') {
+    $('hud-track').textContent = hints[r.lastMissing];
+    $('hud-track').dataset.ok = 'no';
+  }
+  const rejected = Object.values(r.rejected).reduce((a, b) => a + b, 0);
+  $('hud-rejected').textContent = r.strict ? String(rejected) : 'off';
 }
 
 function showSummary(meta, bytes) {
@@ -557,6 +595,7 @@ function showSummary(meta, bytes) {
     ['Camera locks', meta.camera?.locks ? Object.entries(meta.camera.locks).map(([k, v]) => `${k.replace('_', ' ')} ${v ? 'on' : 'not supported'}`).join(', ') : 'n/a (AR mode)'],
     ['Codec', meta.codec?.codec || 'none'],
     ['Frames encoded', `${meta.frames_encoded} of ${meta.frames} (${(meta.frames_encoded / meta.duration_s).toFixed(1)} fps)`],
+    ['Frames rejected', meta.strict_sensor_check ? `${Object.values(meta.frames_rejected).reduce((a, b) => a + b, 0)} (no AR pose ${meta.frames_rejected.no_pose}, no gyro ${meta.frames_rejected.no_imu}, no gravity ${meta.frames_rejected.no_gravity})` : 'check off'],
     ['Pose tracked', meta.mode === 'ar' ? `${((100 * meta.frames_tracked) / Math.max(1, meta.frames)).toFixed(0)}% of frames` : 'n/a'],
     ['IMU rates', Object.entries(meta.imu_rates_hz).map(([k, v]) => `${k} ${v} Hz`).join(', ') || 'none'],
     ['Depth', meta.xr_features.includes('depth-sensing') ? 'on' : 'off'],

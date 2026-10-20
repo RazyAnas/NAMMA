@@ -45,6 +45,7 @@
           moment. Hold still for 2 seconds when you press it.</p>
       </details>
       <label class="check"><input id="depth" type="checkbox" checked /> Record ARCore depth (needed for the quick 3D model on this phone)</label>
+      <label class="check"><input id="strict" type="checkbox" checked /> Only keep frames that have every sensor (AR pose in AR mode, gyro and gravity)</label>
       <button id="start-ar" type="button" disabled>Record with AR</button>
       <button id="start-camera" class="secondary" type="button" disabled>Record camera only</button>
       <label class="button secondary" for="open-file">Open a saved recording</label>
@@ -80,6 +81,7 @@
         <dt>Time</dt><dd id="hud-time">0 s</dd>
         <dt>Frames</dt><dd id="hud-frames">0</dd>
         <dt>Gyro</dt><dd id="hud-imu">…</dd>
+        <dt>Rejected</dt><dd id="hud-rejected">0</dd>
       </dl>
       <p id="hud-track" data-ok="yes">starting…</p>
       <button id="stop" type="button">Stop and save</button>
