@@ -14,6 +14,7 @@
 // frame times, Generic Sensor reading timestamps and DeviceMotion event times share it.
 
 import { BundleFile, csvRow, intrinsicsFromProjection, ivfFrameHeader, ivfHeader, zipParts } from './bundle.js';
+import { Coverage } from './coverage.js';
 
 const $ = (id) => document.getElementById(id);
 const KEYFRAME_INTERVAL = 30;
@@ -328,6 +329,7 @@ async function startAr() {
   r.features = session.enabledFeatures || [];
   r.depthOn = r.features.includes('depth-sensing');
   r.depthFormat = r.depthOn ? session.depthDataFormat || null : null;
+  r.coverage = r.depthOn ? new Coverage() : null;
   // A tap on the overlay would otherwise also fire an XR "select" (lesson from sixthsense-lab).
   $('hud').addEventListener('beforexrselect', (e) => e.preventDefault());
   session.addEventListener('end', () => finish());
@@ -406,7 +408,20 @@ async function startAr() {
         r.segment,
       ])
     );
-    if (r.depthOn && view && !settling && index % DEPTH_EVERY === 0) recordDepth(r, frame, view, index, t, r.pendingSnapshot);
+    if (r.depthOn && view && !settling && index % DEPTH_EVERY === 0) {
+      const depth = recordDepth(r, frame, view, index, t, r.pendingSnapshot);
+      if (depth && r.coverage && tracking === 0) {
+        r.coverage.add({ bytes: new Uint8Array(depth.data), width: depth.width, height: depth.height, rawToMeters: depth.rawValueToMeters,
+          normDepthFromView: depth.normDepthBufferFromNormView?.matrix, pose: m, p0: p[0], p5: p[5], p8: p[8], p9: p[9] }, [m[12], m[13], m[14]]);
+        r.coverage.findWalls(t);
+      }
+    }
+    if (r.coverage && view) {   // what is scanned, drawn over the camera; never part of the recorded video
+      gl.bindFramebuffer(gl.FRAMEBUFFER, layer.framebuffer);
+      const vpRect = layer.getViewport(view);
+      gl.viewport(vpRect.x, vpRect.y, vpRect.width, vpRect.height);
+      r.coverage.draw(gl, view, t);
+    }
     r.pendingSnapshot = null;
     if (index % 10 === 0) updateHud(r, t, tracking);
   });
@@ -450,9 +465,9 @@ function recordDepth(r, frame, view, index, t, colour) {
   try {
     depth = frame.getDepthInformation(view);
   } catch {
-    return;
+    return null;
   }
-  if (!depth?.data) return;
+  if (!depth?.data) return null;
   const name = `depth/${String(index).padStart(6, '0')}.bin`;
   const file = new BundleFile(name);
   file.write(new Uint8Array(depth.data.slice(0)));
@@ -464,6 +479,7 @@ function recordDepth(r, frame, view, index, t, colour) {
   }
   const n = depth.normDepthBufferFromNormView?.matrix;
   r.depthIndex.write(csvRow([index, t, name, depth.width, depth.height, depth.rawValueToMeters, ...(n ? Array.from(n) : Array(16).fill(null))]));
+  return depth;
 }
 
 // ---- Camera mode (getUserMedia, no pose) -------------------------------------------------------
@@ -630,6 +646,10 @@ function updateHud(r, t, tracking) {
     : reason ? `rejecting frames: ${reason.replaceAll('_', ' ').replaceAll('+', ', ')} missing` : labels[tracking];
   $('hud-track').dataset.ok = !reason && (tracking === 0 || tracking === 3) ? 'yes' : 'no';
   $('hud-rejected').textContent = r.strict ? `${r.rejected}` : 'off';
+  if (r.coverage) {
+    const c = r.coverage.stats();
+    $('hud-cover').textContent = c.seen ? `${c.percent}% good · ${c.walls} wall${c.walls === 1 ? '' : 's'}` : 'point at a wall';
+  } else $('hud-cover').textContent = 'needs depth';
 }
 
 function showSummary(meta, bytes) {

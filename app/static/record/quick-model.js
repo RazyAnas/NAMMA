@@ -213,7 +213,7 @@ export function arSegments(frames, maxSpeed = 3) {
 // ---- Whole bundle ---------------------------------------------------------------------------------
 
 export async function buildQuickModel(blob, options = {}) {
-  const { voxel = 0.03, stride = 2, minHits = 2, onProgress = () => {} } = options;
+  const { voxel = 0.03, stride = 2, minHits = 2, maxSpeed = 3, onProgress = () => {} } = options;
   const entries = await readZipIndex(blob);
   const meta = JSON.parse(decoder.decode(await readEntry(blob, entries, 'meta.json')));
   const frames = parseCsv(decoder.decode(await readEntry(blob, entries, 'frames.csv')));
@@ -224,7 +224,7 @@ export async function buildQuickModel(blob, options = {}) {
   const depthRows = depthCsv ? parseCsv(decoder.decode(depthCsv)) : [];
   const colourSize = meta.depth_color_size || null;
   // Fuse only the segment with the most depth frames; the others are in a shifted frame.
-  const { segmentOf, count: segments } = arSegments(frames);
+  const { segmentOf, count: segments } = arSegments(frames, maxSpeed);
   const depthPerSegment = new Map();
   for (const d of depthRows) {
     const s = segmentOf.get(d.frame);
