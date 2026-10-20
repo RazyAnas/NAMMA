@@ -46,8 +46,8 @@
       </details>
       <label class="check"><input id="strict" type="checkbox" checked /> Strict: keep only frames with gyro, accelerometer and gravity, plus an AR pose in AR mode (frames missing any are rejected and listed in rejects.csv)</label>
       <label class="check"><input id="depth" type="checkbox" checked /> Record ARCore depth (needed for the quick 3D model on this phone)</label>
-      <button id="start-camera" type="button" disabled>Record camera only (recommended)</button>
-      <button id="start-ar" class="secondary" type="button" disabled>Record with AR</button>
+      <button id="start-ar" type="button" disabled>Record with AR (recommended)</button>
+      <button id="start-camera" class="secondary" type="button" disabled>Record camera only</button>
       <label class="button secondary" for="open-file">Open a saved recording</label>
       <input id="open-file" type="file" accept=".zip,video/*" hidden />
       <button id="resume" class="secondary" type="button" hidden>Show my last render</button>
