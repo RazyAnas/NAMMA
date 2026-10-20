@@ -130,7 +130,6 @@ await page.addInitScript(mock, { offset: OFFSET_S, mode });
 await page.goto(url);
 await page.waitForFunction(() => document.getElementById('cap-codec').textContent !== '…');
 const caps = await page.evaluate(() => Object.fromEntries([...document.querySelectorAll('.caps dd')].map((d) => [d.id, d.textContent])));
-if (mode !== 'ar') await page.uncheck('#strict'); // strict mode needs AR
 await page.click(mode === 'ar' ? '#start-ar' : '#start-camera');
 await page.waitForTimeout(6000);
 await page.click('#stop');
