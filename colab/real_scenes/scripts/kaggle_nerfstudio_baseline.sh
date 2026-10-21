@@ -22,11 +22,15 @@ uv pip install -q $P "numpy<2" setuptools wheel wrapt ninja scikit-build-core cy
 uv pip install -q $P --no-build-isolation "numpy<2" fpsample >> /tmp/ns_pip.log 2>&1
 uv pip install -q $P "numpy<2" nerfstudio==1.1.5 --no-build-isolation-package fpsample >> /tmp/ns_pip.log 2>&1
 uv pip install -q $P gsplat==1.4.0 --index-url https://docs.gsplat.studio/whl/pt21cu118 >> /tmp/ns_pip.log 2>&1 || uv pip install -q $P gsplat==1.4.0 >> /tmp/ns_pip.log 2>&1
-uv pip install -q $P "git+https://github.com/cvg/Hierarchical-Localization.git@master" "lightglue @ git+https://github.com/cvg/LightGlue" --no-build-isolation-package fpsample >> /tmp/ns_pip.log 2>&1
 fi
 source /content/nsenv/bin/activate
+# hloc's documented install: recursive clone (SuperPoint lives in a git submodule that a plain pip install leaves out)
+if ! python -c "import hloc.extractors.superpoint, lightglue" 2>/dev/null; then
+  rm -rf /content/hloc && git clone -q --recursive https://github.com/cvg/Hierarchical-Localization /content/hloc
+  uv pip install -q --python /content/nsenv/bin/python -e /content/hloc "lightglue @ git+https://github.com/cvg/LightGlue" --no-build-isolation-package fpsample >> /tmp/ns_pip.log 2>&1
+fi
 which python ns-train
-python -c "import nerfstudio, gsplat, hloc, torch; print('nerfstudio ok, gsplat', gsplat.__version__, 'torch', torch.__version__, 'cuda', torch.cuda.is_available())" || { echo NS_INSTALL_FAILED; tail -30 /tmp/ns_pip.log; exit 1; }
+python -c "import nerfstudio, gsplat, hloc.extractors.superpoint, lightglue, torch; print('nerfstudio ok, gsplat', gsplat.__version__, 'torch', torch.__version__, 'cuda', torch.cuda.is_available())" || { echo NS_INSTALL_FAILED; tail -30 /tmp/ns_pip.log; exit 1; }
 
 LOG process
 # ns-process-data checks for the colmap binary even with --sfm-tool hloc (hloc itself uses pycolmap)
