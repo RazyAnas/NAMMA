@@ -3,7 +3,7 @@
 # one-line result; a failed optional stage does not stop the others.
 #   1 frames   sharpest frame in every window of 30/FPS video frames (blur rejection, as AirVis does), full resolution
 #   2 cameras  hloc SuperPoint + LightGlue through ns-process-data; exhaustive matching up to 300 frames, vocab tree above
-#   3 priors   DSINE monocular normals + ZoeDepth monocular depth scaled to the SfM points (DN-Splatter's scripts)
+#   3 priors   DSINE monocular normals (DN-Splatter script) + Depth Anything V2 depth fitted to the SfM points
 #   4 train    GPU0 dn-splatter (depth + normal losses: keeps blank walls flat and solid)
 #              GPU1 splatfacto (Nerfstudio default), same data, as the reference
 #   5 eval     held-out every 8th frame: PSNR/SSIM/LPIPS (ns-eval) + off-path strips (offpath_render.py) for both
@@ -22,9 +22,10 @@ source $S/ns_env.sh || { echo ENV_FAILED; exit 1; }
 # the extra packages it needs. ZoeDepth's torch.hub code needs timm 0.6.x.
 if ! python -c "import dn_splatter" 2>/dev/null; then
   rm -rf /content/dn-splatter && git clone -q --depth 1 https://github.com/maturk/dn-splatter /content/dn-splatter
+  python $S/patch_dn_splatter.py /content/dn-splatter   # gsplat 1.4 has no legacy rasterizer
   uv pip install -q --python /content/nsenv/bin/python --no-deps -e /content/dn-splatter > $W/dn_pip.log 2>&1
   # one at a time, so one package without a wheel (PyMCubes 0.1.2 does not build here) cannot block the rest
-  for p in natsort omnidata-tools pytorch-lightning geffnet "timm==0.6.7" open3d trimesh PyMCubes pymeshlab vdbfusion "setuptools<70"; do
+  for p in natsort omnidata-tools pytorch-lightning geffnet "timm==0.6.7" open3d trimesh PyMCubes pymeshlab vdbfusion "transformers==4.46.3" "setuptools<70"; do
     uv pip install -q --python /content/nsenv/bin/python "$p" >> $W/dn_pip.log 2>&1 || echo "pip failed: $p"
   done
 fi
@@ -62,8 +63,8 @@ NP=$(python -c "import json; print(len(json.load(open('$W/data/transforms.json')
 LOG priors
 (cd /content/dn-splatter && python dn_splatter/scripts/normals_from_pretrain.py --data-dir $W/data --normal-format dsine) > $W/normals.log 2>&1 \
   && echo "normals: $(ls $W/data/normals_from_pretrain | wc -l)" || { echo NORMALS_FAILED; tail -15 $W/normals.log; }
-(cd /content/dn-splatter && python dn_splatter/scripts/align_depth.py --data $W/data) > $W/depth.log 2>&1 \
-  && echo "aligned depths: $(ls $W/data/mono_depth/*_aligned.npy 2>/dev/null | wc -l)" || { echo DEPTH_FAILED; tail -15 $W/depth.log; }
+# Depth Anything V2 fitted to the SfM points (DN-Splatter's ZoeDepth script fails on torch 2.1)
+python $S/mono_depth_prior.py $W/data > $W/depth.log 2>&1 && tail -1 $W/depth.log || { echo DEPTH_FAILED; tail -15 $W/depth.log; }
 HAVE_N=$(ls $W/data/normals_from_pretrain 2>/dev/null | wc -l); HAVE_D=$(ls $W/data/mono_depth/*_aligned.npy 2>/dev/null | wc -l)
 
 LOG train
@@ -81,7 +82,7 @@ dn() {
     CUDA_VISIBLE_DEVICES=0 ns-train dn-splatter --max-num-iterations $STEPS --vis tensorboard --output-dir $W/out --experiment-name full \
       --timestamp dn --viewer.quit-on-train-completion True --pipeline.model.use-depth-loss True --pipeline.model.depth-lambda 0.2 \
       --pipeline.model.use-normal-loss True --pipeline.model.use-normal-tv-loss True --pipeline.model.normal-supervision mono \
-      normal-nerfstudio --data $W/data --normal-format dsine $EV > $W/train_dn.log 2>&1 || { echo TRAIN_FAILED dn; tail -25 $W/train_dn.log; return 1; }
+      normal-nerfstudio --data $W/data --normal-format dsine --depth-unit-scale-factor 1.0 $EV > $W/train_dn.log 2>&1 || { echo TRAIN_FAILED dn; tail -25 $W/train_dn.log; return 1; }
     finish dn 0
     C=$(ls $W/out/full/*/dn/config.yml | head -1)
     CUDA_VISIBLE_DEVICES=0 gs-mesh o3dtsdf --load-config $C --output-dir $W/mesh > $W/mesh.log 2>&1 || { echo MESH_FAILED; tail -10 $W/mesh.log; }
