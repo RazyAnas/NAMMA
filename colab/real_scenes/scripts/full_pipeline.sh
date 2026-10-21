@@ -23,10 +23,13 @@ source $S/ns_env.sh || { echo ENV_FAILED; exit 1; }
 if ! python -c "import dn_splatter" 2>/dev/null; then
   rm -rf /content/dn-splatter && git clone -q --depth 1 https://github.com/maturk/dn-splatter /content/dn-splatter
   uv pip install -q --python /content/nsenv/bin/python --no-deps -e /content/dn-splatter > $W/dn_pip.log 2>&1
-  uv pip install -q --python /content/nsenv/bin/python natsort omnidata-tools pytorch-lightning geffnet "timm==0.6.7" \
-    open3d trimesh "PyMCubes==0.1.2" pymeshlab vdbfusion "setuptools<70" >> $W/dn_pip.log 2>&1
+  # one at a time, so one package without a wheel (PyMCubes 0.1.2 does not build here) cannot block the rest
+  for p in natsort omnidata-tools pytorch-lightning geffnet "timm==0.6.7" open3d trimesh PyMCubes pymeshlab vdbfusion "setuptools<70"; do
+    uv pip install -q --python /content/nsenv/bin/python "$p" >> $W/dn_pip.log 2>&1 || echo "pip failed: $p"
+  done
 fi
-python -c "import dn_splatter, open3d, trimesh; print('dn-splatter ok')" || { echo DN_INSTALL_FAILED; tail -20 $W/dn_pip.log; }
+# dn_splatter registers Nerfstudio plugins; if it cannot import, every ns-* command fails, so take it out again
+python -c "import dn_splatter, open3d, trimesh; print('dn-splatter ok')" || { echo DN_INSTALL_FAILED; tail -20 $W/dn_pip.log; uv pip uninstall -q --python /content/nsenv/bin/python dn-splatter; }
 
 LOG frames
 python - "$VIDEO" $W/frames $FPS > $W/frames.log 2>&1 <<'EOF'
@@ -34,17 +37,18 @@ python - "$VIDEO" $W/frames $FPS > $W/frames.log 2>&1 <<'EOF'
 import cv2, sys, os, numpy as np
 src, out, fps = sys.argv[1], sys.argv[2], float(sys.argv[3]); os.makedirs(out, exist_ok=True)
 c = cv2.VideoCapture(src); vf = c.get(cv2.CAP_PROP_FPS) or 30; win = max(1, round(vf / fps))
-best, n, i, kept = None, 0, 0, []
+best, n, i, kept, size = None, 0, 0, [], None
 while True:
     ok, f = c.read()
     if not ok: break
     g = cv2.cvtColor(cv2.resize(f, (f.shape[1] // 3, f.shape[0] // 3)), cv2.COLOR_BGR2GRAY)
     s = cv2.Laplacian(g, cv2.CV_64F).var()
     if best is None or s > best[0]: best = (s, f)
+    size = f.shape
     i += 1
     if i % win == 0:
         cv2.imwrite(f'{out}/{n:05d}.jpg', best[1], [cv2.IMWRITE_JPEG_QUALITY, 95]); kept.append(best[0]); n += 1; best = None
-print('video fps', vf, 'window', win, 'frames', n, 'size', f.shape[1], 'x', f.shape[0], 'sharpness median', round(float(np.median(kept)), 1))
+print('video fps', vf, 'window', win, 'frames', n, 'size', size[1], 'x', size[0], 'sharpness median', round(float(np.median(kept)), 1))
 EOF
 tail -1 $W/frames.log; NF=$(ls $W/frames | wc -l); [ $NF -gt 10 ] || { echo FRAMES_FAILED; cat $W/frames.log; exit 1; }
 
