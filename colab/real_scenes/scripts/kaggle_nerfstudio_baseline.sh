@@ -17,10 +17,11 @@ unset UV_SYSTEM_PYTHON UV_PYTHON PIP_TARGET
 uv venv -q -p 3.10 /content/nsenv && source /content/nsenv/bin/activate || { echo ENV_FAILED; exit 1; }
 P="--python /content/nsenv/bin/python"
 uv pip install -q $P torch==2.1.2 torchvision==0.16.2 --index-url https://download.pytorch.org/whl/cu118 > /tmp/ns_pip.log 2>&1
-uv pip install -q $P "numpy<2" setuptools wheel wrapt ninja >> /tmp/ns_pip.log 2>&1
+uv pip install -q $P "numpy<2" setuptools wheel wrapt ninja scikit-build-core cython >> /tmp/ns_pip.log 2>&1
+uv pip install -q $P --no-build-isolation "numpy<2" fpsample >> /tmp/ns_pip.log 2>&1
 uv pip install -q $P "numpy<2" nerfstudio==1.1.5 --no-build-isolation-package fpsample >> /tmp/ns_pip.log 2>&1
 uv pip install -q $P gsplat==1.4.0 --index-url https://docs.gsplat.studio/whl/pt21cu118 >> /tmp/ns_pip.log 2>&1 || uv pip install -q $P gsplat==1.4.0 >> /tmp/ns_pip.log 2>&1
-uv pip install -q $P "git+https://github.com/cvg/Hierarchical-Localization.git@v1.5" "lightglue @ git+https://github.com/cvg/LightGlue" >> /tmp/ns_pip.log 2>&1
+uv pip install -q $P "git+https://github.com/cvg/Hierarchical-Localization.git@v1.5" "lightglue @ git+https://github.com/cvg/LightGlue" --no-build-isolation-package fpsample >> /tmp/ns_pip.log 2>&1
 which python ns-train
 python -c "import nerfstudio, gsplat, hloc, torch; print('nerfstudio ok, gsplat', gsplat.__version__, 'torch', torch.__version__, 'cuda', torch.cuda.is_available())" || { echo NS_INSTALL_FAILED; tail -30 /tmp/ns_pip.log; exit 1; }
 
