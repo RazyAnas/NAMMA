@@ -29,13 +29,15 @@ if ! python -c "import hloc.extractors.superpoint, lightglue" 2>/dev/null; then
   rm -rf /content/hloc && git clone -q --recursive https://github.com/cvg/Hierarchical-Localization /content/hloc
   uv pip install -q --python /content/nsenv/bin/python -e /content/hloc "lightglue @ git+https://github.com/cvg/LightGlue" --no-build-isolation-package fpsample >> /tmp/ns_pip.log 2>&1
 fi
+# torch 2.1 cpp_extension still imports pkg_resources, which setuptools 81 removed
+uv pip install -q --python /content/nsenv/bin/python "setuptools<70" >> /tmp/ns_pip.log 2>&1
 which python ns-train
 python -c "import nerfstudio, gsplat, hloc.extractors.superpoint, lightglue, torch; print('nerfstudio ok, gsplat', gsplat.__version__, 'torch', torch.__version__, 'cuda', torch.cuda.is_available())" || { echo NS_INSTALL_FAILED; tail -30 /tmp/ns_pip.log; exit 1; }
 
 LOG process
 # ns-process-data checks for the colmap binary even with --sfm-tool hloc (hloc itself uses pycolmap)
 which colmap > /dev/null || { apt-get -qq update > /dev/null; DEBIAN_FRONTEND=noninteractive apt-get -qq install -y colmap > /tmp/colmap_apt.log 2>&1; }; which colmap || { echo NO_COLMAP; tail -5 /tmp/colmap_apt.log; }
-ns-process-data images --data $R/frames/lobby1020_full --output-dir $W/data --sfm-tool hloc --feature-type superpoint \
+[ -f $W/data/transforms.json ] || ns-process-data images --data $R/frames/lobby1020_full --output-dir $W/data --sfm-tool hloc --feature-type superpoint \
   --matcher-type superpoint+lightglue --matching-method vocab_tree --num-downscales 2 > $W/process.log 2>&1 || { echo PROCESS_FAILED; tail -30 $W/process.log; exit 1; }
 grep -iE "registered|Colmap matched|images|poses" $W/process.log | tail -5
 python - $W/data <<'EOF'
