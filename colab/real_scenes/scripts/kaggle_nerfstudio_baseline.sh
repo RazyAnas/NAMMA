@@ -12,11 +12,16 @@ R=$(cd $(dirname $0)/..; pwd); N=${1:-7000}; W=/content/ns_lobby; O=/kaggle/work
 LOG() { echo "== $(date +%H:%M:%S) $*"; }
 LOG env
 pip -q install uv > /tmp/uv.log 2>&1
+# Kaggle's image is Python 3.13 and sets uv to its system Python; nerfstudio 1.1.5 needs <=3.10 wheels, so name the venv's python everywhere
+unset UV_SYSTEM_PYTHON UV_PYTHON PIP_TARGET
 uv venv -q -p 3.10 /content/nsenv && source /content/nsenv/bin/activate || { echo ENV_FAILED; exit 1; }
-uv pip install -q torch==2.1.2 torchvision==0.16.2 --index-url https://download.pytorch.org/whl/cu118 > /tmp/ns_pip.log 2>&1
-uv pip install -q "numpy<2" nerfstudio==1.1.5 >> /tmp/ns_pip.log 2>&1
-uv pip install -q gsplat==1.4.0 --index-url https://docs.gsplat.studio/whl/pt21cu118 >> /tmp/ns_pip.log 2>&1 || uv pip install -q gsplat==1.4.0 >> /tmp/ns_pip.log 2>&1
-uv pip install -q "git+https://github.com/cvg/Hierarchical-Localization.git@v1.4" >> /tmp/ns_pip.log 2>&1
+P="--python /content/nsenv/bin/python"
+uv pip install -q $P torch==2.1.2 torchvision==0.16.2 --index-url https://download.pytorch.org/whl/cu118 > /tmp/ns_pip.log 2>&1
+uv pip install -q $P "numpy<2" setuptools wheel wrapt ninja >> /tmp/ns_pip.log 2>&1
+uv pip install -q $P "numpy<2" nerfstudio==1.1.5 --no-build-isolation-package fpsample >> /tmp/ns_pip.log 2>&1
+uv pip install -q $P gsplat==1.4.0 --index-url https://docs.gsplat.studio/whl/pt21cu118 >> /tmp/ns_pip.log 2>&1 || uv pip install -q $P gsplat==1.4.0 >> /tmp/ns_pip.log 2>&1
+uv pip install -q $P "git+https://github.com/cvg/Hierarchical-Localization.git@v1.4" >> /tmp/ns_pip.log 2>&1
+which python ns-train
 python -c "import nerfstudio, gsplat, hloc, torch; print('nerfstudio ok, gsplat', gsplat.__version__, 'torch', torch.__version__, 'cuda', torch.cuda.is_available())" || { echo NS_INSTALL_FAILED; tail -30 /tmp/ns_pip.log; exit 1; }
 
 LOG process
