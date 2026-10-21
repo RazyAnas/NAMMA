@@ -22,7 +22,8 @@ uv pip install -q $P torch==2.1.2 torchvision==0.16.2 --index-url https://downlo
 uv pip install -q $P "numpy<2" setuptools wheel wrapt ninja scikit-build-core cython >> /tmp/ns_pip.log 2>&1
 uv pip install -q $P --no-build-isolation "numpy<2" fpsample >> /tmp/ns_pip.log 2>&1
 uv pip install -q $P "numpy<2" nerfstudio==1.1.5 --no-build-isolation-package fpsample >> /tmp/ns_pip.log 2>&1
-uv pip install -q $P gsplat==1.4.0 --index-url https://docs.gsplat.studio/whl/pt21cu118 >> /tmp/ns_pip.log 2>&1 || uv pip install -q $P gsplat==1.4.0 >> /tmp/ns_pip.log 2>&1
+# prebuilt kernels (saves a ~13 min CUDA build); falls back to the source package, which builds on first use
+uv pip install -q $P "gsplat==1.4.0+pt21cu118" --extra-index-url https://docs.gsplat.studio/whl/pt21cu118 --index-strategy unsafe-best-match >> /tmp/ns_pip.log 2>&1 || uv pip install -q $P gsplat==1.4.0 >> /tmp/ns_pip.log 2>&1
 fi
 source /content/nsenv/bin/activate
 # hloc's documented install: recursive clone (SuperPoint lives in a git submodule that a plain pip install leaves out)
@@ -66,4 +67,4 @@ if [ $G -gt 1 ]; then train tuned 1 --pipeline.model.camera-optimizer.mode SO3xR
 else wait; train tuned 0 --pipeline.model.camera-optimizer.mode SO3xR3 --pipeline.model.use-bilateral-grid True; fi
 
 cd $W && zip -qr $O/${NAME:-nerfstudio_lobby}.zip process.log train_*.log eval_*.json renders_* offpath_* data/transforms.json 2>/dev/null
-ls -la $O/nerfstudio_lobby.zip; LOG NERFSTUDIO_DONE
+ls -la $O/${NAME:-nerfstudio_lobby}.zip; LOG NERFSTUDIO_DONE
