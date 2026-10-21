@@ -48,4 +48,9 @@ s = s[:old_start] + '''            normals_im, _, _ = rasterization(
             normals_im = normals_im[0]
 ''' + s[old_end:]
 assert 'rasterize_gaussians(' not in s
-p.write_text(s); print('patched', p)
+s = s.replace('self.config.continue_cull_post_densification', 'getattr(self.config, "continue_cull_post_densification", True)')
+p.write_text(s)
+# nerfstudio 1.1.5 dropped this SplatfactoModelConfig field; DN-Splatter's config still passes it
+c = Path(sys.argv[1]) / 'dn_splatter/dn_config.py'
+c.write_text(c.read_text().replace('continue_cull_post_densification=False,', ''))
+print('patched', p, c)
