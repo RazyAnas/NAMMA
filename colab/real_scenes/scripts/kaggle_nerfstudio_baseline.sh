@@ -57,6 +57,8 @@ import json, sys; r = json.load(open(sys.argv[1]))['results']; print(sys.argv[2]
 EOF
 }
 LOG train
+# gsplat 1.4 builds its CUDA kernels on first use; build once here so the two parallel runs do not race on the same cache
+(cd /tmp && python -c "from gsplat.cuda._backend import _C; assert _C is not None; print('gsplat kernels ready')") > $W/kernels.log 2>&1 || { echo KERNELS_FAILED; tail -20 $W/kernels.log; exit 1; }
 G=$(nvidia-smi -L | wc -l)
 train base 0 &
 if [ $G -gt 1 ]; then train tuned 1 --pipeline.model.camera-optimizer.mode SO3xR3 --pipeline.model.use-bilateral-grid True & wait
