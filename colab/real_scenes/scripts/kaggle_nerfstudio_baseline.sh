@@ -7,8 +7,9 @@
 # Every 8th frame is held out (eval-mode interval). Off-path views: each of 4 held-out cameras moved sideways and
 # backwards, rendered next to the real photo (offpath_render.py). Results: /kaggle/working/nerfstudio_lobby.zip
 # usage: bash kaggle_nerfstudio_baseline.sh [steps=7000]
+# env: FRAMES=<frame dir> NAME=<work dir name> MATCH=vocab_tree|exhaustive ONLY=base (skip the tuned run)
 set -o pipefail
-R=$(cd $(dirname $0)/..; pwd); N=${1:-7000}; W=/content/ns_lobby; O=/kaggle/working; mkdir -p $W
+R=$(cd $(dirname $0)/..; pwd); N=${1:-7000}; W=/content/${NAME:-ns_lobby}; FRAMES=${FRAMES:-$R/frames/lobby1020_full}; O=/kaggle/working; mkdir -p $W
 LOG() { echo "== $(date +%H:%M:%S) $*"; }
 LOG env
 pip -q install uv > /tmp/uv.log 2>&1
@@ -37,11 +38,11 @@ python -c "import nerfstudio, gsplat, hloc.extractors.superpoint, lightglue, tor
 LOG process
 # ns-process-data checks for the colmap binary even with --sfm-tool hloc (hloc itself uses pycolmap)
 which colmap > /dev/null || { apt-get -qq update > /dev/null; DEBIAN_FRONTEND=noninteractive apt-get -qq install -y colmap > /tmp/colmap_apt.log 2>&1; }; which colmap || { echo NO_COLMAP; tail -5 /tmp/colmap_apt.log; }
-[ -f $W/data/transforms.json ] || ns-process-data images --data $R/frames/lobby1020_full --output-dir $W/data --sfm-tool hloc --feature-type superpoint \
-  --matcher-type superpoint+lightglue --matching-method vocab_tree --num-downscales 2 > $W/process.log 2>&1 || { echo PROCESS_FAILED; tail -30 $W/process.log; exit 1; }
+[ -f $W/data/transforms.json ] || ns-process-data images --data $FRAMES --output-dir $W/data --sfm-tool hloc --feature-type superpoint \
+  --matcher-type superpoint+lightglue --matching-method ${MATCH:-vocab_tree} --num-downscales 2 > $W/process.log 2>&1 || { echo PROCESS_FAILED; tail -30 $W/process.log; exit 1; }
 grep -iE "registered|Colmap matched|images|poses" $W/process.log | tail -5
 python - $W/data <<'EOF'
-import json, sys; t = json.load(open(sys.argv[1] + '/transforms.json')); print('frames with poses:', len(t['frames']), 'of 325')
+import json, sys; t = json.load(open(sys.argv[1] + '/transforms.json')); print('frames with poses:', len(t['frames']))
 EOF
 
 train() {   # name gpu [extra args]
@@ -64,5 +65,5 @@ train base 0 &
 if [ $G -gt 1 ]; then train tuned 1 --pipeline.model.camera-optimizer.mode SO3xR3 --pipeline.model.use-bilateral-grid True & wait
 else wait; train tuned 0 --pipeline.model.camera-optimizer.mode SO3xR3 --pipeline.model.use-bilateral-grid True; fi
 
-cd $W && zip -qr $O/nerfstudio_lobby.zip process.log train_*.log eval_*.json renders_* offpath_* data/transforms.json 2>/dev/null
+cd $W && zip -qr $O/${NAME:-nerfstudio_lobby}.zip process.log train_*.log eval_*.json renders_* offpath_* data/transforms.json 2>/dev/null
 ls -la $O/nerfstudio_lobby.zip; LOG NERFSTUDIO_DONE
