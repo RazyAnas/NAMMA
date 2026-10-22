@@ -63,3 +63,8 @@ label.button { cursor: pointer; }
 .sw.red { background: #ff4d40; } .sw.yellow { background: #ffcc33; } .sw.green { background: #40e673; }
 
 #focus-lock[aria-pressed="true"] { background: #b8ff66; color: #07110f; }
+#preview { max-height: 70vh; overflow-y: auto; }
+.manual { display: grid; gap: 6px; margin-top: 6px; }
+.slider { display: grid; grid-template-columns: 1fr auto; gap: 2px 8px; font-size: 13px; }
+.slider input { grid-column: 1 / -1; width: 100%; }
+.slider output { font-variant-numeric: tabular-nums; color: #b8ff66; }

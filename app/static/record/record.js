@@ -326,17 +326,49 @@ function focusControls(track) {
   return () => locked;
 }
 
+// Manual camera controls, like a pro camera app: one slider per setting this phone's browser exposes. Moving ISO or
+// shutter switches exposure to manual, moving colour temperature switches white balance to manual; the "Lock" button
+// then freezes whatever is on screen. Only what the phone supports is shown.
+const MANUAL = [
+  ['exposureCompensation', 'Brightness (EV)', null],
+  ['iso', 'ISO', { exposureMode: 'manual' }],
+  ['exposureTime', 'Shutter (1/10000 s units)', { exposureMode: 'manual' }],
+  ['colorTemperature', 'Colour temperature (K)', { whiteBalanceMode: 'manual' }],
+  ['contrast', 'Contrast', null],
+  ['saturation', 'Saturation', null],
+  ['sharpness', 'Sharpness', null],
+  ['zoom', 'Zoom', null],
+];
+function manualControls(track) {
+  const caps = track.getCapabilities?.() || {}, now = track.getSettings?.() || {}, box = $('manual');
+  box.textContent = '';
+  for (const [key, label, mode] of MANUAL) {
+    const range = caps[key];
+    if (!range || typeof range.min !== 'number' || range.max <= range.min) continue;
+    const row = document.createElement('label'); row.className = 'slider';
+    const name = document.createElement('span'), value = document.createElement('output'), input = document.createElement('input');
+    name.textContent = label; input.type = 'range';
+    Object.assign(input, { min: range.min, max: range.max, step: range.step || (range.max - range.min) / 100, value: now[key] ?? range.min });
+    value.textContent = (+input.value).toFixed(key === 'exposureCompensation' ? 1 : 0);
+    input.oninput = () => {
+      value.textContent = (+input.value).toFixed(key === 'exposureCompensation' ? 1 : 0);
+      applyOne(track, { ...(mode || {}), [key]: +input.value });
+    };
+    row.append(name, value, input); box.append(row);
+  }
+  const auto = document.createElement('button');
+  auto.type = 'button'; auto.className = 'secondary'; auto.textContent = 'Back to automatic';
+  auto.onclick = async () => { await setLook(track, false); manualControls(track); };
+  if (box.children.length) box.append(auto);
+  else box.textContent = 'This phone does not expose manual camera settings to the browser.';
+}
+
 // Preview before recording: brightness slider (exposure compensation, while automatic), a lock toggle, Start.
 function previewControls(track) {
   const caps = track.getCapabilities?.() || {};
-  const ev = $('ev'), lock = $('lock');
+  const lock = $('lock');
   let locked = false;
-  ev.hidden = !caps.exposureCompensation;
-  if (caps.exposureCompensation) {
-    Object.assign(ev, { min: caps.exposureCompensation.min, max: caps.exposureCompensation.max, step: caps.exposureCompensation.step || 0.1 });
-    ev.value = track.getSettings?.().exposureCompensation ?? 0;
-    ev.oninput = () => applyOne(track, { exposureCompensation: +ev.value });
-  }
+  manualControls(track);
   lock.hidden = !(caps.exposureMode?.includes('manual') || caps.whiteBalanceMode?.includes('manual'));
   lock.setAttribute('aria-pressed', 'false');
   lock.textContent = 'Lock exposure and colour';
@@ -345,7 +377,7 @@ function previewControls(track) {
     const done = await setLook(track, locked);
     lock.setAttribute('aria-pressed', String(locked));
     lock.textContent = locked ? 'Locked (tap to unlock)' : 'Lock exposure and colour';
-    ev.disabled = locked;
+    $('manual').querySelectorAll('input, button').forEach((el) => { el.disabled = locked; });
     $('preview-note').textContent = locked && !done.exposure && !done.white_balance ? 'This phone does not let the browser lock them.' : '';
   };
   return new Promise((resolve) => { $('go').onclick = () => resolve({ locked }); });
