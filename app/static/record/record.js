@@ -4,7 +4,7 @@
 // AR mode was removed (2026-10-22): ARCore owns the camera, so it cannot lock exposure or white
 // balance, and per-frame brightness drift on plain walls was the measured cause of smeared walls.
 // The recorder now uses the camera directly (getUserMedia): 4K 30 fps when the phone offers it,
-// widest lens, then exposure, white balance and focus locked. Raw gyro and accelerometer samples
+// widest lens, then exposure and white balance locked (autofocus stays on). Raw gyro and accelerometer samples
 // are still saved next to the video.
 // Every timestamp is a DOMHighResTimeStamp in milliseconds (the performance.now() clock): XR
 // frame times, Generic Sensor reading timestamps and DeviceMotion event times share it.
@@ -265,7 +265,7 @@ function encode(r, source, tMs) {
 // motion blur at walking speed; per-frame brightness drift on plain walls was later proven to be
 // the cause of smeared walls. So the recorder asks for 4K 30 fps when the phone offers it (else
 // 1080p at up to 60 fps) and the widest lens, lets the camera settle, then freezes exposure, white
-// balance and focus at what it chose. Each lock is applied on its own (phones support different
+// balance at what it chose (focus stays on continuous autofocus). Each lock is applied on its own (phones support different
 // subsets) and what actually took is saved in meta.json. Browsers expose no HDR switch; locking
 // exposure stops the frame-to-frame changes HDR would otherwise make.
 const SETTLE_MS = 1500;
@@ -300,13 +300,9 @@ async function lockCamera(track) {
   } else {
     locks.white_balance = false;
   }
-  if (caps.focusMode?.includes('manual')) {
-    const focus = { focusMode: 'manual' };
-    if (caps.focusDistance && now.focusDistance) focus.focusDistance = now.focusDistance;
-    locks.focus = await applyOne(track, focus);
-  } else {
-    locks.focus = false;
-  }
+  // Focus is NOT locked: walking a room changes the distance to the walls, and a fixed focus blurred
+  // the picture on a real phone. Continuous autofocus does not change brightness, so it is safe here.
+  locks.autofocus = caps.focusMode?.includes('continuous') ? await applyOne(track, { focusMode: 'continuous' }) : false;
   return locks;
 }
 
