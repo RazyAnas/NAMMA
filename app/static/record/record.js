@@ -287,6 +287,45 @@ async function setLook(track, locked) {
   return done;
 }
 
+// Focus, like the phone's own camera app: tap the picture to focus there, press and hold (0.6 s) to lock focus at
+// that distance (tap again to go back to automatic). Works in the preview and while recording. The focus button
+// toggles the same lock. Phones without these controls in the browser just keep autofocus.
+function focusControls(track) {
+  const caps = track.getCapabilities?.() || {};
+  const video = $('video'), button = $('focus-lock');
+  const canLock = !!caps.focusMode?.includes('manual');
+  const canPoint = 'pointsOfInterest' in (navigator.mediaDevices.getSupportedConstraints?.() || {});
+  button.hidden = !canLock;
+  let locked = false, timer = null;
+  const show = () => {
+    button.setAttribute('aria-pressed', String(locked));
+    button.textContent = locked ? 'Focus locked (tap to unlock)' : 'Lock focus';
+    $('hud-focus').textContent = locked ? 'focus locked' : '';
+  };
+  const lock = async (on) => {
+    const now = track.getSettings?.() || {};
+    const ok = on
+      ? await applyOne(track, { focusMode: 'manual', ...(caps.focusDistance && now.focusDistance ? { focusDistance: now.focusDistance } : {}) })
+      : await applyOne(track, { focusMode: 'continuous' });
+    if (ok) locked = on;
+    if (rec) (rec.focusEvents ||= []).push({ t_ms: performance.now(), locked, ok });
+    show();
+  };
+  video.onpointerdown = (e) => {
+    const box = video.getBoundingClientRect();
+    const x = (e.clientX - box.left) / box.width, y = (e.clientY - box.top) / box.height;
+    timer = setTimeout(() => { timer = null; if (canLock) lock(true); }, 600);
+    if (canPoint && !locked) applyOne(track, { pointsOfInterest: [{ x, y }], focusMode: 'single-shot' })
+      .then((ok) => ok || applyOne(track, { pointsOfInterest: [{ x, y }] }));
+  };
+  video.onpointerup = video.onpointercancel = () => {
+    if (timer) { clearTimeout(timer); timer = null; if (locked) lock(false); }
+  };
+  button.onclick = () => lock(!locked);
+  show();
+  return () => locked;
+}
+
 // Preview before recording: brightness slider (exposure compensation, while automatic), a lock toggle, Start.
 function previewControls(track) {
   const caps = track.getCapabilities?.() || {};
@@ -344,9 +383,10 @@ async function startCamera() {
   await video.play();
   r.track = stream.getVideoTracks()[0];
   const lens = await widenLens(r.track);
+  r.focusLocked = focusControls(r.track);
   document.body.dataset.screen = 'preview';
   const { locked } = await previewControls(r.track);
-  const locks = { ...lens, look_locked_by_user: locked };
+  const locks = { ...lens, look_locked_by_user: locked, focus_locked_at_start: r.focusLocked() };
   r.startedAt = performance.now(); // the recording starts when the user presses Start, not at getUserMedia
   r.startedWall = new Date().toISOString();
   const settings = r.track.getSettings?.() || {};
@@ -418,6 +458,7 @@ async function finish() {
     frames_rejected: r.rejected,
     ar_segments: r.segment + 1,
     ar_resets: r.resets,
+    focus_events: r.focusEvents || [],
     reject_reasons: r.rejectReasons,
     imu_rates_hz: rates,
     devicemotion_interval_ms: r.dmIntervalMs || null,

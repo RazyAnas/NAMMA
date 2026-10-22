@@ -78,6 +78,8 @@
       <p>Point at the brightest and darkest parts of the room. When the picture looks natural, lock it so the whole video keeps the same brightness and colour.</p>
       <label class="select">Brightness <input id="ev" type="range" step="0.1" /></label>
       <button id="lock" type="button" class="secondary" aria-pressed="false">Lock exposure and colour</button>
+      <button id="focus-lock" type="button" class="secondary" aria-pressed="false" hidden>Lock focus</button>
+      <p class="note">Tap the picture to focus there; press and hold to lock focus (also while recording).</p>
       <p id="preview-note" class="note"></p>
       <button id="go" type="button">Start recording</button>
     </section>
@@ -92,6 +94,7 @@
       </dl>
       <p class="legend"><span class="sw red"></span>seen from 1 direction <span class="sw yellow"></span>2 <span class="sw green"></span>3+, good · unpainted = not scanned yet · blue lines = walls found</p>
       <p id="hud-track" data-ok="yes">starting…</p>
+      <p id="hud-focus" class="note"></p>
       <button id="stop" type="button">Stop and save</button>
     </section>
 
