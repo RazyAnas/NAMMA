@@ -156,14 +156,66 @@ def knn_scale(X):
     return np.sqrt((d[:, 1:] ** 2).mean(1)).clip(1e-4, None)
 
 
+def sharpness(img):
+    import cv2
+    g = cv2.cvtColor((img * 255).astype(np.uint8), cv2.COLOR_RGB2GRAY)
+    return float(cv2.Laplacian(g, cv2.CV_64F).var())
+
+
+def blur_filter(W, frames, ratio=0.6, win=4):
+    """Windowed blur filter: drop a frame only if its sharpness < ratio x median sharpness of its +-win neighbours
+    (in path order). A global threshold would drop whole dim or plain stretches; this only drops local outliers."""
+    from stages import read_img
+    fr = sorted(frames); s = np.array([sharpness(read_img(W, f)) for f in fr]); keep = []
+    for i, f in enumerate(fr):
+        nb = np.r_[s[max(0, i - win):i], s[i + 1:i + 1 + win]]
+        if len(nb) == 0 or s[i] >= ratio * np.median(nb): keep.append(f)
+    return keep, [f for f in fr if f not in set(keep)]
+
+
+def room_clusters(S, frames, k, overlap=1.3):
+    """Split the camera path into k rooms: k-means on camera centres (path order breaks ties). A frame joins every room
+    whose centre is within overlap x the distance to its own room centre, so neighbouring rooms share border views."""
+    C = np.array([-S['w2c'][f][:3, :3].T @ S['w2c'][f][:3, 3] for f in frames])
+    rng = np.random.default_rng(0); best = None
+    for rep in range(8):
+        cen = C[np.sort(rng.choice(len(C), k, replace=False))]
+        for it in range(50):
+            lab = np.argmin(((C[:, None] - cen[None]) ** 2).sum(-1), 1)
+            cen = np.array([C[lab == j].mean(0) if (lab == j).any() else cen[j] for j in range(k)])
+        sse = ((C - cen[lab]) ** 2).sum()
+        if best is None or sse < best[0]: best = (sse, cen, lab)
+    _, cen, lab = best; d = np.sqrt(((C[:, None] - cen[None]) ** 2).sum(-1))
+    rooms = [[f for i, f in enumerate(frames) if d[i, j] <= overlap * d[i, lab[i]] + 1e-9] for j in range(k)]
+    return cen, rooms
+
+
 def train(a, W):
+    """Train one splat, or (--rooms k) one splat per camera-path cluster from the same shared solve and mesh."""
+    from stages import load_scene
+    S = load_scene(W); frames = list(S['train']); info = {}
+    if getattr(a, 'blur_ratio', 0) > 0:
+        frames, dropped = blur_filter(W, frames, a.blur_ratio, a.blur_win); info['blur_dropped'] = dropped
+    k = getattr(a, 'rooms', 1)
+    if k <= 1:
+        info.update(train_one(a, W, frames, f'{W}/splat')); return info
+    cen, rooms = room_clusters(S, frames, k)
+    info['rooms'] = []
+    for j, fr in enumerate(rooms):
+        r = train_one(a, W, fr, f'{W}/splat/room{j}')
+        info['rooms'].append(dict(centre=cen[j].tolist(), frames=fr, **r))
+        json.dump(dict(centres=cen.tolist(), rooms=[dict(frames=x['frames'], centre=x['centre']) for x in info['rooms']]),
+                  open(f'{W}/splat/rooms.json', 'w'), indent=1)
+    return info
+
+
+def train_one(a, W, frames, out):
     import cv2, open3d as o3d
     from stages import load_scene, read_img
     torch.set_num_threads(os.cpu_count()); torch.manual_seed(0); np.random.seed(0)
-    S = load_scene(W); out = f'{W}/splat'; os.makedirs(out, exist_ok=True)
+    S = load_scene(W); os.makedirs(out, exist_ok=True)
     sc = a.train_scale; H0, W0 = S['height'], S['width']; Wt, Ht = int(round(W0 * sc)), int(round(H0 * sc))
     K = S['K'].copy(); K[:2] *= np.array([[Wt / W0], [Ht / H0]])
-    frames = S['train']
     imgs = {f: torch.tensor(cv2.resize(read_img(W, f), (Wt, Ht), interpolation=cv2.INTER_AREA)) for f in frames}
     # mesh: depth targets per train view + distance queries
     mesh = o3d.io.read_triangle_mesh(f'{W}/mesh/mesh.ply'); V = np.asarray(mesh.vertices).astype(np.float32); Fc = np.asarray(mesh.triangles).astype(np.uint32)
@@ -176,6 +228,45 @@ def train(a, W):
         rays = np.concatenate([np.broadcast_to(Tc[:3, 3], d.shape), d], -1).astype(np.float32)
         th = scene.cast_rays(o3d.core.Tensor(rays))['t_hit'].numpy()       # along un-normalised ray with z=1 -> camera depth
         mdep[f] = torch.tensor(np.where(np.isfinite(th), th, 0).astype(np.float32))
+    if getattr(a, 'expo_init', 0):
+        # photometric pre-solve: log I(view i, surface point v) = albedo_v + gain_i (per channel), from mesh vertices seen
+        # in several views; training targets are divided by gain_i, so auto-exposure drift is removed before any
+        # Gaussian can bake it into its colour
+        rng0 = np.random.default_rng(1); Vs = V[rng0.choice(len(V), min(40000, len(V)), replace=False)]
+        ii, vv, LL, XY = [], [], [], []
+        for i, f in enumerate(frames):
+            w2c = S['w2c'][f]; pc = Vs @ w2c[:3, :3].T + w2c[:3, 3]; z = pc[:, 2]
+            u = pc[:, 0] / np.maximum(z, 1e-3) * K[0, 0] + K[0, 2]; v = pc[:, 1] / np.maximum(z, 1e-3) * K[1, 1] + K[1, 2]
+            ok = (z > 0.05) & (u >= 1) & (u < Wt - 1) & (v >= 1) & (v < Ht - 1); ui, vi = u.astype(int), v.astype(int); ui[~ok] = 0; vi[~ok] = 0
+            md = mdep[f].numpy()[vi, ui]; ok &= np.abs(md - z) < 0.02 + 0.01 * z
+            c = imgs[f].numpy()[vi, ui]; ok &= (c.max(-1) < 0.97) & (c.min(-1) > 0.03)
+            j = np.nonzero(ok)[0]; ii.append(np.full(len(j), i)); vv.append(j); LL.append(np.log(c[j])); XY.append(np.c_[u[j] / Wt, v[j] / Ht])
+        ii, vv, LL, XY = np.concatenate(ii), np.concatenate(vv), np.concatenate(LL), np.concatenate(XY)
+        n_obs = np.bincount(vv, minlength=len(Vs)); sel = n_obs[vv] >= 3; ii, vv, LL, XY = ii[sel], vv[sel], LL[sel], XY[sel]
+        gx, gy = (1, 1) if a.expo_init == 1 else (3, 5)     # 1: one gain per image; 2: smooth bilinear gain field per image
+        def bil(xy):
+            cx = xy[:, 0] * (gx - 1); cy = xy[:, 1] * (gy - 1); x0 = np.clip(cx.astype(int), 0, max(gx - 2, 0)); y0 = np.clip(cy.astype(int), 0, max(gy - 2, 0))
+            fx, fy = cx - x0, cy - y0; B = np.zeros((len(xy), gx * gy))
+            for dx, dy, w in [(0, 0, (1 - fx) * (1 - fy)), (1, 0, fx * (1 - fy)), (0, 1, (1 - fx) * fy), (1, 1, fx * fy)]:
+                ok_ = (x0 + dx < gx) & (y0 + dy < gy); B[np.nonzero(ok_)[0], ((y0 + dy) * gx + x0 + dx)[ok_]] += w[ok_]
+            return B
+        B = bil(XY); g = np.zeros((len(frames), gx * gy, 3))
+        D = [np.eye(gx * gy)[a_] - np.eye(gx * gy)[b_] for a_ in range(gx * gy) for b_ in range(gx * gy)
+             if (b_ == a_ + 1 and (a_ + 1) % gx) or b_ == a_ + gx]          # neighbouring grid nodes
+        lam = 1e-4 * np.eye(gx * gy) + (getattr(a, 'expo_smooth', 1.0) * np.array(D).T @ np.array(D) if D else 0)   # smooth field; global gain free
+        for it in range(15):
+            off = np.einsum('nk,nkc->nc', B, g[ii])
+            alb = np.stack([np.bincount(vv, LL[:, c] - off[:, c], minlength=len(Vs)) for c in range(3)], 1) / np.maximum(np.bincount(vv, minlength=len(Vs)), 1)[:, None]
+            r = LL - alb[vv]
+            for i in range(len(frames)):
+                s_ = ii == i
+                if s_.sum() > 20: g[i] = np.linalg.solve(B[s_].T @ B[s_] / s_.sum() + lam, B[s_].T @ r[s_] / s_.sum())
+            g -= g.mean(0)                                  # gauge: field shared by all images stays in the albedo
+        uu, vv2 = np.meshgrid((np.arange(Wt) + .5) / Wt, (np.arange(Ht) + .5) / Ht); Bf = bil(np.c_[uu.ravel(), vv2.ravel()])
+        for i, f in enumerate(frames): imgs[f] = imgs[f] * torch.tensor(np.exp(-(Bf @ g[i])).reshape(Ht, Wt, 3), dtype=torch.float32)
+        expo_gain = {int(f): g[i].tolist() for i, f in enumerate(frames)}
+    else:
+        expo_gain = None
     # init: SfM points + mesh surface samples (vertex colours)
     P = np.load(f'{W}/scene_points.npz'); ok = (P['track'] >= 2) & (P['err'] < 4)
     Xs, Cs = P['X'][ok], P['C'][ok].astype(np.float32) / 255
@@ -186,6 +277,16 @@ def train(a, W):
         Xm = np.asarray(pc.points, np.float32); Cm = np.asarray(pc.colors, np.float32); Nm = np.asarray(pc.normals, np.float32)
     else:
         Xm = np.zeros((0, 3), np.float32); Cm = np.zeros((0, 3), np.float32); Nm = np.zeros((0, 3), np.float32)
+    if len(frames) < len(S['train']) and getattr(a, 'rooms', 1) > 1:     # room: only points some room view sees
+        def seen(X):
+            m = np.zeros(len(X), bool)
+            for f in frames:
+                w2c = S['w2c'][f]; pc = X @ w2c[:3, :3].T + w2c[:3, 3]; z = pc[:, 2]
+                u = pc[:, 0] / np.maximum(z, 1e-3) * K[0, 0] + K[0, 2]; v = pc[:, 1] / np.maximum(z, 1e-3) * K[1, 1] + K[1, 2]
+                ok = (z > 0.05) & (u >= 0) & (u < Wt) & (v >= 0) & (v < Ht); ui, vi = u.astype(int), v.astype(int); ui[~ok] = 0; vi[~ok] = 0
+                md = mdep[f].numpy()[vi, ui]; m |= ok & ((md == 0) | (z < md + 0.1))
+            return m
+        ms, mm = seen(Xs), seen(Xm); Xs, Cs, Xm, Cm, Nm = Xs[ms], Cs[ms], Xm[mm], Cm[mm], Nm[mm]
     X0 = np.concatenate([Xs, Xm]); C0_ = np.concatenate([Cs, Cm])
     N = len(X0); s0 = knn_scale(X0)
     S0 = np.log(np.repeat(s0[:, None], 3, 1)).astype(np.float32); Q0 = np.tile([1., 0, 0, 0], (N, 1)).astype(np.float32)
@@ -206,6 +307,15 @@ def train(a, W):
     # per-image exposure: rgb' = A rgb + b
     expo = {f: torch.zeros(12, requires_grad=True) for f in frames}
     eopt = torch.optim.Adam([expo[f] for f in frames], lr=a.expo_lr)
+    gg = [int(x) for x in str(getattr(a, 'gain_grid', '') or '0').split(',')]
+    if len(gg) == 3:
+        # per-image bilateral gain grid (BilaRF-style, reduced to a log-gain per cell and channel): x, y and rendered
+        # luminance axes, so it can absorb vignetting and the phone's local tone mapping, which a global 3x3 cannot
+        grid = {f: torch.zeros(1, 3, gg[2], gg[1], gg[0], requires_grad=True) for f in frames}
+        gopt = torch.optim.Adam([grid[f] for f in frames], lr=a.grid_lr)
+        yy, xx = torch.meshgrid(torch.linspace(-1, 1, Ht), torch.linspace(-1, 1, Wt), indexing='ij')
+    else:
+        grid = None
     bg = torch.zeros(3)
     steps = a.steps; dens_from, dens_until, dens_every = 300, int(0.6 * steps), 100
     gacc = torch.zeros(N); gcnt = torch.zeros(N); maxrad = torch.zeros(N)
@@ -271,7 +381,13 @@ def train(a, W):
         w2c = torch.tensor(S['w2c'][f], dtype=torch.float32)
         absacc = []
         rgb, alpha, dep, idx, rad = render(G, w2c, K, Ht, Wt, deg, bg, want_depth=a.depth_w > 0, absacc=absacc)
-        e = expo[f]; A = torch.eye(3) + e[:9].view(3, 3); rgb_c = rgb @ A.T + e[9:]
+        e = expo[f]; A = torch.eye(3) + e[:9].view(3, 3)
+        if grid is not None:
+            lum = rgb.detach().mean(-1).clamp(0, 1) * 2 - 1
+            gmap = Fnn.grid_sample(grid[f], torch.stack([xx, yy, lum], -1)[None, None], align_corners=True)[0, :, 0].permute(1, 2, 0)
+            rgb_c = (rgb * torch.exp(gmap)) @ A.T + e[9:]
+        else:
+            rgb_c = rgb @ A.T + e[9:]
         gt = imgs[f]
         l1 = (rgb_c - gt).abs().mean()
         ss = ssim(rgb_c.permute(2, 0, 1)[None], gt.permute(2, 0, 1)[None])
@@ -301,9 +417,13 @@ def train(a, W):
             lx['tv'] = tv; loss = loss + a.tv_w * tv
         if a.opac_reg > 0:       # MCMC-style: pay for opacity so unneeded smears fade and get pruned
             lx['opac'] = torch.sigmoid(G['opac'][idx]).mean(); loss = loss + a.opac_reg * lx['opac']
+        if grid is not None:     # smooth grid: TV between neighbouring cells along every axis
+            q = grid[f]; lx['grid_tv'] = sum((q.diff(dim=d) ** 2).mean() for d in (2, 3, 4) if q.shape[d] > 1)
+            loss = loss + a.grid_tv * lx['grid_tv']; gopt.zero_grad(set_to_none=True)
         opt.zero_grad(set_to_none=True); eopt.zero_grad(set_to_none=True)
         loss.backward()
         opt.step(); eopt.step()
+        if grid is not None: gopt.step()
         with torch.no_grad():
             if step <= dens_until and absacc:
                 ga = absacc[0] * torch.tensor([Wt / 2, Ht / 2]); gn = ga.norm(dim=-1)
@@ -353,6 +473,7 @@ def train(a, W):
                 os.replace(ck + '.tmp', ck)
     save_ply(G, f'{out}/splat.ply')
     torch.save({f: expo[f].detach() for f in frames}, f'{out}/exposure.pt')
+    if expo_gain: json.dump(expo_gain, open(f'{out}/expo_gain.json', 'w'))
     json.dump(hist, open(f'{out}/train_log.json', 'w'))
     return dict(steps=steps, train_res=[Wt, Ht], gaussians=int(G['means'].shape[0]), init_points=int(N), init_sfm=int(len(Xs)),
                 init_mesh=int(len(Xm)), pruned_off_surface=n_pruned_surface, final_train_psnr=hist[-1]['psnr'] if hist else None,

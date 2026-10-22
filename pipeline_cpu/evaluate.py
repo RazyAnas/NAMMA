@@ -58,7 +58,11 @@ def setup(W, scene_from=None):
     from stages import load_scene, read_img
     import gs
     S = load_scene(scene_from or W)
-    G = gs.load_ply(f'{W}/splat/splat.ply')
+    if os.path.exists(f'{W}/splat/rooms.json'):     # one splat per room: render each view with the room nearest its camera
+        R = json.load(open(f'{W}/splat/rooms.json'))
+        G = dict(_rooms=[gs.load_ply(f'{W}/splat/room{j}/splat.ply') for j in range(len(R['rooms']))], _centres=np.array(R['centres']))
+    else:
+        G = gs.load_ply(f'{W}/splat/splat.ply')
     fill = np.mean([read_img(W, f).reshape(-1, 3).mean(0) for f in S['train']], 0)
     return S, G, MeshRenderer(f'{W}/mesh/mesh.ply'), fill
 
@@ -68,6 +72,8 @@ BLEND = dict(mode='hard', p=2.0, n0=4.0)
 
 def render_all(S, G, MR, fill, w2c, K, H, W):
     import gs
+    if '_rooms' in G:
+        c = -w2c[:3, :3].T @ w2c[:3, 3]; G = G['_rooms'][int(np.argmin(np.linalg.norm(G['_centres'] - c, axis=1)))]
     with torch.no_grad():
         rgb, alpha, _, _, _ = gs.render(G, torch.tensor(w2c, dtype=torch.float32), K, H, W, int(os.environ.get("SH_DEG", 3)), torch.zeros(3))  # SH_DEG: render with fewer SH bands (debug)
     rgb = rgb.numpy().astype(np.float64); al = alpha.numpy()[..., None].astype(np.float64)
