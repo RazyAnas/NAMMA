@@ -79,7 +79,7 @@ async function pickCodec(width, height, fps = 30) {
   // Level 4.0 covers 1080p30, 4.2 1080p60, 5.1 anything larger. Falls back to a 30 fps config.
   for (const rate of fps > 30 ? [fps, 30] : [30]) {
     const level = width * height > 1920 * 1088 ? '33' : rate > 30 ? '2A' : '28';
-    const bitrate = Math.round(Math.min(40e6, (width * height * rate * 0.17)));
+    const bitrate = Math.round(Math.min(50e6, (width * height * rate * 0.2)));
     const candidates = [
       { codec: `avc1.42E0${level}`, avc: { format: 'annexb' }, container: 'h264' },
       { codec: `avc1.4D40${level}`, avc: { format: 'annexb' }, container: 'h264' },
@@ -153,7 +153,17 @@ function imuSample(sensor, t, x, y, z, tSensor) {
   const quantity = { gyro: 'gyro', dm_gyro: 'gyro', accel: 'accel', dm_accel: 'accel', gravity: 'gravity' }[sensor];
   if (quantity) rec.lastImu[quantity] = performance.now();
   if (sensor === 'gravity') rec.hasGravitySensor = true;
+  if (quantity === 'gyro') {
+    // rad/s from Generic Sensor; DeviceMotion samples were already converted to rad/s in onDeviceMotion
+    const degS = Math.hypot(x, y, z) * 180 / Math.PI;
+    rec.turn = 0.8 * (rec.turn || 0) + 0.2 * degS;
+    if (rec.turn > TURN_WARN_DEG_S) rec.lastFastTurn = performance.now();
+  }
 }
+
+// Turning faster than this blurs frames and leaves too little overlap between the frames the pipeline keeps
+// (it samples a few per second; past ~35 deg between two kept frames matching fails).
+const TURN_WARN_DEG_S = 60;
 
 // Why a frame fails strict mode, or null if it has everything. Gravity comes from GravitySensor once it delivers;
 // where Chrome has none or blocks it, the accelerometer (which includes gravity) stands in, and meta.json says so.
@@ -515,6 +525,13 @@ async function lockCamera(track) {
   } else {
     locks.exposure = false;
   }
+  if (caps.focusMode?.includes('manual')) {
+    const focus = { focusMode: 'manual' };
+    if (caps.focusDistance && now.focusDistance) focus.focusDistance = now.focusDistance;
+    locks.focus = await applyOne(track, focus);
+  } else {
+    locks.focus = false;
+  }
   if (caps.whiteBalanceMode?.includes('manual')) {
     const balance = { whiteBalanceMode: 'manual' };
     if (caps.colorTemperature && now.colorTemperature) balance.colorTemperature = now.colorTemperature;
@@ -525,11 +542,31 @@ async function lockCamera(track) {
   return locks;
 }
 
+// 4K at 30 fps first: resolution and sharpness matter more than 60 fps (the pipeline keeps only a few frames per
+// second, the sharpest of each window). Phones without 4K, or whose encoder cannot take it, fall back to 1080p 60.
+const CAMERA_MODES = {
+  '4k30': { width: { min: 3200, ideal: 3840 }, height: { min: 1800, ideal: 2160 }, frameRate: { ideal: 30, max: 30 } },
+  '1080p60': { width: { ideal: 1920 }, height: { ideal: 1080 }, frameRate: { ideal: 60 } },
+};
+
+async function openCamera() {
+  const wanted = $('quality')?.value || '4k30';
+  for (const mode of wanted === '4k30' ? ['4k30', '1080p60'] : ['1080p60']) {
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: false, video: { facingMode: { ideal: 'environment' }, ...CAMERA_MODES[mode] } });
+      const { width, height } = stream.getVideoTracks()[0].getSettings();
+      const config = await pickCodec(width - (width % 2), height - (height % 2), 30);
+      if (config || mode === '1080p60') return { stream, mode };
+      stream.getTracks().forEach((t) => t.stop());   // camera gives 4K but nothing can encode it here
+    } catch {
+      // no camera mode like this on this phone; try the next
+    }
+  }
+  throw new Error('Could not open the camera.');
+}
+
 async function startCamera() {
-  const stream = await navigator.mediaDevices.getUserMedia({
-    audio: false,
-    video: { facingMode: { ideal: 'environment' }, width: { ideal: 1920 }, height: { ideal: 1080 }, frameRate: { ideal: 60 } },
-  });
+  const { stream, mode } = await openCamera();
   const r = newRecording('camera');
   rec = r;
   const video = $('video');
@@ -542,7 +579,7 @@ async function startCamera() {
   r.startedAt = performance.now(); // the recording starts after the settle, not at getUserMedia
   r.startedWall = new Date().toISOString();
   const settings = r.track.getSettings?.() || {};
-  r.camera = { width: video.videoWidth, height: video.videoHeight, settings, locks };
+  r.camera = { width: video.videoWidth, height: video.videoHeight, settings, locks, mode };
   await startEncoder(r, video.videoWidth, video.videoHeight, Math.round(settings.frameRate || 30));
   startImu(r);
   showHud();
@@ -645,9 +682,11 @@ function updateHud(r, t, tracking) {
   const labels = ['tracking', 'tracking lost: slow down, aim at texture', 'no pose', 'camera only'];
   const reset = r.resets.length && t - r.resets[r.resets.length - 1].t_ms < 3000;
   const reason = reset ? 'ar_origin_reset' : r.strict ? missingSensors(r, tracking === 3 ? 0 : tracking) : null;
+  const fastTurn = r.lastFastTurn && performance.now() - r.lastFastTurn < 1500;
   $('hud-track').textContent = reset ? 'AR tracking reset: walk back to an area you already scanned'
+    : fastTurn ? 'Turning too fast: stop, turn slowly, then walk on'
     : reason ? `rejecting frames: ${reason.replaceAll('_', ' ').replaceAll('+', ', ')} missing` : labels[tracking];
-  $('hud-track').dataset.ok = !reason && (tracking === 0 || tracking === 3) ? 'yes' : 'no';
+  $('hud-track').dataset.ok = !reason && !fastTurn && (tracking === 0 || tracking === 3) ? 'yes' : 'no';
   $('hud-rejected').textContent = r.strict ? `${r.rejected}` : 'off';
   if (r.coverage) {
     const c = r.coverage.stats();

@@ -34,19 +34,22 @@
       <details class="tips" open>
         <summary>How to film for a good 3D model</summary>
         <ol>
-          <li>Lights on. Tilt the phone a little down so the floor is in view.</li>
-          <li>Walk slowly along the walls, facing into the room. Don't spin on the spot.</li>
-          <li>Go round twice: once at chest height, once lower or higher.</li>
-          <li>Finish where you started.</li>
-          <li>Plain walls, glass and mirrors are hard: include a textured object in frame.</li>
-          <li>Optional: put a tape measure or a measured door in view to check real size.</li>
+          <li>Settings first: video HDR, scene optimiser and "super steady" stabilisation off. Lights on, blinds open.</li>
+          <li>Hold the phone upright at chest height, aimed at eye level. Use the widest lens.</li>
+          <li>Walk slowly, about one step a second. To change direction: stop, turn slowly, walk on. Never spin on the spot.</li>
+          <li>Each room: start under the door frame looking in, walk one lap close to the walls, a second lap the other way,
+            then cross both diagonals corner to corner. Then get close (30–60 cm) to anything you want sharp.</li>
+          <li>Cross doorways through the middle, looking ahead. Don't stop the video between rooms.</li>
+          <li>Plain walls, glass and mirrors are hard: tape up a poster or patterned item while filming, remove it after.</li>
         </ol>
-        <p>Camera only mode records at 60 fps where the phone allows and locks exposure and white balance after a
-          moment. Hold still for 2 seconds when you press it.</p>
+        <p>Camera only mode records in 4K at 30 fps where the phone allows (otherwise 1080p at 60 fps), and locks
+          exposure, focus and white balance after a moment. Hold still for 2 seconds when you press it.</p>
       </details>
       <label class="check"><input id="strict" type="checkbox" checked /> Strict: keep only frames with gyro, accelerometer and gravity, plus an AR pose in AR mode (frames missing any are rejected and listed in rejects.csv)</label>
       <label class="check"><input id="depth" type="checkbox" checked /> Record ARCore depth (needed for the quick 3D model on this phone)</label>
       <button id="start-ar" type="button" disabled>Record with AR (recommended)</button>
+      <label class="select">Camera only quality
+        <select id="quality"><option value="4k30" selected>4K, 30 fps (sharpest, if the phone has it)</option><option value="1080p60">1080p, 60 fps</option></select></label>
       <button id="start-camera" class="secondary" type="button" disabled>Record camera only</button>
       <label class="button secondary" for="open-file">Open a saved recording</label>
       <input id="open-file" type="file" accept=".zip,video/*" hidden />
