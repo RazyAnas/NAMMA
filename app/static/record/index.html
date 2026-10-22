@@ -18,13 +18,11 @@
   </head>
   <body data-screen="setup">
     <video id="video" playsinline muted autoplay></video>
-    <div id="focus-ring" class="focus-ring" hidden></div>
 
     <main id="setup" class="panel">
       <h1>NAMMA Space studio</h1>
-      <p>Records video (4K 30 fps when your phone offers it) with autofocus and a button to lock exposure and colour when it looks right, plus motion
-        sensors. "Send for render" sends the recording to a render server (the cloud, Colab or your laptop) for the
-        photoreal model, which comes back here.</p>
+      <p>Records 4K video (where the phone allows) and motion sensors. "Send for render" sends the recording to a render
+        server (the cloud, Colab or your laptop) for the photoreal model, which comes back here.</p>
       <dl class="caps">
         <dt>HTTPS</dt><dd id="cap-secure">…</dd>
         <dt>Video encoder</dt><dd id="cap-codec">…</dd>
@@ -33,20 +31,20 @@
       <details class="tips" open>
         <summary>How to film for a good 3D model</summary>
         <ol>
-          <li>Lights on. Hold the phone at chest height, tilted a little down so the floor is in view.</li>
-          <li>Walk slowly along the walls, facing into the room. Stop briefly before turning; don't spin on the spot.</li>
-          <li>Each room: one lap along the walls, a second lap the other way, then walk both diagonals.</li>
-          <li>Film one room at a time, starting in the doorway, and finish where you started.</li>
-          <li>Before filming: camera HDR, scene optimiser and super-steady off. Widest lens, phone upright.</li>
-          <li>About one step a second. Close-ups of details at 30-60 cm.</li>
-          <li>Plain walls, glass and mirrors are hard: tape a poster or put a textured object in frame.</li>
-          <li>Optional: put a tape measure or a measured door in view to check real size.</li>
+          <li>Settings first: video HDR, scene optimiser and "super steady" stabilisation off. Lights on, blinds open.</li>
+          <li>Hold the phone upright at chest height, aimed at eye level. Use the widest lens.</li>
+          <li>Walk slowly, about one step a second. To change direction: stop, turn slowly, walk on. Never spin on the spot.</li>
+          <li>Each room: start under the door frame looking in, walk one lap close to the walls, a second lap the other way,
+            then cross both diagonals corner to corner. Then get close (30–60 cm) to anything you want sharp.</li>
+          <li>Cross doorways through the middle, looking ahead. Don't stop the video between rooms.</li>
+          <li>Plain walls, glass and mirrors are hard: tape up a poster or patterned item while filming, remove it after.</li>
         </ol>
-        <p>The camera starts on auto. Point it at a normal part of the room (not a window or lamp), and once the picture looks natural tap
-          "Lock exposure &amp; colour", so the same wall keeps the same brightness in every frame. Tap again to go back to auto. Turn HDR off
-          in your camera settings if the phone has a switch for it.</p>
+        <p>The recorder films in 4K at 30 fps where the phone allows (otherwise 1080p at 60 fps). Before it starts you see a
+          preview with automatic exposure: adjust brightness, ISO, shutter and colour if needed, tap "Lock exposure and colour" when it looks natural, then Start.</p>
       </details>
-      <label class="check"><input id="strict" type="checkbox" checked /> Strict: keep only frames with gyro, accelerometer and gravity, (frames missing any are rejected and listed in rejects.csv)</label>
+      <label class="check"><input id="strict" type="checkbox" checked /> Strict: keep only frames with fresh gyro, accelerometer and gravity readings (others are listed in rejects.csv)</label>
+      <label class="select">Quality
+        <select id="quality"><option value="4k30" selected>4K, 30 fps (sharpest, if the phone has it)</option><option value="1080p60">1080p, 60 fps</option></select></label>
       <button id="start-camera" type="button" disabled>Record</button>
       <label class="button secondary" for="open-file">Open a saved recording</label>
       <input id="open-file" type="file" accept=".zip,video/*" hidden />
@@ -76,18 +74,27 @@
       </section>
     </main>
 
+    <section id="preview" class="hud preview">
+      <p>Set brightness, ISO, shutter and colour like a camera app (only what this phone allows is shown). Point at the bright and dark parts of the room; when it looks natural, lock it so the whole video keeps the same look.</p>
+      <details open><summary>Camera settings</summary><div id="manual" class="manual"></div></details>
+      <button id="lock" type="button" class="secondary" aria-pressed="false">Lock exposure and colour</button>
+      <button id="focus-lock" type="button" class="secondary" aria-pressed="false" hidden>Lock focus</button>
+      <p class="note">Tap the picture to focus there; press and hold to lock focus (also while recording).</p>
+      <p id="preview-note" class="note"></p>
+      <button id="go" type="button">Start recording</button>
+    </section>
+
     <section id="hud" class="hud">
       <dl>
         <dt>Time</dt><dd id="hud-time">0 s</dd>
         <dt>Frames</dt><dd id="hud-frames">0</dd>
         <dt>Gyro</dt><dd id="hud-imu">…</dd>
         <dt>Rejected</dt><dd id="hud-rejected">0</dd>
-        <dt>Video</dt><dd id="hud-cover">…</dd>
+        <dt hidden>Scanned</dt><dd id="hud-cover" hidden>…</dd>
       </dl>
+      <p class="legend"><span class="sw red"></span>seen from 1 direction <span class="sw yellow"></span>2 <span class="sw green"></span>3+, good · unpainted = not scanned yet · blue lines = walls found</p>
       <p id="hud-track" data-ok="yes">starting…</p>
-      <label id="brightness-box" class="brightness" hidden>Brightness <input id="brightness" type="range" /></label>
-      <p class="note">Tap the picture to focus there · press and hold to lock focus</p>
-      <button id="lock" class="secondary" type="button" data-locked="no">Lock exposure &amp; colour</button>
+      <p id="hud-focus" class="note"></p>
       <button id="stop" type="button">Stop and save</button>
     </section>
 

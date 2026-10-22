@@ -1,31 +1,21 @@
-// NAMMA sensor recorder: records phone video, the AR camera pose of every frame and raw IMU
-// samples on one clock, and saves them as one bundle for scripts/ingest_sensor_bundle.py.
+// NAMMA recorder: records phone video (4K 30 fps where the phone allows) and raw IMU samples on one clock, and
+// saves them as one bundle for scripts/ingest_sensor_bundle.py.
 //
-// AR mode was removed (2026-10-22): ARCore owns the camera, so it cannot lock exposure or white
-// balance, and per-frame brightness drift on plain walls was the measured cause of smeared walls.
-// The recorder now uses the camera directly (getUserMedia): 4K 30 fps when the phone offers it,
-// widest lens, then exposure and white balance locked (autofocus stays on). Raw gyro and accelerometer samples
-// are still saved next to the video.
-// Every timestamp is a DOMHighResTimeStamp in milliseconds (the performance.now() clock): XR
-// frame times, Generic Sensor reading timestamps and DeviceMotion event times share it.
+// No AR: the reconstruction solves the camera of every frame from the images (SuperPoint + LightGlue, 173 of 180
+// frames on the lobby test), and ARCore's poses drifted and reset across big spaces. Video quality matters more:
+// ARCore owns the camera in AR mode, which caps it at a soft ~1080p stream with automatic exposure.
+// Raw gyro and accelerometer samples are kept: they warn when the phone turns too fast and give a rotation prior.
+// Every timestamp is a DOMHighResTimeStamp in milliseconds (the performance.now() clock).
 
 import { BundleFile, csvRow, ivfFrameHeader, ivfHeader, zipParts } from './bundle.js';
 
 const $ = (id) => document.getElementById(id);
 const KEYFRAME_INTERVAL = 30;
 const MAX_ENCODE_QUEUE = 4;
-const DEPTH_EVERY = 6;
-const SNAPSHOT_WIDTH = 80; // colour for the on-phone quick model, saved next to each depth frame
 const IMU_FREQUENCY_HZ = 200; // a request; Chrome clamps it (60 Hz on current Android builds, per Chromium source)
-// Strict mode: a frame is kept (encoded) only if it has a tracked AR pose and fresh gyro, accelerometer and gravity
-// samples (each no older than SENSOR_FRESH_MS). Rejected frames still get their pose row (video_ts empty, which the
-// laptop already skips) and a line in rejects.csv saying why.
+// Strict mode: a frame is kept (encoded) only with fresh gyro, accelerometer and gravity samples (each no older than
+// SENSOR_FRESH_MS). Rejected frames still get their row in frames.csv (video_ts empty) and a line in rejects.csv.
 const SENSOR_FRESH_MS = 100;
-// AR origin resets: when ARCore loses tracking and cannot find its old origin, the WebXR reference space fires
-// 'reset' and every later pose is in a shifted frame (the same wall then appears twice in a model). Each reset, and
-// any pose jump faster than JUMP_SPEED_MPS, starts a new segment; frames within RESET_SETTLE_MS of it are rejected.
-const JUMP_SPEED_MPS = 3;
-const RESET_SETTLE_MS = 500;
 
 let rec = null;
 
@@ -44,10 +34,9 @@ function flag(id, ok, text) {
 async function probe() {
   capabilities.secure = window.isSecureContext;
   flag('cap-secure', capabilities.secure, capabilities.secure ? 'yes' : 'no: open over https://');
-  const codec4k = typeof VideoEncoder === 'undefined' ? null : await pickCodec(3840, 2160);
-  const codec = codec4k || (typeof VideoEncoder === 'undefined' ? null : await pickCodec(1920, 1080));
+  const codec = typeof VideoEncoder === 'undefined' ? null : await pickCodec(1920, 1080);
   capabilities.codec = codec?.codec || null;
-  flag('cap-codec', !!codec, codec ? `${codec.codec} (${codec4k ? 'up to 4K' : '1080p'})` : 'no WebCodecs encoder');
+  flag('cap-codec', !!codec, codec ? `${codec.codec} (1080p)` : 'no WebCodecs encoder');
   const sensors = ['Gyroscope', 'Accelerometer', 'GravitySensor'].filter((name) => name in window);
   capabilities.sensors = sensors;
   flag('cap-imu', sensors.length || 'DeviceMotionEvent' in window, sensors.length ? sensors.join(', ') : 'DeviceMotion only');
@@ -260,12 +249,6 @@ function encode(r, source, tMs) {
 
 // ---- Camera mode (getUserMedia, no pose) -------------------------------------------------------
 
-// Splat training assumes every frame sees the same colours: per-frame brightness drift on plain walls
-// was proven to be the cause of smeared walls. But an automatic lock picked a bad (dark) exposure on a
-// real phone, so the camera now starts on auto and the person filming taps "Lock exposure & colour"
-// once the picture looks natural; tapping again returns to auto. Every lock/unlock is saved in
-// meta.json (camera.lock_events) so the pipeline knows which frames share one exposure. Focus stays
-// on continuous autofocus (a fixed focus blurred the picture). Browsers expose no HDR switch.
 async function applyOne(track, constraint) {
   try {
     await track.applyConstraints({ advanced: [constraint] });
@@ -275,132 +258,129 @@ async function applyOne(track, constraint) {
   }
 }
 
-async function prepareCamera(track) {
+// Exposure and white balance start automatic, so the preview looks natural. The user locks them with one tap when
+// the view looks right (bright part and dark part of the room both readable), so the video keeps one exposure and
+// one colour for the whole walk, which splat training needs. Focus stays automatic (a locked focus blurs).
+async function widenLens(track) {
   const caps = track.getCapabilities?.() || {};
-  const locks = { exposure: false, white_balance: false };
+  const locks = {};
   if (caps.zoom && caps.zoom.min < 1) locks.wide_lens = await applyOne(track, { zoom: caps.zoom.min });
-  if (caps.exposureMode?.includes('continuous')) await applyOne(track, { exposureMode: 'continuous' });
-  if (caps.whiteBalanceMode?.includes('continuous')) await applyOne(track, { whiteBalanceMode: 'continuous' });
-  locks.autofocus = caps.focusMode?.includes('continuous') ? await applyOne(track, { focusMode: 'continuous' }) : false;
+  if (caps.focusMode?.includes('continuous')) locks.focus_continuous = await applyOne(track, { focusMode: 'continuous' });
   return locks;
 }
 
-// Freezes exposure and white balance at what auto has chosen right now, or hands them back to auto.
-async function toggleLock() {
-  const r = rec;
-  if (!r?.track) return;
-  const caps = r.track.getCapabilities?.() || {};
-  const now = r.track.getSettings?.() || {};
-  const lock = !r.locked;
-  let exposure = false;
-  let balance = false;
-  if (caps.exposureMode?.includes(lock ? 'manual' : 'continuous')) {
-    const c = { exposureMode: lock ? 'manual' : 'continuous' };
-    if (lock && caps.exposureTime && now.exposureTime) c.exposureTime = now.exposureTime;
-    if (lock && caps.iso && now.iso) c.iso = now.iso;
-    exposure = await applyOne(r.track, c);
-  }
-  if (caps.whiteBalanceMode?.includes(lock ? 'manual' : 'continuous')) {
-    const c = { whiteBalanceMode: lock ? 'manual' : 'continuous' };
-    if (lock && caps.colorTemperature && now.colorTemperature) c.colorTemperature = now.colorTemperature;
-    balance = await applyOne(r.track, c);
-  }
-  if (lock && !exposure && !balance) {
-    $('lock').textContent = 'Lock not supported on this phone';
-    $('lock').disabled = true;
-    return;
-  }
-  r.locked = lock;
-  r.camera.locks.exposure = lock && exposure;
-  r.camera.locks.white_balance = lock && balance;
-  r.camera.lock_events.push({ t_ms: performance.now() - r.startedAt, locked: lock, exposure, white_balance: balance, settings: now });
-  $('lock').textContent = lock ? 'Locked · tap to go back to auto' : 'Lock exposure & colour';
-  $('lock').dataset.locked = lock ? 'yes' : 'no';
-}
-
-// Camera-app style focus on the live picture: tap to focus on that spot, press and hold to lock focus
-// there (hold again to go back to autofocus). Points of interest are 0..1 in the video's own frame,
-// so the tap is mapped back through the object-fit: cover crop.
-const HOLD_MS = 600;
-
-function videoPoint(event) {
-  const video = $('video');
-  const scale = Math.max(innerWidth / video.videoWidth, innerHeight / video.videoHeight);
-  const x = (event.clientX - (innerWidth - video.videoWidth * scale) / 2) / (video.videoWidth * scale);
-  const y = (event.clientY - (innerHeight - video.videoHeight * scale) / 2) / (video.videoHeight * scale);
-  return { x: Math.min(1, Math.max(0, x)), y: Math.min(1, Math.max(0, y)) };
-}
-
-function showFocus(event, text) {
-  const ring = $('focus-ring');
-  ring.style.left = `${event.clientX}px`;
-  ring.style.top = `${event.clientY}px`;
-  ring.textContent = text;
-  ring.hidden = false;
-  clearTimeout(ring.timer);
-  ring.timer = setTimeout(() => { ring.hidden = true; }, 1500);
-}
-
-async function focusAt(event, hold) {
-  const r = rec;
-  if (!r?.track) return;
-  const caps = r.track.getCapabilities?.() || {};
-  const point = videoPoint(event);
-  if (hold && r.focusLocked) {
-    r.focusLocked = !(await applyOne(r.track, { focusMode: 'continuous' }));
-    r.camera.lock_events.push({ t_ms: performance.now() - r.startedAt, focus_locked: r.focusLocked });
-    showFocus(event, r.focusLocked ? 'Unlock failed' : 'Autofocus');
-    return;
-  }
-  // Points of interest are a Chrome extension; phones without them still focus on the centre.
-  if ('pointsOfInterest' in (r.track.getSettings?.() || {}) || caps.pointsOfInterest) await applyOne(r.track, { pointsOfInterest: [point] });
-  if (!hold) {
-    if (caps.focusMode?.includes('single-shot')) await applyOne(r.track, { focusMode: 'single-shot' });
-    if (caps.focusMode?.includes('continuous')) setTimeout(() => { if (!r.focusLocked) applyOne(r.track, { focusMode: 'continuous' }); }, 800);
-    showFocus(event, '');
-    return;
-  }
-  // Hold: let single-shot focus land on the spot, then freeze focus at that distance.
-  if (caps.focusMode?.includes('single-shot')) await applyOne(r.track, { focusMode: 'single-shot' });
-  await new Promise((resolve) => setTimeout(resolve, 400));
-  const distance = r.track.getSettings?.().focusDistance;
-  const lock = { focusMode: 'manual' };
-  if (caps.focusDistance && distance) lock.focusDistance = distance;
-  r.focusLocked = caps.focusMode?.includes('manual') ? await applyOne(r.track, lock) : false;
-  r.camera.locks.focus = r.focusLocked;
-  r.camera.lock_events.push({ t_ms: performance.now() - r.startedAt, focus_locked: r.focusLocked, point, focus_distance: distance ?? null });
-  showFocus(event, r.focusLocked ? 'Focus locked' : 'Focus lock not supported');
-}
-
-function watchFocusGestures() {
-  const video = $('video');
-  let timer = null;
-  let held = false;
-  video.addEventListener('pointerdown', (event) => {
-    held = false;
-    timer = setTimeout(() => { held = true; focusAt(event, true); }, HOLD_MS);
-  });
-  const release = (event) => {
-    clearTimeout(timer);
-    if (!held && event.type === 'pointerup') focusAt(event, false);
-  };
-  video.addEventListener('pointerup', release);
-  video.addEventListener('pointercancel', release);
-  video.addEventListener('contextmenu', (event) => event.preventDefault());
-}
-
-// Brightness (exposure compensation) while on auto; hidden where the phone has no control for it.
-function setupBrightness(track) {
+async function setLook(track, locked) {
   const caps = track.getCapabilities?.() || {};
-  const slider = $('brightness');
-  const range = caps.exposureCompensation;
-  if (!range || range.max <= range.min) return;
-  slider.min = range.min;
-  slider.max = range.max;
-  slider.step = range.step || 0.1;
-  slider.value = track.getSettings?.().exposureCompensation ?? 0;
-  slider.addEventListener('input', () => applyOne(track, { exposureCompensation: Number(slider.value) }));
-  $('brightness-box').hidden = false;
+  const now = track.getSettings?.() || {};
+  const done = {};
+  if (caps.exposureMode?.includes(locked ? 'manual' : 'continuous')) {
+    const exposure = { exposureMode: locked ? 'manual' : 'continuous' };
+    if (locked && caps.exposureTime && now.exposureTime) exposure.exposureTime = now.exposureTime;
+    if (locked && caps.iso && now.iso) exposure.iso = now.iso;
+    done.exposure = await applyOne(track, exposure);
+  }
+  if (caps.whiteBalanceMode?.includes(locked ? 'manual' : 'continuous')) {
+    const balance = { whiteBalanceMode: locked ? 'manual' : 'continuous' };
+    if (locked && caps.colorTemperature && now.colorTemperature) balance.colorTemperature = now.colorTemperature;
+    done.white_balance = await applyOne(track, balance);
+  }
+  return done;
+}
+
+// Focus, like the phone's own camera app: tap the picture to focus there, press and hold (0.6 s) to lock focus at
+// that distance (tap again to go back to automatic). Works in the preview and while recording. The focus button
+// toggles the same lock. Phones without these controls in the browser just keep autofocus.
+function focusControls(track) {
+  const caps = track.getCapabilities?.() || {};
+  const video = $('video'), button = $('focus-lock');
+  const canLock = !!caps.focusMode?.includes('manual');
+  const canPoint = 'pointsOfInterest' in (navigator.mediaDevices.getSupportedConstraints?.() || {});
+  button.hidden = !canLock;
+  let locked = false, timer = null;
+  const show = () => {
+    button.setAttribute('aria-pressed', String(locked));
+    button.textContent = locked ? 'Focus locked (tap to unlock)' : 'Lock focus';
+    $('hud-focus').textContent = locked ? 'focus locked' : '';
+  };
+  const lock = async (on) => {
+    const now = track.getSettings?.() || {};
+    const ok = on
+      ? await applyOne(track, { focusMode: 'manual', ...(caps.focusDistance && now.focusDistance ? { focusDistance: now.focusDistance } : {}) })
+      : await applyOne(track, { focusMode: 'continuous' });
+    if (ok) locked = on;
+    if (rec) (rec.focusEvents ||= []).push({ t_ms: performance.now(), locked, ok });
+    show();
+  };
+  video.onpointerdown = (e) => {
+    const box = video.getBoundingClientRect();
+    const x = (e.clientX - box.left) / box.width, y = (e.clientY - box.top) / box.height;
+    timer = setTimeout(() => { timer = null; if (canLock) lock(true); }, 600);
+    if (canPoint && !locked) applyOne(track, { pointsOfInterest: [{ x, y }], focusMode: 'single-shot' })
+      .then((ok) => ok || applyOne(track, { pointsOfInterest: [{ x, y }] }));
+  };
+  video.onpointerup = video.onpointercancel = () => {
+    if (timer) { clearTimeout(timer); timer = null; if (locked) lock(false); }
+  };
+  button.onclick = () => lock(!locked);
+  show();
+  return () => locked;
+}
+
+// Manual camera controls, like a pro camera app: one slider per setting this phone's browser exposes. Moving ISO or
+// shutter switches exposure to manual, moving colour temperature switches white balance to manual; the "Lock" button
+// then freezes whatever is on screen. Only what the phone supports is shown.
+const MANUAL = [
+  ['exposureCompensation', 'Brightness (EV)', null],
+  ['iso', 'ISO', { exposureMode: 'manual' }],
+  ['exposureTime', 'Shutter (1/10000 s units)', { exposureMode: 'manual' }],
+  ['colorTemperature', 'Colour temperature (K)', { whiteBalanceMode: 'manual' }],
+  ['contrast', 'Contrast', null],
+  ['saturation', 'Saturation', null],
+  ['sharpness', 'Sharpness', null],
+  ['zoom', 'Zoom', null],
+];
+function manualControls(track) {
+  const caps = track.getCapabilities?.() || {}, now = track.getSettings?.() || {}, box = $('manual');
+  box.textContent = '';
+  for (const [key, label, mode] of MANUAL) {
+    const range = caps[key];
+    if (!range || typeof range.min !== 'number' || range.max <= range.min) continue;
+    const row = document.createElement('label'); row.className = 'slider';
+    const name = document.createElement('span'), value = document.createElement('output'), input = document.createElement('input');
+    name.textContent = label; input.type = 'range';
+    Object.assign(input, { min: range.min, max: range.max, step: range.step || (range.max - range.min) / 100, value: now[key] ?? range.min });
+    value.textContent = (+input.value).toFixed(key === 'exposureCompensation' ? 1 : 0);
+    input.oninput = () => {
+      value.textContent = (+input.value).toFixed(key === 'exposureCompensation' ? 1 : 0);
+      applyOne(track, { ...(mode || {}), [key]: +input.value });
+    };
+    row.append(name, value, input); box.append(row);
+  }
+  const auto = document.createElement('button');
+  auto.type = 'button'; auto.className = 'secondary'; auto.textContent = 'Back to automatic';
+  auto.onclick = async () => { await setLook(track, false); manualControls(track); };
+  if (box.children.length) box.append(auto);
+  else box.textContent = 'This phone does not expose manual camera settings to the browser.';
+}
+
+// Preview before recording: brightness slider (exposure compensation, while automatic), a lock toggle, Start.
+function previewControls(track) {
+  const caps = track.getCapabilities?.() || {};
+  const lock = $('lock');
+  let locked = false;
+  manualControls(track);
+  lock.hidden = !(caps.exposureMode?.includes('manual') || caps.whiteBalanceMode?.includes('manual'));
+  lock.setAttribute('aria-pressed', 'false');
+  lock.textContent = 'Lock exposure and colour';
+  lock.onclick = async () => {
+    locked = !locked;
+    const done = await setLook(track, locked);
+    lock.setAttribute('aria-pressed', String(locked));
+    lock.textContent = locked ? 'Locked (tap to unlock)' : 'Lock exposure and colour';
+    $('manual').querySelectorAll('input, button').forEach((el) => { el.disabled = locked; });
+    $('preview-note').textContent = locked && !done.exposure && !done.white_balance ? 'This phone does not let the browser lock them.' : '';
+  };
+  return new Promise((resolve) => { $('go').onclick = () => resolve({ locked }); });
 }
 
 // 4K at 30 fps first: resolution and sharpness matter more than 60 fps (the pipeline keeps only a few frames per
@@ -411,13 +391,14 @@ const CAMERA_MODES = {
 };
 
 async function openCamera() {
-  for (const mode of ['4k30', '1080p60']) {
+  const wanted = $('quality')?.value || '4k30';
+  for (const mode of wanted === '4k30' ? ['4k30', '1080p60'] : ['1080p60']) {
     try {
       const stream = await navigator.mediaDevices.getUserMedia({ audio: false, video: { facingMode: { ideal: 'environment' }, ...CAMERA_MODES[mode] } });
       const { width, height } = stream.getVideoTracks()[0].getSettings();
       const config = await pickCodec(width - (width % 2), height - (height % 2), 30);
       if (config || mode === '1080p60') return { stream, mode };
-      stream.getTracks().forEach((t) => t.stop()); // camera gives 4K but nothing can encode it here
+      stream.getTracks().forEach((t) => t.stop());   // camera gives 4K but nothing can encode it here
     } catch {
       // no camera mode like this on this phone; try the next
     }
@@ -433,12 +414,15 @@ async function startCamera() {
   video.srcObject = stream;
   await video.play();
   r.track = stream.getVideoTracks()[0];
-  const locks = await prepareCamera(r.track);
-  setupBrightness(r.track);
-  r.startedAt = performance.now();
+  const lens = await widenLens(r.track);
+  r.focusLocked = focusControls(r.track);
+  document.body.dataset.screen = 'preview';
+  const { locked } = await previewControls(r.track);
+  const locks = { ...lens, look_locked_by_user: locked, focus_locked_at_start: r.focusLocked() };
+  r.startedAt = performance.now(); // the recording starts when the user presses Start, not at getUserMedia
   r.startedWall = new Date().toISOString();
   const settings = r.track.getSettings?.() || {};
-  r.camera = { width: video.videoWidth, height: video.videoHeight, settings, locks, mode, lock_events: [] };
+  r.camera = { width: video.videoWidth, height: video.videoHeight, settings, locks, mode };
   await startEncoder(r, video.videoWidth, video.videoHeight, Math.round(settings.frameRate || 30));
   startImu(r);
   showHud();
@@ -506,6 +490,7 @@ async function finish() {
     frames_rejected: r.rejected,
     ar_segments: r.segment + 1,
     ar_resets: r.resets,
+    focus_events: r.focusEvents || [],
     reject_reasons: r.rejectReasons,
     imu_rates_hz: rates,
     devicemotion_interval_ms: r.dmIntervalMs || null,
@@ -539,18 +524,18 @@ function updateHud(r, t, tracking) {
   const gyro = r.imuCounts.gyro || r.imuCounts.dm_gyro || 0;
   $('hud-imu').textContent = seconds > 1 ? `${(gyro / seconds).toFixed(0)} Hz` : '…';
   const labels = ['tracking', 'tracking lost: slow down, aim at texture', 'no pose', 'camera only'];
-  const reset = r.resets.length && t - r.resets[r.resets.length - 1].t_ms < 3000;
-  const reason = reset ? 'ar_origin_reset' : r.strict ? missingSensors(r, tracking === 3 ? 0 : tracking) : null;
+  const reset = false;
+  const reason = r.strict ? missingSensors(r, 0) : null;
   const fastTurn = r.lastFastTurn && performance.now() - r.lastFastTurn < 1500;
   $('hud-track').textContent = reset ? 'AR tracking reset: walk back to an area you already scanned'
     : fastTurn ? 'Turning too fast: stop, turn slowly, then walk on'
     : reason ? `rejecting frames: ${reason.replaceAll('_', ' ').replaceAll('+', ', ')} missing` : labels[tracking];
   $('hud-track').dataset.ok = !reason && !fastTurn && (tracking === 0 || tracking === 3) ? 'yes' : 'no';
   $('hud-rejected').textContent = r.strict ? `${r.rejected}` : 'off';
-  if (r.coverage) {
+  if (r.coverage) {   // only bundles from the old AR recorder had depth coverage
     const c = r.coverage.stats();
     $('hud-cover').textContent = c.seen ? `${c.percent}% good · ${c.walls} wall${c.walls === 1 ? '' : 's'}` : 'point at a wall';
-  } else $('hud-cover').textContent = `${r.encodeWidth || 0} x ${r.encodeHeight || 0}`;
+  } else $('hud-cover').textContent = 'needs depth';
 }
 
 function showSummary(meta, bytes) {
@@ -559,11 +544,13 @@ function showSummary(meta, bytes) {
     ['Mode', meta.mode],
     ['Duration', `${meta.duration_s.toFixed(1)} s`],
     ['Camera image', meta.camera ? `${meta.camera.width} x ${meta.camera.height}` : 'none'],
-    ['Camera locks', meta.camera?.locks ? Object.entries(meta.camera.locks).map(([k, v]) => `${k.replace('_', ' ')} ${v ? 'on' : 'not supported'}`).join(', ') : 'n/a'],
+    ['Camera locks', meta.camera?.locks ? Object.entries(meta.camera.locks).map(([k, v]) => `${k.replace('_', ' ')} ${v ? 'on' : 'not supported'}`).join(', ') : 'n/a (AR mode)'],
     ['Codec', meta.codec?.codec || 'none'],
     ['Frames encoded', `${meta.frames_encoded} of ${meta.frames} (${(meta.frames_encoded / meta.duration_s).toFixed(1)} fps)`],
     ['Frames rejected', meta.strict ? `${meta.frames_rejected} (${Object.entries(meta.reject_reasons).map(([k, v]) => `${k.replaceAll('_', ' ')} ${v}`).join(', ') || 'none'})` : 'strict mode off'],
+    ['Pose tracked', meta.mode === 'ar' ? `${((100 * meta.frames_tracked) / Math.max(1, meta.frames)).toFixed(0)}% of frames` : 'n/a'],
     ['IMU rates', Object.entries(meta.imu_rates_hz).map(([k, v]) => `${k} ${v} Hz`).join(', ') || 'none'],
+    ['Depth', meta.xr_features.includes('depth-sensing') ? 'on' : 'off'],
     ['Bundle size', `${(bytes / 1e6).toFixed(1)} MB`],
     ['Problems', meta.errors.length ? meta.errors.slice(0, 5).join('; ') : 'none'],
   ];
@@ -591,8 +578,6 @@ async function begin(starter) {
 
 $('start-camera').addEventListener('click', () => begin(startCamera));
 $('stop').addEventListener('click', () => finish());
-$('lock').addEventListener('click', () => toggleLock());
-watchFocusGestures();
 $('again').addEventListener('click', () => location.reload());
 probe().catch((error) => log(error.message));
 
