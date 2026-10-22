@@ -187,19 +187,52 @@ export function heightColours(positions) {
   return colors;
 }
 
+// ---- AR origin segments ---------------------------------------------------------------------------
+
+// Splits tracked frames into segments that share one AR origin. A new segment starts where the recorder logged a
+// reset (frames.csv 'segment', newer bundles) or where the pose jumps faster than a person can move the phone
+// (older bundles, which did not log resets). Mixing segments puts the same wall in two places.
+export function arSegments(frames, maxSpeed = 3) {
+  const segmentOf = new Map();
+  let segment = 0;
+  let last = null;
+  for (const row of frames) {
+    if (row.tracking !== 0 || row.m12 == null) continue;
+    const logged = row.segment ?? null;
+    if (last) {
+      const dt = Math.max(1e-3, (row.t_ms - last.t_ms) / 1000);
+      const step = Math.hypot(row.m12 - last.m12, row.m13 - last.m13, row.m14 - last.m14);
+      if ((logged != null && logged !== last.segment) || step / dt > maxSpeed) segment++;
+    }
+    segmentOf.set(row.frame, segment);
+    last = row;
+  }
+  return { segmentOf, count: segment + 1 };
+}
+
 // ---- Whole bundle ---------------------------------------------------------------------------------
 
 export async function buildQuickModel(blob, options = {}) {
-  const { voxel = 0.03, stride = 2, minHits = 2, onProgress = () => {} } = options;
+  const { voxel = 0.03, stride = 2, minHits = 2, maxSpeed = 3, onProgress = () => {} } = options;
   const entries = await readZipIndex(blob);
   const meta = JSON.parse(decoder.decode(await readEntry(blob, entries, 'meta.json')));
   const frames = parseCsv(decoder.decode(await readEntry(blob, entries, 'frames.csv')));
   const byIndex = new Map(frames.map((row) => [row.frame, row]));
   const path = [];
-  for (const row of frames) if (row.tracking === 0) path.push(row.m12, row.m13, row.m14);
+
   const depthCsv = await readEntry(blob, entries, 'depth.csv');
   const depthRows = depthCsv ? parseCsv(decoder.decode(depthCsv)) : [];
   const colourSize = meta.depth_color_size || null;
+  // Fuse only the segment with the most depth frames; the others are in a shifted frame.
+  const { segmentOf, count: segments } = arSegments(frames, maxSpeed);
+  const depthPerSegment = new Map();
+  for (const d of depthRows) {
+    const s = segmentOf.get(d.frame);
+    if (s != null) depthPerSegment.set(s, (depthPerSegment.get(s) || 0) + 1);
+  }
+  const keepSegment = [...depthPerSegment.entries()].sort((a, b) => b[1] - a[1])[0]?.[0] ?? 0;
+  let skippedOtherSegments = 0;
+  for (const row of frames) if (segmentOf.get(row.frame) === keepSegment) path.push(row.m12, row.m13, row.m14);
   const fusion = new VoxelFusion(voxel);
   let used = 0;
   let coloured = 0;
@@ -208,6 +241,7 @@ export async function buildQuickModel(blob, options = {}) {
     const pose = byIndex.get(d.frame);
     onProgress((i + 1) / Math.max(1, depthRows.length));
     if (!pose || pose.tracking !== 0) continue;
+    if (segmentOf.get(d.frame) !== keepSegment) { skippedOtherSegments++; continue; }
     const bytes = await readEntry(blob, entries, d.file);
     if (!bytes) continue;
     let color = null;
@@ -249,6 +283,9 @@ export async function buildQuickModel(blob, options = {}) {
       voxel_m: voxel,
       tracked_frames: path.length / 3,
       frames: frames.length,
+      ar_segments: segments,
+      segment_used: keepSegment,
+      depth_frames_other_segments: skippedOtherSegments,
     },
   };
 }

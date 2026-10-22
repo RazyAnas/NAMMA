@@ -30,6 +30,7 @@ from pathlib import Path
 import re
 import secrets
 import shutil
+import subprocess
 import time
 import uuid
 
@@ -42,7 +43,7 @@ from pydantic import BaseModel, Field
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from app.config import get_settings
+from app.config import PROJECT_ROOT, get_settings
 from app.database import get_db
 from app.models import Job, Project
 from app.pipeline.backends import capabilities, describe, missing_requirements
@@ -263,6 +264,50 @@ def render_plan(kind: str, quality: dict, trainer: str | None) -> list[dict]:
     return steps
 
 
+FULL_PIPELINE = PROJECT_ROOT / "colab" / "real_scenes" / "scripts" / "full_pipeline.sh"
+
+
+def final_plan(kind: str, quality: dict) -> list[dict]:
+    """The pipeline that scored best in our tests (lobby clip: 26.9 dB on unseen frames): the sharpest frames, cameras
+    from SuperPoint + LightGlue (hloc), Nerfstudio splatfacto on every frame. Needs a CUDA GPU (Modal, Colab, Kaggle)."""
+    unpack = ({"key": "unpack", "label": "Unpack frames", "task": "capture.bundle", "params": {"stride": max(2, quality["stride"] // 2)}}
+              if kind == "bundle" else
+              {"key": "unpack", "label": "Pick the sharpest frames", "task": "capture.frames", "params": {"selection": "sharpest"}})
+    return [unpack, {"key": "splat", "label": "Cameras (SuperPoint + LightGlue) and photoreal splat (Nerfstudio)",
+                     "task": "splats.final", "params": {"steps": 30000}}]
+
+
+@task("splats.final", requires=("cuda",))
+def train_final(ctx: TaskContext) -> dict:
+    """Runs full_pipeline.sh in render-server mode on the picked frames; the splat lands where collect_outputs looks."""
+    work, out = ctx.job_dir / "final", ctx.paths["artifacts"] / "gaussian"
+    out.mkdir(parents=True, exist_ok=True)
+    # The whole video when there is one (the pipeline keeps the sharpest frame of every 1/6 s), else the picked frames.
+    capture = ctx.paths["root"] / "capture"
+    videos = [p for p in [*(capture.glob("video.mp4")), *(capture.glob("*.mp4")), Path(ctx.project.source_path or "")]
+              if p.suffix.lower() in ALLOWED_VIDEO_SUFFIXES and p.is_file()]
+    source = {"VIDEO": str(videos[0])} if videos else {"FRAMES": str(ctx.paths["frames"])}
+    env = {**os.environ, **source, "WORK": str(work), "OUT": str(out), "FINAL": "1",
+           "STEPS": str(ctx.params.get("steps", 30000))}
+    stages = {"env": 0.02, "frames": 0.15, "cameras": 0.2, "train": 0.45, "export": 0.95}
+    log = ctx.job_dir / "splat"
+    log.mkdir(exist_ok=True)
+    with open(log / "log.txt", "w") as handle:
+        process = subprocess.Popen(["bash", str(FULL_PIPELINE)], env=env, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
+        for line in process.stdout:
+            handle.write(line); handle.flush()
+            if line.startswith("== "):
+                stage = line.split()[2] if len(line.split()) > 2 else ""
+                if stage in stages:
+                    ctx.progress(stage, stages[stage])
+        code = process.wait()
+    if code != 0 or not (out / "splat.ply").is_file():
+        tail = (log / "log.txt").read_text(errors="replace").splitlines()[-15:]
+        raise RuntimeError("full pipeline failed: " + " | ".join(tail))
+    (out / "manifest.json").write_text(json.dumps({"model_path": "splat.ply", "trainer": "nerfstudio splatfacto"}))
+    return {"trainer": "nerfstudio", "iterations": ctx.params.get("steps", 30000), "init": "sfm"}
+
+
 def pick_trainer(preferred: str | None = None) -> str | None:
     from app.pipeline.stages.splats import TRAINER_REQUIREMENTS
 
@@ -302,6 +347,7 @@ def _summary(kind: str, result: dict) -> dict:
         "phone.dataset": ("images",),
         "points.monocular": ("frames", "median_alignment_error", "seconds_per_frame"),
         "splats.train": ("trainer", "iterations", "init"),
+        "splats.final": ("trainer", "iterations"),
     }.get(kind, ())
     return {k: result[k] for k in keep if k in result}
 
@@ -357,7 +403,10 @@ def phone_render(ctx: TaskContext) -> dict:
     quality_name = ctx.params.get("quality", "balanced")
     quality = {**QUALITY[quality_name], **{k: v for k, v in (ctx.params.get("overrides") or {}).items() if k in QUALITY["fast"]}}
     trainer = pick_trainer(ctx.params.get("trainer"))
-    steps = render_plan(ctx.params.get("kind", "ar"), quality, trainer)
+    kind = ctx.params.get("kind", "ar")
+    # On a CUDA machine every non-AR capture goes through the final pipeline; the older plan stays for Macs and CPU.
+    final = kind != "ar" and not missing_requirements(("cuda",)) and ctx.params.get("pipeline", "final") == "final"
+    steps = final_plan(kind, quality) if final else render_plan(kind, quality, trainer)
     for step in steps:
         step["state"] = "pending"
     _write_steps(ctx, steps)

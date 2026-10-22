@@ -61,7 +61,8 @@ async function showQuickModel(blob, meta) {
   v.frame(model.positions.length ? model.positions : model.path);
   $('quick-status').textContent = model.stats.points
     ? `Quick model: ${model.stats.points.toLocaleString()} points from ${model.stats.depth_frames_used} ARCore depth frames, built on this phone in ${seconds.toFixed(1)} s` +
-      (model.stats.coloured_frames ? '.' : ' (coloured by height: this recording has no colour snapshots).')
+      (model.stats.coloured_frames ? '.' : ' (coloured by height: this recording has no colour snapshots).') +
+      (model.stats.ar_segments > 1 ? ` AR tracking reset ${model.stats.ar_segments - 1} time(s) during this recording: showing the largest consistent part, ${model.stats.depth_frames_other_segments} depth frames from the other parts left out.` : '')
     : '';
   if (model.stats.points) {
     const link = $('save-quick');

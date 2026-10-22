@@ -100,7 +100,7 @@ const mock = ({ offset, mode }) => {
   const session = new EventTarget();
   session.enabledFeatures = ['local-floor', 'camera-access', 'dom-overlay'];
   session.updateRenderState = () => {};
-  session.requestReferenceSpace = async () => ({});
+  session.requestReferenceSpace = async () => new EventTarget();
   session.end = async () => { session.ended = true; session.dispatchEvent(new Event('end')); };
   session.requestAnimationFrame = (cb) => setTimeout(() => {
     if (session.ended) return;
@@ -111,7 +111,7 @@ const mock = ({ offset, mode }) => {
     const m = new Float32Array([R[0][0], R[1][0], R[2][0], 0, R[0][1], R[1][1], R[2][1], 0, R[0][2], R[1][2], R[2][2], 0, Math.sin(0.5 * t), 1.4, -0.3 * t, 1]);
     const lost = t > 2.0 && t < 2.3;
     const frame = {
-      getViewerPose: () => ({ emulatedPosition: lost, views: [{ transform: { matrix: m }, projectionMatrix: projection, camera: { width: 640, height: 480 } }] }),
+      getViewerPose: () => ({ emulatedPosition: lost, transform: { matrix: m }, views: [{ transform: { matrix: m }, projectionMatrix: projection, camera: { width: 640, height: 480 } }] }),
     };
     cb(now, frame);
   }, 33);
