@@ -68,3 +68,6 @@ label.button { cursor: pointer; }
 .slider { display: grid; grid-template-columns: 1fr auto; gap: 2px 8px; font-size: 13px; }
 .slider input { grid-column: 1 / -1; width: 100%; }
 .slider output { font-variant-numeric: tabular-nums; color: #b8ff66; }
+.hud-buttons { display: flex; gap: 8px; margin-top: 8px; }
+.hud-buttons button { flex: 1; margin: 0; }
+#hud-focus-lock[aria-pressed="true"] { background: #b8ff66; color: #07110f; }
