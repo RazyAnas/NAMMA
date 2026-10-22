@@ -260,16 +260,12 @@ function encode(r, source, tMs) {
 
 // ---- Camera mode (getUserMedia, no pose) -------------------------------------------------------
 
-// Splat training assumes every frame sees the same colours: auto exposure and white balance that
-// drift between bright and dark parts of a room cost about 4 dB in our tests, and 60 fps halves
-// motion blur at walking speed; per-frame brightness drift on plain walls was later proven to be
-// the cause of smeared walls. So the recorder asks for 4K 30 fps when the phone offers it (else
-// 1080p at up to 60 fps) and the widest lens, lets the camera settle, then freezes exposure, white
-// balance at what it chose (focus stays on continuous autofocus). Each lock is applied on its own (phones support different
-// subsets) and what actually took is saved in meta.json. Browsers expose no HDR switch; locking
-// exposure stops the frame-to-frame changes HDR would otherwise make.
-const SETTLE_MS = 1500;
-
+// Splat training assumes every frame sees the same colours: per-frame brightness drift on plain walls
+// was proven to be the cause of smeared walls. But an automatic lock picked a bad (dark) exposure on a
+// real phone, so the camera now starts on auto and the person filming taps "Lock exposure & colour"
+// once the picture looks natural; tapping again returns to auto. Every lock/unlock is saved in
+// meta.json (camera.lock_events) so the pipeline knows which frames share one exposure. Focus stays
+// on continuous autofocus (a fixed focus blurred the picture). Browsers expose no HDR switch.
 async function applyOne(track, constraint) {
   try {
     await track.applyConstraints({ advanced: [constraint] });
@@ -279,31 +275,47 @@ async function applyOne(track, constraint) {
   }
 }
 
-async function lockCamera(track) {
+async function prepareCamera(track) {
   const caps = track.getCapabilities?.() || {};
-  const locks = {};
+  const locks = { exposure: false, white_balance: false };
   if (caps.zoom && caps.zoom.min < 1) locks.wide_lens = await applyOne(track, { zoom: caps.zoom.min });
-  await new Promise((resolve) => setTimeout(resolve, SETTLE_MS));
-  const now = track.getSettings?.() || {};
-  if (caps.exposureMode?.includes('manual')) {
-    const exposure = { exposureMode: 'manual' };
-    if (caps.exposureTime && now.exposureTime) exposure.exposureTime = now.exposureTime;
-    if (caps.iso && now.iso) exposure.iso = now.iso;
-    locks.exposure = await applyOne(track, exposure);
-  } else {
-    locks.exposure = false;
-  }
-  if (caps.whiteBalanceMode?.includes('manual')) {
-    const balance = { whiteBalanceMode: 'manual' };
-    if (caps.colorTemperature && now.colorTemperature) balance.colorTemperature = now.colorTemperature;
-    locks.white_balance = await applyOne(track, balance);
-  } else {
-    locks.white_balance = false;
-  }
-  // Focus is NOT locked: walking a room changes the distance to the walls, and a fixed focus blurred
-  // the picture on a real phone. Continuous autofocus does not change brightness, so it is safe here.
+  if (caps.exposureMode?.includes('continuous')) await applyOne(track, { exposureMode: 'continuous' });
+  if (caps.whiteBalanceMode?.includes('continuous')) await applyOne(track, { whiteBalanceMode: 'continuous' });
   locks.autofocus = caps.focusMode?.includes('continuous') ? await applyOne(track, { focusMode: 'continuous' }) : false;
   return locks;
+}
+
+// Freezes exposure and white balance at what auto has chosen right now, or hands them back to auto.
+async function toggleLock() {
+  const r = rec;
+  if (!r?.track) return;
+  const caps = r.track.getCapabilities?.() || {};
+  const now = r.track.getSettings?.() || {};
+  const lock = !r.locked;
+  let exposure = false;
+  let balance = false;
+  if (caps.exposureMode?.includes(lock ? 'manual' : 'continuous')) {
+    const c = { exposureMode: lock ? 'manual' : 'continuous' };
+    if (lock && caps.exposureTime && now.exposureTime) c.exposureTime = now.exposureTime;
+    if (lock && caps.iso && now.iso) c.iso = now.iso;
+    exposure = await applyOne(r.track, c);
+  }
+  if (caps.whiteBalanceMode?.includes(lock ? 'manual' : 'continuous')) {
+    const c = { whiteBalanceMode: lock ? 'manual' : 'continuous' };
+    if (lock && caps.colorTemperature && now.colorTemperature) c.colorTemperature = now.colorTemperature;
+    balance = await applyOne(r.track, c);
+  }
+  if (lock && !exposure && !balance) {
+    $('lock').textContent = 'Lock not supported on this phone';
+    $('lock').disabled = true;
+    return;
+  }
+  r.locked = lock;
+  r.camera.locks.exposure = lock && exposure;
+  r.camera.locks.white_balance = lock && balance;
+  r.camera.lock_events.push({ t_ms: performance.now() - r.startedAt, locked: lock, exposure, white_balance: balance, settings: now });
+  $('lock').textContent = lock ? 'Locked · tap to go back to auto' : 'Lock exposure & colour';
+  $('lock').dataset.locked = lock ? 'yes' : 'no';
 }
 
 // 4K at 30 fps first: resolution and sharpness matter more than 60 fps (the pipeline keeps only a few frames per
@@ -336,13 +348,11 @@ async function startCamera() {
   video.srcObject = stream;
   await video.play();
   r.track = stream.getVideoTracks()[0];
-  log('Hold still: setting exposure…');
-  const locks = await lockCamera(r.track);
-  log('');
-  r.startedAt = performance.now(); // the recording starts after the settle, not at getUserMedia
+  const locks = await prepareCamera(r.track);
+  r.startedAt = performance.now();
   r.startedWall = new Date().toISOString();
   const settings = r.track.getSettings?.() || {};
-  r.camera = { width: video.videoWidth, height: video.videoHeight, settings, locks, mode };
+  r.camera = { width: video.videoWidth, height: video.videoHeight, settings, locks, mode, lock_events: [] };
   await startEncoder(r, video.videoWidth, video.videoHeight, Math.round(settings.frameRate || 30));
   startImu(r);
   showHud();
@@ -495,6 +505,7 @@ async function begin(starter) {
 
 $('start-camera').addEventListener('click', () => begin(startCamera));
 $('stop').addEventListener('click', () => finish());
+$('lock').addEventListener('click', () => toggleLock());
 $('again').addEventListener('click', () => location.reload());
 probe().catch((error) => log(error.message));
 

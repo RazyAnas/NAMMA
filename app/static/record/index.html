@@ -21,7 +21,7 @@
 
     <main id="setup" class="panel">
       <h1>NAMMA Space studio</h1>
-      <p>Records video (4K 30 fps when your phone offers it) with exposure and white balance locked and autofocus on, plus motion
+      <p>Records video (4K 30 fps when your phone offers it) with autofocus and a button to lock exposure and colour when it looks right, plus motion
         sensors. "Send for render" sends the recording to a render server (the cloud, Colab or your laptop) for the
         photoreal model, which comes back here.</p>
       <dl class="caps">
@@ -41,8 +41,8 @@
           <li>Plain walls, glass and mirrors are hard: tape a poster or put a textured object in frame.</li>
           <li>Optional: put a tape measure or a measured door in view to check real size.</li>
         </ol>
-        <p>Exposure and white balance lock after a moment (focus keeps adjusting), so the same wall keeps the same brightness in every
-          frame. Hold still for 2 seconds after you press Record, pointing at the brightest part of the room. Turn HDR off
+        <p>The camera starts on auto. Point it at a normal part of the room (not a window or lamp), and once the picture looks natural tap
+          "Lock exposure &amp; colour", so the same wall keeps the same brightness in every frame. Tap again to go back to auto. Turn HDR off
           in your camera settings if the phone has a switch for it.</p>
       </details>
       <label class="check"><input id="strict" type="checkbox" checked /> Strict: keep only frames with gyro, accelerometer and gravity, (frames missing any are rejected and listed in rejects.csv)</label>
@@ -83,8 +83,8 @@
         <dt>Rejected</dt><dd id="hud-rejected">0</dd>
         <dt>Video</dt><dd id="hud-cover">…</dd>
       </dl>
-      <p class="legend"><span class="sw red"></span>seen from 1 direction <span class="sw yellow"></span>2 <span class="sw green"></span>3+, good · unpainted = not scanned yet · blue lines = walls found</p>
       <p id="hud-track" data-ok="yes">starting…</p>
+      <button id="lock" class="secondary" type="button" data-locked="no">Lock exposure &amp; colour</button>
       <button id="stop" type="button">Stop and save</button>
     </section>
 
