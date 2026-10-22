@@ -21,33 +21,30 @@
 
     <main id="setup" class="panel">
       <h1>NAMMA Space studio</h1>
-      <p>Records video, the AR pose of every frame, ARCore depth and motion sensors. A rough 3D model is built on this phone
-        right away; "Send for render" sends the recording to a render server (the cloud, Colab or your laptop) for the
+      <p>Records video (4K 30 fps when your phone offers it) with exposure, white balance and focus locked, plus motion
+        sensors. "Send for render" sends the recording to a render server (the cloud, Colab or your laptop) for the
         photoreal model, which comes back here.</p>
       <dl class="caps">
         <dt>HTTPS</dt><dd id="cap-secure">…</dd>
-        <dt>AR (ARCore)</dt><dd id="cap-ar">…</dd>
-        <dt>AR camera image</dt><dd id="cap-camera">…</dd>
         <dt>Video encoder</dt><dd id="cap-codec">…</dd>
         <dt>Motion sensors</dt><dd id="cap-imu">…</dd>
       </dl>
       <details class="tips" open>
         <summary>How to film for a good 3D model</summary>
         <ol>
-          <li>Lights on. Tilt the phone a little down so the floor is in view.</li>
-          <li>Walk slowly along the walls, facing into the room. Don't spin on the spot.</li>
-          <li>Go round twice: once at chest height, once lower or higher.</li>
-          <li>Finish where you started.</li>
+          <li>Lights on. Hold the phone at chest height, tilted a little down so the floor is in view.</li>
+          <li>Walk slowly along the walls, facing into the room. Stop briefly before turning; don't spin on the spot.</li>
+          <li>Each room: one lap along the walls, a second lap the other way, then walk both diagonals.</li>
+          <li>Film one room at a time, starting in the doorway, and finish where you started.</li>
           <li>Plain walls, glass and mirrors are hard: include a textured object in frame.</li>
           <li>Optional: put a tape measure or a measured door in view to check real size.</li>
         </ol>
-        <p>Camera only mode records at 60 fps where the phone allows and locks exposure and white balance after a
-          moment. Hold still for 2 seconds when you press it.</p>
+        <p>Exposure, white balance and focus lock after a moment, so the same wall keeps the same brightness in every
+          frame. Hold still for 2 seconds after you press Record, pointing at the brightest part of the room. Turn HDR off
+          in your camera settings if the phone has a switch for it.</p>
       </details>
-      <label class="check"><input id="depth" type="checkbox" checked /> Record ARCore depth (needed for the quick 3D model on this phone)</label>
-      <label class="check"><input id="strict" type="checkbox" checked /> Only keep frames that have every sensor (AR pose in AR mode, gyro and gravity)</label>
-      <button id="start-ar" type="button" disabled>Record with AR</button>
-      <button id="start-camera" class="secondary" type="button" disabled>Record camera only</button>
+      <label class="check"><input id="strict" type="checkbox" checked /> Strict: keep only frames with gyro, accelerometer and gravity, (frames missing any are rejected and listed in rejects.csv)</label>
+      <button id="start-camera" type="button" disabled>Record</button>
       <label class="button secondary" for="open-file">Open a saved recording</label>
       <input id="open-file" type="file" accept=".zip,video/*" hidden />
       <button id="resume" class="secondary" type="button" hidden>Show my last render</button>
@@ -82,7 +79,9 @@
         <dt>Frames</dt><dd id="hud-frames">0</dd>
         <dt>Gyro</dt><dd id="hud-imu">…</dd>
         <dt>Rejected</dt><dd id="hud-rejected">0</dd>
+        <dt>Video</dt><dd id="hud-cover">…</dd>
       </dl>
+      <p class="legend"><span class="sw red"></span>seen from 1 direction <span class="sw yellow"></span>2 <span class="sw green"></span>3+, good · unpainted = not scanned yet · blue lines = walls found</p>
       <p id="hud-track" data-ok="yes">starting…</p>
       <button id="stop" type="button">Stop and save</button>
     </section>
