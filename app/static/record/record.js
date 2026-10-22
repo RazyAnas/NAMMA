@@ -293,7 +293,7 @@ async function setLook(track, locked) {
 function focusControls(track) {
   const caps = track.getCapabilities?.() || {};
   const video = $('video'), button = $('focus-lock');
-  const canLock = !!caps.focusMode?.includes('manual');
+  const canLock = !!caps.focusMode?.includes('single-shot');
   const canPoint = 'pointsOfInterest' in (navigator.mediaDevices.getSupportedConstraints?.() || {});
   button.hidden = !canLock;
   let locked = false, timer = null;
@@ -302,19 +302,25 @@ function focusControls(track) {
     button.textContent = locked ? 'Focus locked (tap to unlock)' : 'Lock focus';
     $('hud-focus').textContent = locked ? 'focus locked' : '';
   };
-  const lock = async (on) => {
-    const now = track.getSettings?.() || {};
+  // Locking focus = focus once on the chosen spot ('single-shot'), which then holds that distance. A 'manual' lock
+  // without a reliable current distance made Chrome jump to the nearest focus on a real phone, so it is used only
+  // when the "Focus distance" slider sets an explicit value.
+  const lock = async (on, point) => {
+    const target = point ? { pointsOfInterest: [point] } : {};
     const ok = on
-      ? await applyOne(track, { focusMode: 'manual', ...(caps.focusDistance && now.focusDistance ? { focusDistance: now.focusDistance } : {}) })
+      ? (canPoint && point ? await applyOne(track, { ...target, focusMode: 'single-shot' }) : false)
+        || await applyOne(track, { focusMode: 'single-shot' })
       : await applyOne(track, { focusMode: 'continuous' });
     if (ok) locked = on;
-    if (rec) (rec.focusEvents ||= []).push({ t_ms: performance.now(), locked, ok });
+    if (rec) (rec.focusEvents ||= []).push({ t_ms: performance.now(), locked, ok, point: point || null });
     show();
   };
   video.onpointerdown = (e) => {
-    const box = video.getBoundingClientRect();
-    const x = (e.clientX - box.left) / box.width, y = (e.clientY - box.top) / box.height;
-    timer = setTimeout(() => { timer = null; if (canLock) lock(true); }, 600);
+    // The picture is shown with object-fit: cover, so map the tap back into the video's own frame.
+    const s = Math.max(innerWidth / video.videoWidth, innerHeight / video.videoHeight);
+    const x = Math.min(1, Math.max(0, (e.clientX - (innerWidth - video.videoWidth * s) / 2) / (video.videoWidth * s)));
+    const y = Math.min(1, Math.max(0, (e.clientY - (innerHeight - video.videoHeight * s) / 2) / (video.videoHeight * s)));
+    timer = setTimeout(() => { timer = null; if (canLock) lock(true, { x, y }); }, 600);
     if (canPoint && !locked) applyOne(track, { pointsOfInterest: [{ x, y }], focusMode: 'single-shot' })
       .then((ok) => ok || applyOne(track, { pointsOfInterest: [{ x, y }] }));
   };
@@ -338,6 +344,7 @@ const MANUAL = [
   ['saturation', 'Saturation', null],
   ['sharpness', 'Sharpness', null],
   ['zoom', 'Zoom', null],
+  ['focusDistance', 'Focus distance (manual focus)', { focusMode: 'manual' }],
 ];
 function manualControls(track) {
   const caps = track.getCapabilities?.() || {}, now = track.getSettings?.() || {}, box = $('manual');
