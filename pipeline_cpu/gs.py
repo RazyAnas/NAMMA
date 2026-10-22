@@ -180,8 +180,10 @@ def train(a, W):
     P = np.load(f'{W}/scene_points.npz'); ok = (P['track'] >= 2) & (P['err'] < 4)
     Xs, Cs = P['X'][ok], P['C'][ok].astype(np.float32) / 255
     n_mesh = min(a.init_mesh_pts, len(V)) if hasattr(a, 'init_mesh_pts') else min(150000, len(V))
-    pc = mesh.sample_points_uniformly(n_mesh) if len(mesh.triangles) else None
-    Xm = np.asarray(pc.points, np.float32); Cm = np.asarray(pc.colors, np.float32)
+    if n_mesh > 0 and len(mesh.triangles):
+        pc = mesh.sample_points_uniformly(n_mesh); Xm = np.asarray(pc.points, np.float32); Cm = np.asarray(pc.colors, np.float32)
+    else:
+        Xm = np.zeros((0, 3), np.float32); Cm = np.zeros((0, 3), np.float32)
     X0 = np.concatenate([Xs, Xm]); C0_ = np.concatenate([Cs, Cm])
     N = len(X0); s0 = knn_scale(X0)
     G = dict(means=torch.tensor(X0), scales=torch.tensor(np.log(np.repeat(s0[:, None], 3, 1)).astype(np.float32)),
@@ -196,7 +198,7 @@ def train(a, W):
     opt = mkopt()
     # per-image exposure: rgb' = A rgb + b
     expo = {f: torch.zeros(12, requires_grad=True) for f in frames}
-    eopt = torch.optim.Adam([expo[f] for f in frames], lr=1e-3)
+    eopt = torch.optim.Adam([expo[f] for f in frames], lr=a.expo_lr)
     bg = torch.zeros(3)
     steps = a.steps; dens_from, dens_until, dens_every = 300, int(0.6 * steps), 100
     gacc = torch.zeros(N); gcnt = torch.zeros(N); maxrad = torch.zeros(N)
@@ -248,7 +250,7 @@ def train(a, W):
         # lr schedule for means (exponential decay to 1%)
         for g in opt.param_groups:
             if g['name'] == 'means': g['lr'] = lr['means'] * (0.01 ** (step / steps))
-        deg = min(3, step // 500)
+        deg = min(a.sh_degree, step // 500)
         w2c = torch.tensor(S['w2c'][f], dtype=torch.float32)
         absacc = []
         rgb, alpha, dep, idx, rad = render(G, w2c, K, Ht, Wt, deg, bg, want_depth=a.depth_w > 0, absacc=absacc)

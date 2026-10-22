@@ -63,7 +63,7 @@ def setup(W):
 def render_all(S, G, MR, fill, w2c, K, H, W):
     import gs
     with torch.no_grad():
-        rgb, alpha, _, _, _ = gs.render(G, torch.tensor(w2c, dtype=torch.float32), K, H, W, 3, torch.zeros(3))
+        rgb, alpha, _, _, _ = gs.render(G, torch.tensor(w2c, dtype=torch.float32), K, H, W, int(os.environ.get("SH_DEG", 3)), torch.zeros(3))  # SH_DEG: render with fewer SH bands (debug)
     rgb = rgb.numpy().astype(np.float64); al = alpha.numpy()[..., None].astype(np.float64)
     mimg, hit, _ = MR.render(w2c, K, H, W)
     mesh = np.where(hit[..., None], mimg, fill)
