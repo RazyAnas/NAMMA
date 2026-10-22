@@ -10,8 +10,11 @@
 #   6 export   splat .ply (ns-export) for each model and a TSDF mesh from the dn-splatter depths (gs-mesh o3dtsdf) as .glb
 # Results: /kaggle/working/full_pipeline.zip and /kaggle/working/summary.json
 # usage: VIDEO=<mp4> [FPS=6] [STEPS=30000] bash full_pipeline.sh
+#   FRAMES=<dir of already-picked frames> skips stage 1; WORK=/OUT= move the work and result folders.
+#   FINAL=1 is the render-server mode (phone "Send for render"): one GPU, Nerfstudio on every frame (nothing held out),
+#   no evaluation, just the splat at $OUT/splat.ply.
 set -o pipefail
-R=$(cd $(dirname $0)/..; pwd); S=$R/scripts; W=/content/full; O=/kaggle/working; mkdir -p $W $O
+R=$(cd $(dirname $0)/..; pwd); S=$R/scripts; W=${WORK:-/content/full}; O=${OUT:-/kaggle/working}; mkdir -p $W $O
 VIDEO=${VIDEO:-$R/videos/lobby_clip30.mp4}; FPS=${FPS:-6}; STEPS=${STEPS:-30000}
 LOG() { echo "== $(date +%H:%M:%S) $*"; }
 LOG "start video=$VIDEO fps=$FPS steps=$STEPS"; nvidia-smi -L
@@ -20,7 +23,7 @@ LOG env
 source $S/ns_env.sh || { echo ENV_FAILED; exit 1; }
 # DN-Splatter (pins nerfstudio 1.1.3 / gsplat 1.0, but only uses APIs that 1.1.5 / 1.4 still have): no-deps install, then
 # the extra packages it needs. ZoeDepth's torch.hub code needs timm 0.6.x.
-if ! python -c "import dn_splatter" 2>/dev/null; then
+if [ "$FINAL" != 1 ] && ! python -c "import dn_splatter" 2>/dev/null; then
   rm -rf /content/dn-splatter && git clone -q --depth 1 https://github.com/maturk/dn-splatter /content/dn-splatter
   python $S/patch_dn_splatter.py /content/dn-splatter   # gsplat 1.4 has no legacy rasterizer
   uv pip install -q --python /content/nsenv/bin/python --no-deps -e /content/dn-splatter > $W/dn_pip.log 2>&1
@@ -30,9 +33,10 @@ if ! python -c "import dn_splatter" 2>/dev/null; then
   done
 fi
 # dn_splatter registers Nerfstudio plugins; if it cannot import, every ns-* command fails, so take it out again
-python -c "import dn_splatter, open3d, trimesh; print('dn-splatter ok')" || { echo DN_INSTALL_FAILED; tail -20 $W/dn_pip.log; uv pip uninstall -q --python /content/nsenv/bin/python dn-splatter; }
+[ "$FINAL" = 1 ] || python -c "import dn_splatter, open3d, trimesh; print('dn-splatter ok')" || { echo DN_INSTALL_FAILED; tail -20 $W/dn_pip.log; uv pip uninstall -q --python /content/nsenv/bin/python dn-splatter; }
 
 LOG frames
+if [ -n "$FRAMES" ]; then mkdir -p $W/frames && cp $FRAMES/*.jpg $W/frames/ && echo "frames given: $(ls $W/frames | wc -l)"; else
 python - "$VIDEO" $W/frames $FPS > $W/frames.log 2>&1 <<'EOF'
 # keep the sharpest frame (variance of Laplacian at 1/3 size) in each window of round(src_fps / fps) frames
 import cv2, sys, os, numpy as np
@@ -51,7 +55,7 @@ while True:
         cv2.imwrite(f'{out}/{n:05d}.jpg', best[1], [cv2.IMWRITE_JPEG_QUALITY, 95]); kept.append(best[0]); n += 1; best = None
 print('video fps', vf, 'window', win, 'frames', n, 'size', size[1], 'x', size[0], 'sharpness median', round(float(np.median(kept)), 1))
 EOF
-tail -1 $W/frames.log; NF=$(ls $W/frames | wc -l); [ $NF -gt 10 ] || { echo FRAMES_FAILED; cat $W/frames.log; exit 1; }
+tail -1 $W/frames.log; fi; NF=$(ls $W/frames | wc -l); [ $NF -gt 10 ] || { echo FRAMES_FAILED; cat $W/frames.log; exit 1; }
 
 LOG cameras
 which colmap > /dev/null || { apt-get -qq update > /dev/null; DEBIAN_FRONTEND=noninteractive apt-get -qq install -y colmap > /tmp/colmap_apt.log 2>&1; }
@@ -59,6 +63,17 @@ M=exhaustive; [ $NF -gt 300 ] && M=vocab_tree
 ns-process-data images --data $W/frames --output-dir $W/data --sfm-tool hloc --feature-type superpoint \
   --matcher-type superpoint+lightglue --matching-method $M --num-downscales 2 > $W/cameras.log 2>&1 || { echo CAMERAS_FAILED; tail -30 $W/cameras.log; exit 1; }
 NP=$(python -c "import json; print(len(json.load(open('$W/data/transforms.json'))['frames']))"); echo "cameras solved: $NP of $NF ($M matching)"
+
+if [ "$FINAL" = 1 ]; then
+  LOG train
+  ns-train splatfacto --max-num-iterations $STEPS --vis tensorboard --output-dir $W/out --experiment-name full --timestamp final \
+    --viewer.quit-on-train-completion True nerfstudio-data --data $W/data --eval-mode all > $W/train_final.log 2>&1 \
+    || { echo TRAIN_FAILED; tail -25 $W/train_final.log; exit 1; }
+  LOG export
+  ns-export gaussian-splat --load-config $(ls $W/out/full/*/final/config.yml | head -1) --output-dir $W/export > $W/export.log 2>&1 \
+    && cp $W/export/splat.ply $O/splat.ply || { echo EXPORT_FAILED; tail -10 $W/export.log; exit 1; }
+  LOG FULL_PIPELINE_DONE; exit 0
+fi
 
 LOG priors
 (cd /content/dn-splatter && python dn_splatter/scripts/normals_from_pretrain.py --data-dir $W/data --normal-format dsine) > $W/normals.log 2>&1 \
