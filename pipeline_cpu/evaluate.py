@@ -36,6 +36,8 @@ class MeshRenderer:
         self.o3d = o3d
         m = o3d.io.read_triangle_mesh(path)
         self.V = np.asarray(m.vertices); self.F = np.asarray(m.triangles); self.C = np.asarray(m.vertex_colors)
+        vc = os.path.join(os.path.dirname(path), 'vcount.npy')
+        self.N = np.load(vc).astype(np.float64) if os.path.exists(vc) else np.full(len(self.V), 99.)
         self.sc = o3d.t.geometry.RaycastingScene()
         self.sc.add_triangles(o3d.core.Tensor(self.V.astype(np.float32)), o3d.core.Tensor(self.F.astype(np.uint32)))
 
@@ -48,16 +50,20 @@ class MeshRenderer:
         tid = r['primitive_ids'].numpy()[hit]; uv = r['primitive_uvs'].numpy()[hit]
         img = np.zeros((H, W, 3)); t = self.F[tid]; b1, b2 = uv[:, :1], uv[:, 1:]
         img[hit] = self.C[t[:, 0]] * (1 - b1 - b2) + self.C[t[:, 1]] * b1 + self.C[t[:, 2]] * b2
+        self.last_count = np.zeros((H, W)); self.last_count[hit] = (self.N[t[:, 0]] * (1 - b1 - b2)[:, 0] + self.N[t[:, 1]] * b1[:, 0] + self.N[t[:, 2]] * b2[:, 0])
         return img, hit, np.where(hit, th, 0)
 
 
-def setup(W):
+def setup(W, scene_from=None):
     from stages import load_scene, read_img
     import gs
-    S = load_scene(W)
+    S = load_scene(scene_from or W)
     G = gs.load_ply(f'{W}/splat/splat.ply')
     fill = np.mean([read_img(W, f).reshape(-1, 3).mean(0) for f in S['train']], 0)
     return S, G, MeshRenderer(f'{W}/mesh/mesh.ply'), fill
+
+
+BLEND = dict(mode='hard', p=2.0, n0=4.0)
 
 
 def render_all(S, G, MR, fill, w2c, K, H, W):
@@ -67,13 +73,21 @@ def render_all(S, G, MR, fill, w2c, K, H, W):
     rgb = rgb.numpy().astype(np.float64); al = alpha.numpy()[..., None].astype(np.float64)
     mimg, hit, _ = MR.render(w2c, K, H, W)
     mesh = np.where(hit[..., None], mimg, fill)
-    return dict(splat=(rgb + (1 - al) * fill).clip(0, 1), hybrid=(rgb + (1 - al) * mesh).clip(0, 1), mesh=mesh.clip(0, 1),
+    if BLEND['mode'] == 'conf':
+        # per-pixel splat confidence = alpha^p x (views that saw this surface point / n0, capped at 1); mesh fills the rest
+        cnt = MR.last_count[..., None]
+        wsp = np.where(hit[..., None], al ** BLEND['p'] * np.minimum(1, cnt / BLEND['n0']), 1.0)
+        srgb = rgb / np.maximum(al, 1e-3)
+        hyb = np.where(hit[..., None], wsp * srgb + (1 - wsp) * mesh, rgb + (1 - al) * fill)
+    else:
+        hyb = rgb + (1 - al) * mesh
+    return dict(splat=(rgb + (1 - al) * fill).clip(0, 1), hybrid=hyb.clip(0, 1), mesh=mesh.clip(0, 1),
                 flat=np.broadcast_to(fill, mesh.shape).copy()), float(al.mean()), float(hit.mean())
 
 
 def score(a, W):
     from stages import read_img
-    torch.set_num_threads(os.cpu_count())
+    torch.set_num_threads(os.cpu_count()); BLEND.update(mode=a.blend, p=a.blend_p, n0=a.blend_n0)
     S, G, MR, fill = setup(W); K = S['K']; H, Wd = S['height'], S['width']
     os.makedirs(f'{W}/score', exist_ok=True)
     res = {}
@@ -112,8 +126,9 @@ def label(im, text):
 
 def strips(a, W):
     from stages import read_img
-    torch.set_num_threads(os.cpu_count())
+    torch.set_num_threads(os.cpu_count()); BLEND.update(mode=a.blend, p=a.blend_p, n0=a.blend_n0)
     S, G, MR, fill = setup(W); K = S['K']; H, Wd = S['height'], S['width']
+    R1 = setup(a.compare_work, scene_from=W) if getattr(a, 'compare_work', '') else None
     test = S['test_offpath'] or S['test_near']
     picks = [test[i] for i in np.linspace(0, len(test) - 1, 4).round().astype(int)]
     os.makedirs(f'{W}/strips', exist_ok=True); paths = []
@@ -131,7 +146,14 @@ def strips(a, W):
         for name, P in poses:
             R, _, _ = render_all(S, G, MR, fill, P, K, H, Wd)
             first = label(read_img(W, f), f'photo {f}') if name == 'held-out view' else label(np.full((H, Wd, 3), 0.15), f'{name}: no photo')
-            rows.append(np.concatenate([first, label(R['splat'], f'splat, {name}'), label(R['hybrid'], f'hybrid, {name}'), label(R['mesh'], f'mesh, {name}')], 1))
+            cols = [first]
+            if R1 is not None:
+                b = dict(BLEND); BLEND.update(mode='hard')
+                Ro, _, _ = render_all(S, R1[1], R1[2], R1[3], P, K, H, Wd); BLEND.update(b)
+                cols.append(label(Ro['hybrid'], f'round-1 hybrid'))
+            tag = 'round-2 ' if R1 is not None else ''
+            cols += [label(R['hybrid'], f'{tag}hybrid, {name}'), label(R['splat'], f'{tag}splat'), label(R['mesh'], f'{tag}mesh')]
+            rows.append(np.concatenate(cols, 1))
         img = np.concatenate(rows, 0)
         img = cv2.resize(img, (img.shape[1] // 2, img.shape[0] // 2), interpolation=cv2.INTER_AREA)
         p = f'{W}/strips/strip_{f:05d}.jpg'; cv2.imwrite(p, img, [cv2.IMWRITE_JPEG_QUALITY, 88]); paths.append(p)

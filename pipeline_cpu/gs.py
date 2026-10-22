@@ -180,14 +180,21 @@ def train(a, W):
     P = np.load(f'{W}/scene_points.npz'); ok = (P['track'] >= 2) & (P['err'] < 4)
     Xs, Cs = P['X'][ok], P['C'][ok].astype(np.float32) / 255
     n_mesh = min(a.init_mesh_pts, len(V)) if hasattr(a, 'init_mesh_pts') else min(150000, len(V))
+    mesh.compute_vertex_normals(); mesh.compute_triangle_normals(); tri_n = np.asarray(mesh.triangle_normals).astype(np.float32)
     if n_mesh > 0 and len(mesh.triangles):
-        pc = mesh.sample_points_uniformly(n_mesh); Xm = np.asarray(pc.points, np.float32); Cm = np.asarray(pc.colors, np.float32)
+        pc = mesh.sample_points_uniformly(n_mesh, use_triangle_normal=True)
+        Xm = np.asarray(pc.points, np.float32); Cm = np.asarray(pc.colors, np.float32); Nm = np.asarray(pc.normals, np.float32)
     else:
-        Xm = np.zeros((0, 3), np.float32); Cm = np.zeros((0, 3), np.float32)
+        Xm = np.zeros((0, 3), np.float32); Cm = np.zeros((0, 3), np.float32); Nm = np.zeros((0, 3), np.float32)
     X0 = np.concatenate([Xs, Xm]); C0_ = np.concatenate([Cs, Cm])
     N = len(X0); s0 = knn_scale(X0)
-    G = dict(means=torch.tensor(X0), scales=torch.tensor(np.log(np.repeat(s0[:, None], 3, 1)).astype(np.float32)),
-             quats=torch.tensor(np.tile([1., 0, 0, 0], (N, 1)).astype(np.float32)),
+    S0 = np.log(np.repeat(s0[:, None], 3, 1)).astype(np.float32); Q0 = np.tile([1., 0, 0, 0], (N, 1)).astype(np.float32)
+    if a.flat_init and len(Xm):
+        # mesh samples start as flat discs lying in the surface: local z axis = triangle normal, z scale 10x thinner
+        n = Nm * np.where(Nm[:, 2:3] < 0, -1, 1); q = np.stack([1 + n[:, 2], -n[:, 1], n[:, 0], np.zeros(len(n))], 1)
+        Q0[len(Xs):] = q / np.linalg.norm(q, axis=1, keepdims=True); S0[len(Xs):, 2] += math.log(0.1)
+    G = dict(means=torch.tensor(X0), scales=torch.tensor(S0),
+             quats=torch.tensor(Q0),
              opac=torch.full((N, 1), math.log(0.1 / 0.9)), dc=torch.tensor((C0_ - 0.5) / C0), rest=torch.zeros(N, 15, 3))
     for k in G: G[k].requires_grad_(True)
     cams = np.array([-S['w2c'][f][:3, :3].T @ S['w2c'][f][:3, 3] for f in frames])
@@ -204,6 +211,16 @@ def train(a, W):
     gacc = torch.zeros(N); gcnt = torch.zeros(N); maxrad = torch.zeros(N)
     t0 = time.time(); hist = []; rng = np.random.default_rng(0)
     dmesh_ok = {f: (mdep[f] > 0) for f in frames}
+    # edge-aware weights: high where the photo is flat (walls), ~0 on texture/edges
+    tvw = {}
+    if a.tv_w > 0:
+        for f in frames:
+            g = imgs[f]; gx = (g[:, 1:] - g[:, :-1]).abs().mean(-1); gy = (g[1:] - g[:-1]).abs().mean(-1)
+            tvw[f] = (torch.exp(-a.tv_gamma * gx), torch.exp(-a.tv_gamma * gy))
+    tn = None
+    def mesh_normals(X):
+        r = scene.compute_closest_points(o3d.core.Tensor(X.numpy()))
+        return torch.tensor(tri_n[r['primitive_ids'].numpy().astype(np.int64)])
     order = []
     def prune(mask):
         nonlocal opt, gacc, gcnt, maxrad
@@ -265,7 +282,25 @@ def train(a, W):
             if m.any():
                 ld = ((dep[m] - alpha.detach()[m] * md[m]).abs() / md[m]).mean()
                 loss = loss + a.depth_w * ld
-        # mild opacity/scale regularisation keeps CPU cost bounded
+        lx = {}
+        if a.flat_w > 0 or a.normal_w > 0:
+            sc_v = torch.exp(G['scales'][idx])
+            if a.flat_w > 0:     # thin discs: smallest axis small relative to the largest (2DGS / DN-Splatter style)
+                lx['flat'] = (sc_v.min(-1).values / sc_v.max(-1).values.detach()).mean(); loss = loss + a.flat_w * lx['flat']
+            if a.normal_w > 0:   # disc normal (smallest axis) aligned with the TSDF mesh normal at the closest surface point
+                if tn is None or tn.shape[0] != G['means'].shape[0] or step % 100 == 0: tn = mesh_normals(G['means'].detach())
+                Rv = quat_to_rot(G['quats'][idx]); amin = sc_v.detach().argmin(-1)
+                nv = Rv[torch.arange(len(idx)), :, amin]
+                lx['normal'] = (1 - (nv * tn[idx]).sum(-1).abs()).mean(); loss = loss + a.normal_w * lx['normal']
+        if a.tv_w > 0:           # edge-aware total variation on colour and (relative) depth where the photo is flat
+            wx, wy = tvw[f]
+            tv = (wx[..., None] * (rgb_c[:, 1:] - rgb_c[:, :-1]).abs()).mean() + (wy[..., None] * (rgb_c[1:] - rgb_c[:-1]).abs()).mean()
+            if dep is not None:
+                dz = dep / alpha.detach().clamp_min(0.3); md = mdep[f].clamp_min(0.1)
+                tv = tv + (wx * (dz[:, 1:] - dz[:, :-1]).abs() / md[:, 1:]).mean() + (wy * (dz[1:] - dz[:-1]).abs() / md[1:]).mean()
+            lx['tv'] = tv; loss = loss + a.tv_w * tv
+        if a.opac_reg > 0:       # MCMC-style: pay for opacity so unneeded smears fade and get pruned
+            lx['opac'] = torch.sigmoid(G['opac'][idx]).mean(); loss = loss + a.opac_reg * lx['opac']
         opt.zero_grad(set_to_none=True); eopt.zero_grad(set_to_none=True)
         loss.backward()
         opt.step(); eopt.step()
@@ -276,7 +311,7 @@ def train(a, W):
                 maxrad[idx] = torch.maximum(maxrad[idx], rad / max(Wt, Ht))
             if step % 50 == 0:
                 psnr = -10 * math.log10(((rgb_c.detach() - gt) ** 2).mean().item())
-                hist.append(dict(step=step, loss=float(loss), psnr=psnr, depth=float(ld), n=int(G['means'].shape[0]), sec=round(time.time() - t0, 1)))
+                hist.append(dict(step=step, loss=float(loss), psnr=psnr, depth=float(ld), **{k: round(float(v), 4) for k, v in lx.items()}, n=int(G['means'].shape[0]), sec=round(time.time() - t0, 1)))
                 if step % 200 == 0: print(json.dumps(hist[-1]), flush=True)
             if dens_from <= step <= dens_until and step % dens_every == 0:
                 avg = gacc / gcnt.clamp_min(1)
@@ -299,10 +334,12 @@ def train(a, W):
                 append(newG)
                 rm = torch.zeros(G['means'].shape[0], dtype=torch.bool); rm[:n_before] = split
                 op = torch.sigmoid(G['opac'].detach()).view(-1)
-                rm |= op < 0.005
+                rm |= op < max(0.005, a.prune_opac)
                 rm |= torch.exp(G['scales'].detach()).max(-1).values > 0.1 * extent
                 prune(rm)
                 gacc.zero_(); gcnt.zero_()
+            if a.prune_opac > 0 and step > dens_until and step % 100 == 0 and step < steps:
+                prune(torch.sigmoid(G['opac'].detach()).view(-1) < a.prune_opac)
             if a.prune_dist > 0 and step % a.prune_every == 0 and step < steps:
                 dist = scene.compute_distance(o3d.core.Tensor(G['means'].detach().numpy())).numpy()
                 far = torch.tensor(dist > a.prune_dist)
