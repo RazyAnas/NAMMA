@@ -280,13 +280,9 @@ async function lockCamera(track) {
   } else {
     locks.exposure = false;
   }
-  if (caps.focusMode?.includes('manual')) {
-    const focus = { focusMode: 'manual' };
-    if (caps.focusDistance && now.focusDistance) focus.focusDistance = now.focusDistance;
-    locks.focus = await applyOne(track, focus);
-  } else {
-    locks.focus = false;
-  }
+  // Focus stays automatic: locked at whatever was in front of the phone during the settle, everything at another
+  // distance went soft as soon as the walk started.
+  if (caps.focusMode?.includes('continuous')) locks.focus_continuous = await applyOne(track, { focusMode: 'continuous' });
   if (caps.whiteBalanceMode?.includes('manual')) {
     const balance = { whiteBalanceMode: 'manual' };
     if (caps.colorTemperature && now.colorTemperature) balance.colorTemperature = now.colorTemperature;
