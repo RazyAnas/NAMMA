@@ -1,36 +1,21 @@
-// NAMMA sensor recorder: records phone video, the AR camera pose of every frame and raw IMU
-// samples on one clock, and saves them as one bundle for scripts/ingest_sensor_bundle.py.
+// NAMMA recorder: records phone video (4K 30 fps where the phone allows) and raw IMU samples on one clock, and
+// saves them as one bundle for scripts/ingest_sensor_bundle.py.
 //
-// Why each stream is worth recording:
-// - AR mode runs ARCore through WebXR. ARCore already fuses camera and IMU, so its per-frame pose
-//   is metric and gravity-aligned; frames and poses come from the same ARCore frame, so they are
-//   synchronised by construction. The camera image is read with WebXR Raw Camera Access
-//   ('camera-access'), because ARCore owns the camera and getUserMedia cannot open it meanwhile.
-// - Raw gyro and accelerometer samples are kept as well: they cover gaps where ARCore loses
-//   tracking (pose.emulatedPosition), give a rotation prior for blurred frames, and let the
-//   laptop measure the IMU-to-camera time offset instead of assuming it.
-// - Camera mode (no ARCore, or Raw Camera Access unavailable) records video and IMU only.
-// Every timestamp is a DOMHighResTimeStamp in milliseconds (the performance.now() clock): XR
-// frame times, Generic Sensor reading timestamps and DeviceMotion event times share it.
+// No AR: the reconstruction solves the camera of every frame from the images (SuperPoint + LightGlue, 173 of 180
+// frames on the lobby test), and ARCore's poses drifted and reset across big spaces. Video quality matters more:
+// ARCore owns the camera in AR mode, which caps it at a soft ~1080p stream with automatic exposure.
+// Raw gyro and accelerometer samples are kept: they warn when the phone turns too fast and give a rotation prior.
+// Every timestamp is a DOMHighResTimeStamp in milliseconds (the performance.now() clock).
 
-import { BundleFile, csvRow, intrinsicsFromProjection, ivfFrameHeader, ivfHeader, zipParts } from './bundle.js';
-import { Coverage } from './coverage.js';
+import { BundleFile, csvRow, ivfFrameHeader, ivfHeader, zipParts } from './bundle.js';
 
 const $ = (id) => document.getElementById(id);
 const KEYFRAME_INTERVAL = 30;
 const MAX_ENCODE_QUEUE = 4;
-const DEPTH_EVERY = 6;
-const SNAPSHOT_WIDTH = 80; // colour for the on-phone quick model, saved next to each depth frame
 const IMU_FREQUENCY_HZ = 200; // a request; Chrome clamps it (60 Hz on current Android builds, per Chromium source)
-// Strict mode: a frame is kept (encoded) only if it has a tracked AR pose and fresh gyro, accelerometer and gravity
-// samples (each no older than SENSOR_FRESH_MS). Rejected frames still get their pose row (video_ts empty, which the
-// laptop already skips) and a line in rejects.csv saying why.
+// Strict mode: a frame is kept (encoded) only with fresh gyro, accelerometer and gravity samples (each no older than
+// SENSOR_FRESH_MS). Rejected frames still get their row in frames.csv (video_ts empty) and a line in rejects.csv.
 const SENSOR_FRESH_MS = 100;
-// AR origin resets: when ARCore loses tracking and cannot find its old origin, the WebXR reference space fires
-// 'reset' and every later pose is in a shifted frame (the same wall then appears twice in a model). Each reset, and
-// any pose jump faster than JUMP_SPEED_MPS, starts a new segment; frames within RESET_SETTLE_MS of it are rejected.
-const JUMP_SPEED_MPS = 3;
-const RESET_SETTLE_MS = 500;
 
 let rec = null;
 
@@ -49,24 +34,12 @@ function flag(id, ok, text) {
 async function probe() {
   capabilities.secure = window.isSecureContext;
   flag('cap-secure', capabilities.secure, capabilities.secure ? 'yes' : 'no: open over https://');
-  capabilities.ar = false;
-  if (navigator.xr) {
-    try {
-      capabilities.ar = await navigator.xr.isSessionSupported('immersive-ar');
-    } catch {
-      capabilities.ar = false;
-    }
-  }
-  flag('cap-ar', capabilities.ar, capabilities.ar ? 'immersive-ar supported' : navigator.xr ? 'no immersive-ar (ARCore missing?)' : 'no WebXR');
-  capabilities.rawCamera = typeof XRWebGLBinding !== 'undefined' && 'getCameraImage' in XRWebGLBinding.prototype;
-  flag('cap-camera', capabilities.rawCamera, capabilities.rawCamera ? 'getCameraImage present' : 'missing');
   const codec = typeof VideoEncoder === 'undefined' ? null : await pickCodec(1920, 1080);
   capabilities.codec = codec?.codec || null;
   flag('cap-codec', !!codec, codec ? `${codec.codec} (1080p)` : 'no WebCodecs encoder');
   const sensors = ['Gyroscope', 'Accelerometer', 'GravitySensor'].filter((name) => name in window);
   capabilities.sensors = sensors;
   flag('cap-imu', sensors.length || 'DeviceMotionEvent' in window, sensors.length ? sensors.join(', ') : 'DeviceMotion only');
-  $('start-ar').disabled = !(capabilities.secure && capabilities.ar && capabilities.rawCamera && codec);
   const cameraOk = capabilities.secure && codec && navigator.mediaDevices;
   const syncCamera = () => { $('start-camera').disabled = !cameraOk; };
   $('strict').addEventListener('change', syncCamera);
@@ -274,224 +247,6 @@ function encode(r, source, tMs) {
   return timestamp;
 }
 
-// ---- AR mode (WebXR + ARCore) ------------------------------------------------------------------
-
-const VERTEX = `attribute vec2 a; varying vec2 uv; void main() { uv = a * 0.5 + 0.5; gl_Position = vec4(a, 0.0, 1.0); }`;
-const FRAGMENT = `precision mediump float; varying vec2 uv; uniform sampler2D img; void main() { gl_FragColor = texture2D(img, uv); }`;
-
-function blitProgram(gl) {
-  const compile = (type, source) => {
-    const shader = gl.createShader(type);
-    gl.shaderSource(shader, source);
-    gl.compileShader(shader);
-    return shader;
-  };
-  const program = gl.createProgram();
-  gl.attachShader(program, compile(gl.VERTEX_SHADER, VERTEX));
-  gl.attachShader(program, compile(gl.FRAGMENT_SHADER, FRAGMENT));
-  gl.linkProgram(program);
-  const buffer = gl.createBuffer();
-  gl.bindBuffer(gl.ARRAY_BUFFER, buffer);
-  gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([-1, -1, 1, -1, -1, 1, 1, 1]), gl.STATIC_DRAW);
-  return { program, buffer, attribute: gl.getAttribLocation(program, 'a') };
-}
-
-function drawTexture(gl, blit, texture, width, height, framebuffer = null) {
-  gl.bindFramebuffer(gl.FRAMEBUFFER, framebuffer);
-  gl.viewport(0, 0, width, height);
-  gl.useProgram(blit.program);
-  gl.bindBuffer(gl.ARRAY_BUFFER, blit.buffer);
-  gl.enableVertexAttribArray(blit.attribute);
-  gl.vertexAttribPointer(blit.attribute, 2, gl.FLOAT, false, 0, 0);
-  gl.activeTexture(gl.TEXTURE0);
-  gl.bindTexture(gl.TEXTURE_2D, texture);
-  gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
-}
-
-async function startAr() {
-  const wantDepth = $('depth').checked;
-  const session = await navigator.xr.requestSession('immersive-ar', {
-    requiredFeatures: ['local-floor', 'camera-access'],
-    optionalFeatures: ['dom-overlay', ...(wantDepth ? ['depth-sensing'] : [])],
-    domOverlay: { root: $('hud') },
-    depthSensing: { usagePreference: ['cpu-optimized'], dataFormatPreference: ['luminance-alpha', 'float32'] },
-  });
-  const r = newRecording('ar');
-  rec = r;
-  r.session = session;
-  const canvas = document.createElement('canvas');
-  // preserveDrawingBuffer so VideoFrame(canvas) sees the blit even if Chrome swaps buffers between.
-  const options = { xrCompatible: true, alpha: false, antialias: false, preserveDrawingBuffer: true };
-  const gl = canvas.getContext('webgl2', options) || canvas.getContext('webgl', options);
-  await gl.makeXRCompatible();
-  const layer = new XRWebGLLayer(session, gl);
-  session.updateRenderState({ baseLayer: layer });
-  const binding = new XRWebGLBinding(session, gl);
-  const space = await session.requestReferenceSpace('local-floor');
-  space.addEventListener('reset', (event) => {
-    const t = performance.now();
-    r.resets.push({ t_ms: t, kind: 'reset', transform: event.transform ? Array.from(event.transform.matrix) : null });
-    r.segment++;
-    r.segmentStart = t;
-    r.lastPos = null;
-  });
-  const blit = blitProgram(gl);
-  r.features = session.enabledFeatures || [];
-  r.depthOn = r.features.includes('depth-sensing');
-  r.depthFormat = r.depthOn ? session.depthDataFormat || null : null;
-  r.coverage = r.depthOn ? new Coverage() : null;
-  // A tap on the overlay would otherwise also fire an XR "select" (lesson from sixthsense-lab).
-  $('hud').addEventListener('beforexrselect', (e) => e.preventDefault());
-  session.addEventListener('end', () => finish());
-  startImu(r);
-  showHud();
-  let encoderPending = null;
-
-  session.requestAnimationFrame(function loop(t, frame) {
-    if (r.stopping) return;
-    session.requestAnimationFrame(loop);
-    gl.bindFramebuffer(gl.FRAMEBUFFER, layer.framebuffer);
-    gl.clearColor(0, 0, 0, 0);
-    gl.clear(gl.COLOR_BUFFER_BIT);
-    const pose = frame.getViewerPose(space);
-    const index = r.frameCount++;
-    // Tracking loss shows up as emulatedPosition (orientation keeps updating, position freezes),
-    // not as a missing pose; mark it so the laptop can drop or bridge those frames.
-    const tracking = !pose ? 2 : pose.emulatedPosition ? 1 : 0;
-    if (tracking === 0) {
-      const mm = pose.transform.matrix;
-      const pos = [mm[12], mm[13], mm[14]];
-      if (r.lastPos) {
-        const dt = Math.max(1e-3, (t - r.lastPos.t) / 1000);
-        const step = Math.hypot(pos[0] - r.lastPos.p[0], pos[1] - r.lastPos.p[1], pos[2] - r.lastPos.p[2]);
-        if (step / dt > JUMP_SPEED_MPS) {
-          r.resets.push({ t_ms: t, kind: 'jump', metres: +step.toFixed(3) });
-          r.segment++;
-          r.segmentStart = t;
-        }
-      }
-      r.lastPos = { t, p: pos };
-    }
-    const settling = t - r.segmentStart < RESET_SETTLE_MS;
-    if (tracking === 0) r.tracked++;
-    else r.lost++;
-    const view = pose?.views[0];
-    const camera = view?.camera;
-    let videoTs = null;
-    if (camera) {
-      if (!r.camera) {
-        r.camera = { width: camera.width, height: camera.height };
-        canvas.width = camera.width;
-        canvas.height = camera.height;
-        encoderPending = startEncoder(r, camera.width, camera.height).catch((error) => {
-          r.errors.push(error.message);
-          log(error.message);
-        });
-      }
-      const missing = settling ? 'ar_origin_reset' : r.strict ? missingSensors(r, tracking) : null;
-      if (missing) {
-        reject(r, index, t, missing);
-      } else if (r.encoder) {
-        const texture = binding.getCameraImage(camera);
-        if (texture) {
-          drawTexture(gl, blit, texture, camera.width, camera.height);
-          videoTs = encode(r, canvas, t);
-          if (r.depthOn && index % DEPTH_EVERY === 0) r.pendingSnapshot = snapshot(gl, blit, texture, r);
-        }
-      } else if (encoderPending) {
-        r.dropped++;
-      }
-    }
-    const m = view ? view.transform.matrix : null;
-    const p = view ? view.projectionMatrix : null;
-    r.frames.write(
-      csvRow([
-        index,
-        t,
-        videoTs,
-        tracking,
-        screen.orientation?.angle ?? 0,
-        ...(m ? Array.from(m) : Array(16).fill(null)),
-        p?.[0], p?.[5], p?.[8], p?.[9],
-        camera?.width,
-        camera?.height,
-        r.segment,
-      ])
-    );
-    if (r.depthOn && view && !settling && index % DEPTH_EVERY === 0) {
-      const depth = recordDepth(r, frame, view, index, t, r.pendingSnapshot);
-      if (depth && r.coverage && tracking === 0) {
-        r.coverage.add({ bytes: new Uint8Array(depth.data), width: depth.width, height: depth.height, rawToMeters: depth.rawValueToMeters,
-          normDepthFromView: depth.normDepthBufferFromNormView?.matrix, pose: m, p0: p[0], p5: p[5], p8: p[8], p9: p[9] }, [m[12], m[13], m[14]]);
-        r.coverage.findWalls(t);
-      }
-    }
-    if (r.coverage && view) {   // what is scanned, drawn over the camera; never part of the recorded video
-      gl.bindFramebuffer(gl.FRAMEBUFFER, layer.framebuffer);
-      const vpRect = layer.getViewport(view);
-      gl.viewport(vpRect.x, vpRect.y, vpRect.width, vpRect.height);
-      r.coverage.draw(gl, view, t);
-    }
-    r.pendingSnapshot = null;
-    if (index % 10 === 0) updateHud(r, t, tracking);
-  });
-}
-
-// A small copy of the camera image (rows bottom-up, as readPixels returns them) so the phone can
-// colour its quick model; the full-resolution colour stays in the video for the laptop.
-function snapshot(gl, blit, texture, r) {
-  if (!r.snap) {
-    const width = SNAPSHOT_WIDTH;
-    const height = Math.max(1, Math.round((SNAPSHOT_WIDTH * r.camera.height) / r.camera.width));
-    const target = gl.createTexture();
-    gl.bindTexture(gl.TEXTURE_2D, target);
-    gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, width, height, 0, gl.RGBA, gl.UNSIGNED_BYTE, null);
-    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
-    const framebuffer = gl.createFramebuffer();
-    gl.bindFramebuffer(gl.FRAMEBUFFER, framebuffer);
-    gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, target, 0);
-    r.snap = { width, height, framebuffer, rgba: new Uint8Array(width * height * 4) };
-  }
-  const { width, height, framebuffer, rgba } = r.snap;
-  try {
-    drawTexture(gl, blit, texture, width, height, framebuffer);
-    gl.readPixels(0, 0, width, height, gl.RGBA, gl.UNSIGNED_BYTE, rgba);
-  } catch {
-    return null;
-  } finally {
-    gl.bindFramebuffer(gl.FRAMEBUFFER, null);
-  }
-  const rgb = new Uint8Array(width * height * 3);
-  for (let i = 0, j = 0; i < rgba.length; i += 4, j += 3) {
-    rgb[j] = rgba[i];
-    rgb[j + 1] = rgba[i + 1];
-    rgb[j + 2] = rgba[i + 2];
-  }
-  return rgb;
-}
-
-function recordDepth(r, frame, view, index, t, colour) {
-  let depth;
-  try {
-    depth = frame.getDepthInformation(view);
-  } catch {
-    return null;
-  }
-  if (!depth?.data) return null;
-  const name = `depth/${String(index).padStart(6, '0')}.bin`;
-  const file = new BundleFile(name);
-  file.write(new Uint8Array(depth.data.slice(0)));
-  r.depthFiles.push(file);
-  if (colour) {
-    const snap = new BundleFile(name.replace(/\.bin$/, '.rgb'));
-    snap.write(colour);
-    r.depthFiles.push(snap);
-  }
-  const n = depth.normDepthBufferFromNormView?.matrix;
-  r.depthIndex.write(csvRow([index, t, name, depth.width, depth.height, depth.rawValueToMeters, ...(n ? Array.from(n) : Array(16).fill(null))]));
-  return depth;
-}
-
 // ---- Camera mode (getUserMedia, no pose) -------------------------------------------------------
 
 // Splat training assumes every frame sees the same colours: auto exposure and white balance that
@@ -680,15 +435,15 @@ function updateHud(r, t, tracking) {
   const gyro = r.imuCounts.gyro || r.imuCounts.dm_gyro || 0;
   $('hud-imu').textContent = seconds > 1 ? `${(gyro / seconds).toFixed(0)} Hz` : '…';
   const labels = ['tracking', 'tracking lost: slow down, aim at texture', 'no pose', 'camera only'];
-  const reset = r.resets.length && t - r.resets[r.resets.length - 1].t_ms < 3000;
-  const reason = reset ? 'ar_origin_reset' : r.strict ? missingSensors(r, tracking === 3 ? 0 : tracking) : null;
+  const reset = false;
+  const reason = r.strict ? missingSensors(r, 0) : null;
   const fastTurn = r.lastFastTurn && performance.now() - r.lastFastTurn < 1500;
   $('hud-track').textContent = reset ? 'AR tracking reset: walk back to an area you already scanned'
     : fastTurn ? 'Turning too fast: stop, turn slowly, then walk on'
     : reason ? `rejecting frames: ${reason.replaceAll('_', ' ').replaceAll('+', ', ')} missing` : labels[tracking];
   $('hud-track').dataset.ok = !reason && !fastTurn && (tracking === 0 || tracking === 3) ? 'yes' : 'no';
   $('hud-rejected').textContent = r.strict ? `${r.rejected}` : 'off';
-  if (r.coverage) {
+  if (r.coverage) {   // only bundles from the old AR recorder had depth coverage
     const c = r.coverage.stats();
     $('hud-cover').textContent = c.seen ? `${c.percent}% good · ${c.walls} wall${c.walls === 1 ? '' : 's'}` : 'point at a wall';
   } else $('hud-cover').textContent = 'needs depth';
@@ -732,7 +487,6 @@ async function begin(starter) {
   }
 }
 
-$('start-ar').addEventListener('click', () => begin(startAr));
 $('start-camera').addEventListener('click', () => begin(startCamera));
 $('stop').addEventListener('click', () => finish());
 $('again').addEventListener('click', () => location.reload());

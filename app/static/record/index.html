@@ -21,13 +21,10 @@
 
     <main id="setup" class="panel">
       <h1>NAMMA Space studio</h1>
-      <p>Records video, the AR pose of every frame, ARCore depth and motion sensors. A rough 3D model is built on this phone
-        right away; "Send for render" sends the recording to a render server (the cloud, Colab or your laptop) for the
-        photoreal model, which comes back here.</p>
+      <p>Records 4K video (where the phone allows) and motion sensors. "Send for render" sends the recording to a render
+        server (the cloud, Colab or your laptop) for the photoreal model, which comes back here.</p>
       <dl class="caps">
         <dt>HTTPS</dt><dd id="cap-secure">…</dd>
-        <dt>AR (ARCore)</dt><dd id="cap-ar">…</dd>
-        <dt>AR camera image</dt><dd id="cap-camera">…</dd>
         <dt>Video encoder</dt><dd id="cap-codec">…</dd>
         <dt>Motion sensors</dt><dd id="cap-imu">…</dd>
       </dl>
@@ -42,15 +39,13 @@
           <li>Cross doorways through the middle, looking ahead. Don't stop the video between rooms.</li>
           <li>Plain walls, glass and mirrors are hard: tape up a poster or patterned item while filming, remove it after.</li>
         </ol>
-        <p>Camera only mode records in 4K at 30 fps where the phone allows (otherwise 1080p at 60 fps), and locks
+        <p>The recorder films in 4K at 30 fps where the phone allows (otherwise 1080p at 60 fps), and locks
           exposure, focus and white balance after a moment. Hold still for 2 seconds when you press it.</p>
       </details>
-      <label class="check"><input id="strict" type="checkbox" checked /> Strict: keep only frames with gyro, accelerometer and gravity, plus an AR pose in AR mode (frames missing any are rejected and listed in rejects.csv)</label>
-      <label class="check"><input id="depth" type="checkbox" checked /> Record ARCore depth (needed for the quick 3D model on this phone)</label>
-      <button id="start-ar" type="button" disabled>Record with AR (recommended)</button>
-      <label class="select">Camera only quality
+      <label class="check"><input id="strict" type="checkbox" checked /> Strict: keep only frames with fresh gyro, accelerometer and gravity readings (others are listed in rejects.csv)</label>
+      <label class="select">Quality
         <select id="quality"><option value="4k30" selected>4K, 30 fps (sharpest, if the phone has it)</option><option value="1080p60">1080p, 60 fps</option></select></label>
-      <button id="start-camera" class="secondary" type="button" disabled>Record camera only</button>
+      <button id="start-camera" type="button" disabled>Record</button>
       <label class="button secondary" for="open-file">Open a saved recording</label>
       <input id="open-file" type="file" accept=".zip,video/*" hidden />
       <button id="resume" class="secondary" type="button" hidden>Show my last render</button>
@@ -85,7 +80,7 @@
         <dt>Frames</dt><dd id="hud-frames">0</dd>
         <dt>Gyro</dt><dd id="hud-imu">…</dd>
         <dt>Rejected</dt><dd id="hud-rejected">0</dd>
-        <dt>Scanned</dt><dd id="hud-cover">…</dd>
+        <dt hidden>Scanned</dt><dd id="hud-cover" hidden>…</dd>
       </dl>
       <p class="legend"><span class="sw red"></span>seen from 1 direction <span class="sw yellow"></span>2 <span class="sw green"></span>3+, good · unpainted = not scanned yet · blue lines = walls found</p>
       <p id="hud-track" data-ok="yes">starting…</p>
