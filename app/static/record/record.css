@@ -59,3 +59,6 @@ label.button { cursor: pointer; }
 .sw { display: inline-block; width: 10px; height: 10px; border-radius: 50%; }
 .sw.red { background: #ff4d40; } .sw.yellow { background: #ffcc33; } .sw.green { background: #40e673; }
 #lock[data-locked="yes"] { background: #b8ff66; }
+.focus-ring { position: fixed; z-index: 5; width: 72px; height: 72px; margin: -36px 0 0 -36px; border: 2px solid #ffd54a; border-radius: 8px; color: #ffd54a; font-size: 12px; font-weight: 700; text-align: center; padding-top: 76px; white-space: nowrap; pointer-events: none; }
+.brightness { display: flex; gap: 8px; align-items: center; margin-top: 8px; }
+.brightness input { flex: 1; }

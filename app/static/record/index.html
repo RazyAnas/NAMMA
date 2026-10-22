@@ -18,6 +18,7 @@
   </head>
   <body data-screen="setup">
     <video id="video" playsinline muted autoplay></video>
+    <div id="focus-ring" class="focus-ring" hidden></div>
 
     <main id="setup" class="panel">
       <h1>NAMMA Space studio</h1>
@@ -84,6 +85,8 @@
         <dt>Video</dt><dd id="hud-cover">…</dd>
       </dl>
       <p id="hud-track" data-ok="yes">starting…</p>
+      <label id="brightness-box" class="brightness" hidden>Brightness <input id="brightness" type="range" /></label>
+      <p class="note">Tap the picture to focus there · press and hold to lock focus</p>
       <button id="lock" class="secondary" type="button" data-locked="no">Lock exposure &amp; colour</button>
       <button id="stop" type="button">Stop and save</button>
     </section>

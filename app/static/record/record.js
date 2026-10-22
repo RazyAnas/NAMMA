@@ -318,6 +318,91 @@ async function toggleLock() {
   $('lock').dataset.locked = lock ? 'yes' : 'no';
 }
 
+// Camera-app style focus on the live picture: tap to focus on that spot, press and hold to lock focus
+// there (hold again to go back to autofocus). Points of interest are 0..1 in the video's own frame,
+// so the tap is mapped back through the object-fit: cover crop.
+const HOLD_MS = 600;
+
+function videoPoint(event) {
+  const video = $('video');
+  const scale = Math.max(innerWidth / video.videoWidth, innerHeight / video.videoHeight);
+  const x = (event.clientX - (innerWidth - video.videoWidth * scale) / 2) / (video.videoWidth * scale);
+  const y = (event.clientY - (innerHeight - video.videoHeight * scale) / 2) / (video.videoHeight * scale);
+  return { x: Math.min(1, Math.max(0, x)), y: Math.min(1, Math.max(0, y)) };
+}
+
+function showFocus(event, text) {
+  const ring = $('focus-ring');
+  ring.style.left = `${event.clientX}px`;
+  ring.style.top = `${event.clientY}px`;
+  ring.textContent = text;
+  ring.hidden = false;
+  clearTimeout(ring.timer);
+  ring.timer = setTimeout(() => { ring.hidden = true; }, 1500);
+}
+
+async function focusAt(event, hold) {
+  const r = rec;
+  if (!r?.track) return;
+  const caps = r.track.getCapabilities?.() || {};
+  const point = videoPoint(event);
+  if (hold && r.focusLocked) {
+    r.focusLocked = !(await applyOne(r.track, { focusMode: 'continuous' }));
+    r.camera.lock_events.push({ t_ms: performance.now() - r.startedAt, focus_locked: r.focusLocked });
+    showFocus(event, r.focusLocked ? 'Unlock failed' : 'Autofocus');
+    return;
+  }
+  // Points of interest are a Chrome extension; phones without them still focus on the centre.
+  if ('pointsOfInterest' in (r.track.getSettings?.() || {}) || caps.pointsOfInterest) await applyOne(r.track, { pointsOfInterest: [point] });
+  if (!hold) {
+    if (caps.focusMode?.includes('single-shot')) await applyOne(r.track, { focusMode: 'single-shot' });
+    if (caps.focusMode?.includes('continuous')) setTimeout(() => { if (!r.focusLocked) applyOne(r.track, { focusMode: 'continuous' }); }, 800);
+    showFocus(event, '');
+    return;
+  }
+  // Hold: let single-shot focus land on the spot, then freeze focus at that distance.
+  if (caps.focusMode?.includes('single-shot')) await applyOne(r.track, { focusMode: 'single-shot' });
+  await new Promise((resolve) => setTimeout(resolve, 400));
+  const distance = r.track.getSettings?.().focusDistance;
+  const lock = { focusMode: 'manual' };
+  if (caps.focusDistance && distance) lock.focusDistance = distance;
+  r.focusLocked = caps.focusMode?.includes('manual') ? await applyOne(r.track, lock) : false;
+  r.camera.locks.focus = r.focusLocked;
+  r.camera.lock_events.push({ t_ms: performance.now() - r.startedAt, focus_locked: r.focusLocked, point, focus_distance: distance ?? null });
+  showFocus(event, r.focusLocked ? 'Focus locked' : 'Focus lock not supported');
+}
+
+function watchFocusGestures() {
+  const video = $('video');
+  let timer = null;
+  let held = false;
+  video.addEventListener('pointerdown', (event) => {
+    held = false;
+    timer = setTimeout(() => { held = true; focusAt(event, true); }, HOLD_MS);
+  });
+  const release = (event) => {
+    clearTimeout(timer);
+    if (!held && event.type === 'pointerup') focusAt(event, false);
+  };
+  video.addEventListener('pointerup', release);
+  video.addEventListener('pointercancel', release);
+  video.addEventListener('contextmenu', (event) => event.preventDefault());
+}
+
+// Brightness (exposure compensation) while on auto; hidden where the phone has no control for it.
+function setupBrightness(track) {
+  const caps = track.getCapabilities?.() || {};
+  const slider = $('brightness');
+  const range = caps.exposureCompensation;
+  if (!range || range.max <= range.min) return;
+  slider.min = range.min;
+  slider.max = range.max;
+  slider.step = range.step || 0.1;
+  slider.value = track.getSettings?.().exposureCompensation ?? 0;
+  slider.addEventListener('input', () => applyOne(track, { exposureCompensation: Number(slider.value) }));
+  $('brightness-box').hidden = false;
+}
+
 // 4K at 30 fps first: resolution and sharpness matter more than 60 fps (the pipeline keeps only a few frames per
 // second, the sharpest of each window). Phones without 4K, or whose encoder cannot take it, fall back to 1080p 60.
 const CAMERA_MODES = {
@@ -349,6 +434,7 @@ async function startCamera() {
   await video.play();
   r.track = stream.getVideoTracks()[0];
   const locks = await prepareCamera(r.track);
+  setupBrightness(r.track);
   r.startedAt = performance.now();
   r.startedWall = new Date().toISOString();
   const settings = r.track.getSettings?.() || {};
@@ -506,6 +592,7 @@ async function begin(starter) {
 $('start-camera').addEventListener('click', () => begin(startCamera));
 $('stop').addEventListener('click', () => finish());
 $('lock').addEventListener('click', () => toggleLock());
+watchFocusGestures();
 $('again').addEventListener('click', () => location.reload());
 probe().catch((error) => log(error.message));
 
