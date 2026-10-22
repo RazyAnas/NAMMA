@@ -249,14 +249,6 @@ function encode(r, source, tMs) {
 
 // ---- Camera mode (getUserMedia, no pose) -------------------------------------------------------
 
-// Splat training assumes every frame sees the same colours: auto exposure and white balance that
-// drift between bright and dark parts of a room cost about 4 dB in our tests, and 60 fps halves
-// motion blur at walking speed. So camera mode asks for 60 fps and the widest lens, lets the
-// camera settle, then freezes exposure and white balance at what it chose. Each lock is applied
-// on its own (phones support different subsets) and what actually took is saved in meta.json.
-// AR mode cannot do this: ARCore owns the camera there.
-const SETTLE_MS = 1500;
-
 async function applyOne(track, constraint) {
   try {
     await track.applyConstraints({ advanced: [constraint] });
@@ -266,31 +258,58 @@ async function applyOne(track, constraint) {
   }
 }
 
-async function lockCamera(track) {
+// Exposure and white balance start automatic, so the preview looks natural. The user locks them with one tap when
+// the view looks right (bright part and dark part of the room both readable), so the video keeps one exposure and
+// one colour for the whole walk, which splat training needs. Focus stays automatic (a locked focus blurs).
+async function widenLens(track) {
   const caps = track.getCapabilities?.() || {};
   const locks = {};
   if (caps.zoom && caps.zoom.min < 1) locks.wide_lens = await applyOne(track, { zoom: caps.zoom.min });
-  await new Promise((resolve) => setTimeout(resolve, SETTLE_MS));
-  const now = track.getSettings?.() || {};
-  if (caps.exposureMode?.includes('manual')) {
-    const exposure = { exposureMode: 'manual' };
-    if (caps.exposureTime && now.exposureTime) exposure.exposureTime = now.exposureTime;
-    if (caps.iso && now.iso) exposure.iso = now.iso;
-    locks.exposure = await applyOne(track, exposure);
-  } else {
-    locks.exposure = false;
-  }
-  // Focus stays automatic: locked at whatever was in front of the phone during the settle, everything at another
-  // distance went soft as soon as the walk started.
   if (caps.focusMode?.includes('continuous')) locks.focus_continuous = await applyOne(track, { focusMode: 'continuous' });
-  if (caps.whiteBalanceMode?.includes('manual')) {
-    const balance = { whiteBalanceMode: 'manual' };
-    if (caps.colorTemperature && now.colorTemperature) balance.colorTemperature = now.colorTemperature;
-    locks.white_balance = await applyOne(track, balance);
-  } else {
-    locks.white_balance = false;
-  }
   return locks;
+}
+
+async function setLook(track, locked) {
+  const caps = track.getCapabilities?.() || {};
+  const now = track.getSettings?.() || {};
+  const done = {};
+  if (caps.exposureMode?.includes(locked ? 'manual' : 'continuous')) {
+    const exposure = { exposureMode: locked ? 'manual' : 'continuous' };
+    if (locked && caps.exposureTime && now.exposureTime) exposure.exposureTime = now.exposureTime;
+    if (locked && caps.iso && now.iso) exposure.iso = now.iso;
+    done.exposure = await applyOne(track, exposure);
+  }
+  if (caps.whiteBalanceMode?.includes(locked ? 'manual' : 'continuous')) {
+    const balance = { whiteBalanceMode: locked ? 'manual' : 'continuous' };
+    if (locked && caps.colorTemperature && now.colorTemperature) balance.colorTemperature = now.colorTemperature;
+    done.white_balance = await applyOne(track, balance);
+  }
+  return done;
+}
+
+// Preview before recording: brightness slider (exposure compensation, while automatic), a lock toggle, Start.
+function previewControls(track) {
+  const caps = track.getCapabilities?.() || {};
+  const ev = $('ev'), lock = $('lock');
+  let locked = false;
+  ev.hidden = !caps.exposureCompensation;
+  if (caps.exposureCompensation) {
+    Object.assign(ev, { min: caps.exposureCompensation.min, max: caps.exposureCompensation.max, step: caps.exposureCompensation.step || 0.1 });
+    ev.value = track.getSettings?.().exposureCompensation ?? 0;
+    ev.oninput = () => applyOne(track, { exposureCompensation: +ev.value });
+  }
+  lock.hidden = !(caps.exposureMode?.includes('manual') || caps.whiteBalanceMode?.includes('manual'));
+  lock.setAttribute('aria-pressed', 'false');
+  lock.textContent = 'Lock exposure and colour';
+  lock.onclick = async () => {
+    locked = !locked;
+    const done = await setLook(track, locked);
+    lock.setAttribute('aria-pressed', String(locked));
+    lock.textContent = locked ? 'Locked (tap to unlock)' : 'Lock exposure and colour';
+    ev.disabled = locked;
+    $('preview-note').textContent = locked && !done.exposure && !done.white_balance ? 'This phone does not let the browser lock them.' : '';
+  };
+  return new Promise((resolve) => { $('go').onclick = () => resolve({ locked }); });
 }
 
 // 4K at 30 fps first: resolution and sharpness matter more than 60 fps (the pipeline keeps only a few frames per
@@ -324,10 +343,11 @@ async function startCamera() {
   video.srcObject = stream;
   await video.play();
   r.track = stream.getVideoTracks()[0];
-  log('Hold still: setting exposure…');
-  const locks = await lockCamera(r.track);
-  log('');
-  r.startedAt = performance.now(); // the recording starts after the settle, not at getUserMedia
+  const lens = await widenLens(r.track);
+  document.body.dataset.screen = 'preview';
+  const { locked } = await previewControls(r.track);
+  const locks = { ...lens, look_locked_by_user: locked };
+  r.startedAt = performance.now(); // the recording starts when the user presses Start, not at getUserMedia
   r.startedWall = new Date().toISOString();
   const settings = r.track.getSettings?.() || {};
   r.camera = { width: video.videoWidth, height: video.videoHeight, settings, locks, mode };

@@ -39,8 +39,8 @@
           <li>Cross doorways through the middle, looking ahead. Don't stop the video between rooms.</li>
           <li>Plain walls, glass and mirrors are hard: tape up a poster or patterned item while filming, remove it after.</li>
         </ol>
-        <p>The recorder films in 4K at 30 fps where the phone allows (otherwise 1080p at 60 fps), and locks
-          exposure and white balance (focus stays automatic) after a moment. Hold still for 2 seconds when you press it.</p>
+        <p>The recorder films in 4K at 30 fps where the phone allows (otherwise 1080p at 60 fps). Before it starts you see a
+          preview with automatic exposure: adjust brightness if needed, tap "Lock exposure and colour" when it looks natural, then Start.</p>
       </details>
       <label class="check"><input id="strict" type="checkbox" checked /> Strict: keep only frames with fresh gyro, accelerometer and gravity readings (others are listed in rejects.csv)</label>
       <label class="select">Quality
@@ -73,6 +73,14 @@
         <p id="history-status" class="note"></p>
       </section>
     </main>
+
+    <section id="preview" class="hud preview">
+      <p>Point at the brightest and darkest parts of the room. When the picture looks natural, lock it so the whole video keeps the same brightness and colour.</p>
+      <label class="select">Brightness <input id="ev" type="range" step="0.1" /></label>
+      <button id="lock" type="button" class="secondary" aria-pressed="false">Lock exposure and colour</button>
+      <p id="preview-note" class="note"></p>
+      <button id="go" type="button">Start recording</button>
+    </section>
 
     <section id="hud" class="hud">
       <dl>
