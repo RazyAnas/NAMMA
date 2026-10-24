@@ -71,7 +71,7 @@ if [ "$FINAL" = 1 ]; then
     || { echo TRAIN_FAILED; tail -25 $W/train_final.log; exit 1; }
   LOG export
   ns-export gaussian-splat --load-config $(ls $W/out/full/*/final/config.yml | head -1) --output-dir $W/export > $W/export.log 2>&1 \
-    && cp $W/export/splat.ply $O/splat.ply || { echo EXPORT_FAILED; tail -10 $W/export.log; exit 1; }
+    && cp $W/export/splat.ply $W/data/transforms.json $O/ || { echo EXPORT_FAILED; tail -10 $W/export.log; exit 1; }
   LOG FULL_PIPELINE_DONE; exit 0
 fi
 
