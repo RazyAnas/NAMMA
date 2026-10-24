@@ -36,7 +36,7 @@ def _():
                 sc = cv2.Laplacian(g, cv2.CV_64F).var()         # sharpness = variance of Laplacian
                 if sc > bs: best, bs = f, sc
         if (i + 1) % win == 0 and best is not None and k < NFRAMES:
-            h, w = best.shape[:2]; s = 756 / max(h, w); cv2.imwrite(f'{W}/frames/{k:04d}.jpg', cv2.resize(best, (int(w * s), int(h * s)))); k += 1; best, bs = None, -1
+            h, w = best.shape[:2]; s = 1008 / max(h, w); cv2.imwrite(f'{W}/frames/{k:04d}.jpg', cv2.resize(best, (int(w * s), int(h * s)))); k += 1; best, bs = None, -1
     print(k, 'frames')
 
 @stage('2 depth anything 3')
@@ -73,7 +73,7 @@ def _():
     rgb = np.zeros(D.shape + (3,), np.uint8)
     for c in chunks:
         for j, g in enumerate(c['idx']): rgb[g] = c['rgb'][j]
-    k = np.where(have)[0]; np.savez(f'{W}/da3.npz', depth=D[k], K=Ks[k], c2w=C[k], rgb=rgb[k])
+    k = np.where(have)[0]; np.savez(f'{W}/da3.npz', depth=D[k], K=Ks[k], c2w=C[k], rgb=rgb[k], idx=k)
     print('merged', len(k), 'of', len(files), 'frames; median depth', float(np.median(D[k][D[k] > 0])), '(metric)')
 
 @stage('3 fuse + floor plan + path')
@@ -82,4 +82,13 @@ def _():
     import fuse_nav as F
     F.fuse(f'{W}/da3.npz', f'{O}/model'); print(json.dumps({k: v for k, v in F.navigate(f'{O}/model/cloud.npz', f'{O}/model').items() if k != 'demo_path_cells'}))
     import build_viewer; print(build_viewer.build(f'{O}/model'), '-> model/viewer.html')
+@stage('4 splat fit (gsplat, ~12 min cap)')
+def _():
+    import torch
+    sh('nvcc --version | tail -1; pip -q install ninja 2>&1 | tail -1')
+    tv = torch.__version__.split('+')[0].split('.'); cu = (torch.version.cuda or '').replace('.', '')
+    if sh(f'pip -q install gsplat --index-url https://docs.gsplat.studio/whl/pt{tv[0]}{tv[1]}cu{cu} 2>&1 | tail -2') != 0 or sh('python -c "import gsplat"') != 0:
+        sh('pip -q install gsplat 2>&1 | tail -2', check=True)
+    import train_splat; train_splat.train(f'{W}/da3.npz', f'{O}/model/cloud.npz', f'{W}/frames', f'{O}/model/splat.ply', steps=int(os.environ.get('STEPS', 3000)))
+
 print('files:', os.listdir(O))
