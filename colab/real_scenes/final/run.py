@@ -82,13 +82,13 @@ def _():
     import fuse_nav as F
     F.fuse(f'{W}/da3.npz', f'{O}/model'); print(json.dumps({k: v for k, v in F.navigate(f'{O}/model/cloud.npz', f'{O}/model').items() if k != 'demo_path_cells'}))
     import build_viewer; print(build_viewer.build(f'{O}/model'), '-> model/viewer.html')
-@stage('4 splat fit (gsplat, ~12 min cap)')
+@stage('4 splat fit (gsplat, 15 min cap)')
 def _():
     import torch
     sh('nvcc --version | tail -1; pip -q install ninja 2>&1 | tail -1')
     tv = torch.__version__.split('+')[0].split('.'); cu = (torch.version.cuda or '').replace('.', '')
     if sh(f'pip -q install gsplat --index-url https://docs.gsplat.studio/whl/pt{tv[0]}{tv[1]}cu{cu} 2>&1 | tail -2') != 0 or sh('python -c "import gsplat"') != 0:
         sh('pip -q install gsplat 2>&1 | tail -2', check=True)
-    import train_splat; train_splat.train(f'{W}/da3.npz', f'{O}/model/cloud.npz', f'{W}/frames', f'{O}/model/splat.ply', steps=int(os.environ.get('STEPS', 3000)))
+    import train_splat; train_splat.train(f'{W}/da3.npz', f'{O}/model/cloud.npz', f'{W}/frames', f'{O}/model/splat.ply', steps=int(os.environ.get('STEPS', 20000)))
 
 print('files:', os.listdir(O))
