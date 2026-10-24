@@ -1,0 +1,20 @@
+[
+ {
+  "id": "phone",
+  "dir": "phone_room",
+  "title": "Your room (phone video)",
+  "lede": "Built from your phone video with our pipeline: 35.5 dB on frames it never saw. Floor and walls come from our monocular depth, so the edges are approximate."
+ },
+ {
+  "id": "lobby",
+  "dir": "lobby",
+  "title": "Lift lobby",
+  "lede": "Built from your lobby video: 23.2 dB on unseen frames, held back by the plain white walls. Its depth gives no clean floor, so you walk on a flat floor along the path the camera took."
+ },
+ {
+  "id": "icl",
+  "dir": "icl_room",
+  "title": "Living room (ICL-NUIM dataset)",
+  "lede": "The dataset room: 32.3 dB on unseen frames. Collision comes from the dataset's depth, so walls and furniture stop you exactly."
+ }
+]

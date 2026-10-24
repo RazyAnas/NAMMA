@@ -1,26 +1,21 @@
-// NAMMA sensor recorder: records phone video, the AR camera pose of every frame and raw IMU
-// samples on one clock, and saves them as one bundle for scripts/ingest_sensor_bundle.py.
+// NAMMA recorder: records phone video (4K 30 fps where the phone allows) and raw IMU samples on one clock, and
+// saves them as one bundle for scripts/ingest_sensor_bundle.py.
 //
-// Why each stream is worth recording:
-// - AR mode runs ARCore through WebXR. ARCore already fuses camera and IMU, so its per-frame pose
-//   is metric and gravity-aligned; frames and poses come from the same ARCore frame, so they are
-//   synchronised by construction. The camera image is read with WebXR Raw Camera Access
-//   ('camera-access'), because ARCore owns the camera and getUserMedia cannot open it meanwhile.
-// - Raw gyro and accelerometer samples are kept as well: they cover gaps where ARCore loses
-//   tracking (pose.emulatedPosition), give a rotation prior for blurred frames, and let the
-//   laptop measure the IMU-to-camera time offset instead of assuming it.
-// - Camera mode (no ARCore, or Raw Camera Access unavailable) records video and IMU only.
-// Every timestamp is a DOMHighResTimeStamp in milliseconds (the performance.now() clock): XR
-// frame times, Generic Sensor reading timestamps and DeviceMotion event times share it.
+// No AR: the reconstruction solves the camera of every frame from the images (SuperPoint + LightGlue, 173 of 180
+// frames on the lobby test), and ARCore's poses drifted and reset across big spaces. Video quality matters more:
+// ARCore owns the camera in AR mode, which caps it at a soft ~1080p stream with automatic exposure.
+// Raw gyro and accelerometer samples are kept: they warn when the phone turns too fast and give a rotation prior.
+// Every timestamp is a DOMHighResTimeStamp in milliseconds (the performance.now() clock).
 
-import { BundleFile, csvRow, intrinsicsFromProjection, ivfFrameHeader, ivfHeader, zipParts } from './bundle.js';
+import { BundleFile, csvRow, ivfFrameHeader, ivfHeader, zipParts } from './bundle.js';
 
 const $ = (id) => document.getElementById(id);
 const KEYFRAME_INTERVAL = 30;
 const MAX_ENCODE_QUEUE = 4;
-const DEPTH_EVERY = 6;
-const SNAPSHOT_WIDTH = 80; // colour for the on-phone quick model, saved next to each depth frame
 const IMU_FREQUENCY_HZ = 200; // a request; Chrome clamps it (60 Hz on current Android builds, per Chromium source)
+// Strict mode: a frame is kept (encoded) only with fresh gyro, accelerometer and gravity samples (each no older than
+// SENSOR_FRESH_MS). Rejected frames still get their row in frames.csv (video_ts empty) and a line in rejects.csv.
+const SENSOR_FRESH_MS = 100;
 
 let rec = null;
 
@@ -39,45 +34,39 @@ function flag(id, ok, text) {
 async function probe() {
   capabilities.secure = window.isSecureContext;
   flag('cap-secure', capabilities.secure, capabilities.secure ? 'yes' : 'no: open over https://');
-  capabilities.ar = false;
-  if (navigator.xr) {
-    try {
-      capabilities.ar = await navigator.xr.isSessionSupported('immersive-ar');
-    } catch {
-      capabilities.ar = false;
-    }
-  }
-  flag('cap-ar', capabilities.ar, capabilities.ar ? 'immersive-ar supported' : navigator.xr ? 'no immersive-ar (ARCore missing?)' : 'no WebXR');
-  capabilities.rawCamera = typeof XRWebGLBinding !== 'undefined' && 'getCameraImage' in XRWebGLBinding.prototype;
-  flag('cap-camera', capabilities.rawCamera, capabilities.rawCamera ? 'getCameraImage present' : 'missing');
   const codec = typeof VideoEncoder === 'undefined' ? null : await pickCodec(1920, 1080);
   capabilities.codec = codec?.codec || null;
   flag('cap-codec', !!codec, codec ? `${codec.codec} (1080p)` : 'no WebCodecs encoder');
   const sensors = ['Gyroscope', 'Accelerometer', 'GravitySensor'].filter((name) => name in window);
   capabilities.sensors = sensors;
   flag('cap-imu', sensors.length || 'DeviceMotionEvent' in window, sensors.length ? sensors.join(', ') : 'DeviceMotion only');
-  $('start-ar').disabled = !(capabilities.secure && capabilities.ar && capabilities.rawCamera && codec);
-  $('start-camera').disabled = !(capabilities.secure && codec && navigator.mediaDevices);
+  const cameraOk = capabilities.secure && codec && navigator.mediaDevices;
+  const syncCamera = () => { $('start-camera').disabled = !cameraOk; };
+  $('strict').addEventListener('change', syncCamera);
+  syncCamera();
 }
 
-async function pickCodec(width, height) {
+async function pickCodec(width, height, fps = 30) {
   // Baseline H.264 first: hardware-encoded on Android and never uses B-frames, so decode order is
   // display order and the k-th decoded frame is the k-th chunk logged in video.csv.
-  const level = width * height > 1920 * 1088 ? '33' : '28';
-  const bitrate = Math.round(Math.min(40e6, (width * height * 30 * 0.17)));
-  const candidates = [
-    { codec: `avc1.42E0${level}`, avc: { format: 'annexb' }, container: 'h264' },
-    { codec: `avc1.4D40${level}`, avc: { format: 'annexb' }, container: 'h264' },
-    { codec: 'vp8', container: 'ivf', fourcc: 'VP80' },
-    { codec: 'vp09.00.40.08', container: 'ivf', fourcc: 'VP90' },
-  ];
-  for (const { container, fourcc, ...candidate } of candidates) {
-    const config = { ...candidate, width, height, bitrate, framerate: 30, latencyMode: 'quality' };
-    try {
-      const { supported } = await VideoEncoder.isConfigSupported(config);
-      if (supported) return { ...config, container, fourcc };
-    } catch {
-      // try the next codec
+  // Level 4.0 covers 1080p30, 4.2 1080p60, 5.1 anything larger. Falls back to a 30 fps config.
+  for (const rate of fps > 30 ? [fps, 30] : [30]) {
+    const level = width * height > 1920 * 1088 ? '33' : rate > 30 ? '2A' : '28';
+    const bitrate = Math.round(Math.min(50e6, (width * height * rate * 0.2)));
+    const candidates = [
+      { codec: `avc1.42E0${level}`, avc: { format: 'annexb' }, container: 'h264' },
+      { codec: `avc1.4D40${level}`, avc: { format: 'annexb' }, container: 'h264' },
+      { codec: 'vp8', container: 'ivf', fourcc: 'VP80' },
+      { codec: 'vp09.00.40.08', container: 'ivf', fourcc: 'VP90' },
+    ];
+    for (const { container, fourcc, ...candidate } of candidates) {
+      const config = { ...candidate, width, height, bitrate, framerate: rate, latencyMode: 'quality' };
+      try {
+        const { supported } = await VideoEncoder.isConfigSupported(config);
+        if (supported) return { ...config, container, fourcc };
+      } catch {
+        // try the next codec
+      }
     }
   }
   return null;
@@ -92,6 +81,15 @@ function newRecording(mode) {
     videoIndex: new BundleFile('video.csv'),
     imu: new BundleFile('imu.csv'),
     depthIndex: new BundleFile('depth.csv'),
+    rejects: new BundleFile('rejects.csv'),
+    strict: $('strict').checked,
+    lastImu: {},
+    rejected: 0,
+    rejectReasons: {},
+    segment: 0,
+    segmentStart: -Infinity,
+    resets: [],
+    lastPos: null,
     depthFiles: [],
     video: null,
     encoder: null,
@@ -109,10 +107,11 @@ function newRecording(mode) {
     stopping: false,
   };
   r.frames.write(
-    csvRow(['frame', 't_ms', 'video_ts_us', 'tracking', 'screen_angle', ...Array.from({ length: 16 }, (_, i) => `m${i}`), 'p0', 'p5', 'p8', 'p9', 'image_w', 'image_h'])
+    csvRow(['frame', 't_ms', 'video_ts_us', 'tracking', 'screen_angle', ...Array.from({ length: 16 }, (_, i) => `m${i}`), 'p0', 'p5', 'p8', 'p9', 'image_w', 'image_h', 'segment'])
   );
   r.videoIndex.write(csvRow(['chunk', 'ts_us', 'key', 'bytes']));
   r.imu.write(csvRow(['t_ms', 'sensor', 'x', 'y', 'z', 't_sensor_ms']));
+  r.rejects.write(csvRow(['frame', 't_ms', 'reason']));
   r.depthIndex.write(csvRow(['frame', 't_ms', 'file', 'width', 'height', 'raw_to_m', ...Array.from({ length: 16 }, (_, i) => `n${i}`)]));
   return r;
 }
@@ -123,6 +122,40 @@ function imuSample(sensor, t, x, y, z, tSensor) {
   if (!rec || rec.stopping) return;
   rec.imu.write(csvRow([t, sensor, x, y, z, tSensor]));
   rec.imuCounts[sensor] = (rec.imuCounts[sensor] || 0) + 1;
+  // Freshness per quantity, whichever API delivered it (Generic Sensor or DeviceMotion).
+  const quantity = { gyro: 'gyro', dm_gyro: 'gyro', accel: 'accel', dm_accel: 'accel', gravity: 'gravity' }[sensor];
+  if (quantity) rec.lastImu[quantity] = performance.now();
+  if (sensor === 'gravity') rec.hasGravitySensor = true;
+  if (quantity === 'gyro') {
+    // rad/s from Generic Sensor; DeviceMotion samples were already converted to rad/s in onDeviceMotion
+    const degS = Math.hypot(x, y, z) * 180 / Math.PI;
+    rec.turn = 0.8 * (rec.turn || 0) + 0.2 * degS;
+    if (rec.turn > TURN_WARN_DEG_S) rec.lastFastTurn = performance.now();
+  }
+}
+
+// Turning faster than this blurs frames and leaves too little overlap between the frames the pipeline keeps
+// (it samples a few per second; past ~35 deg between two kept frames matching fails).
+const TURN_WARN_DEG_S = 60;
+
+// Why a frame fails strict mode, or null if it has everything. Gravity comes from GravitySensor once it delivers;
+// where Chrome has none or blocks it, the accelerometer (which includes gravity) stands in, and meta.json says so.
+function missingSensors(r, tracking) {
+  const now = performance.now();
+  const stale = (q) => !(now - (r.lastImu[q] ?? -Infinity) <= SENSOR_FRESH_MS);
+  const missing = [];
+  if (tracking !== 0) missing.push(tracking === 1 ? 'ar_tracking_lost' : 'no_ar_pose');
+  if (stale('gyro')) missing.push('gyro');
+  if (stale('accel')) missing.push('accel');
+  if (r.hasGravitySensor ? stale('gravity') : stale('accel')) missing.push('gravity');
+  return missing.length ? missing.join('+') : null;
+}
+
+function reject(r, index, t, reason) {
+  r.rejected++;
+  r.rejectReasons[reason] = (r.rejectReasons[reason] || 0) + 1;
+  r.rejects.write(csvRow([index, t, reason]));
+  r.lastReject = reason;
 }
 
 function onDeviceMotion(event) {
@@ -143,6 +176,7 @@ function startImu(r) {
   }
   window.addEventListener('devicemotion', onDeviceMotion);
   const kinds = { Gyroscope: 'gyro', Accelerometer: 'accel', GravitySensor: 'gravity' };
+  r.hasGravitySensor = false; // set by the first GravitySensor reading; a blocked or absent sensor leaves the accelerometer
   for (const [name, tag] of Object.entries(kinds)) {
     if (!(name in window)) continue;
     try {
@@ -166,11 +200,11 @@ function stopImu(r) {
 
 // ---- Video encoding ----------------------------------------------------------------------------
 
-async function startEncoder(r, width, height) {
+async function startEncoder(r, width, height, fps = 30) {
   // H.264 needs even dimensions.
   width -= width % 2;
   height -= height % 2;
-  const config = await pickCodec(width, height);
+  const config = await pickCodec(width, height, fps);
   if (!config) throw new Error(`No video encoder for ${width}x${height}.`);
   const { container, fourcc, ...encoderConfig } = config;
   r.codec = { ...encoderConfig, container };
@@ -213,198 +247,201 @@ function encode(r, source, tMs) {
   return timestamp;
 }
 
-// ---- AR mode (WebXR + ARCore) ------------------------------------------------------------------
-
-const VERTEX = `attribute vec2 a; varying vec2 uv; void main() { uv = a * 0.5 + 0.5; gl_Position = vec4(a, 0.0, 1.0); }`;
-const FRAGMENT = `precision mediump float; varying vec2 uv; uniform sampler2D img; void main() { gl_FragColor = texture2D(img, uv); }`;
-
-function blitProgram(gl) {
-  const compile = (type, source) => {
-    const shader = gl.createShader(type);
-    gl.shaderSource(shader, source);
-    gl.compileShader(shader);
-    return shader;
-  };
-  const program = gl.createProgram();
-  gl.attachShader(program, compile(gl.VERTEX_SHADER, VERTEX));
-  gl.attachShader(program, compile(gl.FRAGMENT_SHADER, FRAGMENT));
-  gl.linkProgram(program);
-  const buffer = gl.createBuffer();
-  gl.bindBuffer(gl.ARRAY_BUFFER, buffer);
-  gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([-1, -1, 1, -1, -1, 1, 1, 1]), gl.STATIC_DRAW);
-  return { program, buffer, attribute: gl.getAttribLocation(program, 'a') };
-}
-
-function drawTexture(gl, blit, texture, width, height, framebuffer = null) {
-  gl.bindFramebuffer(gl.FRAMEBUFFER, framebuffer);
-  gl.viewport(0, 0, width, height);
-  gl.useProgram(blit.program);
-  gl.bindBuffer(gl.ARRAY_BUFFER, blit.buffer);
-  gl.enableVertexAttribArray(blit.attribute);
-  gl.vertexAttribPointer(blit.attribute, 2, gl.FLOAT, false, 0, 0);
-  gl.activeTexture(gl.TEXTURE0);
-  gl.bindTexture(gl.TEXTURE_2D, texture);
-  gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
-}
-
-async function startAr() {
-  const wantDepth = $('depth').checked;
-  const session = await navigator.xr.requestSession('immersive-ar', {
-    requiredFeatures: ['local-floor', 'camera-access'],
-    optionalFeatures: ['dom-overlay', ...(wantDepth ? ['depth-sensing'] : [])],
-    domOverlay: { root: $('hud') },
-    depthSensing: { usagePreference: ['cpu-optimized'], dataFormatPreference: ['luminance-alpha', 'float32'] },
-  });
-  const r = newRecording('ar');
-  rec = r;
-  r.session = session;
-  const canvas = document.createElement('canvas');
-  // preserveDrawingBuffer so VideoFrame(canvas) sees the blit even if Chrome swaps buffers between.
-  const options = { xrCompatible: true, alpha: false, antialias: false, preserveDrawingBuffer: true };
-  const gl = canvas.getContext('webgl2', options) || canvas.getContext('webgl', options);
-  await gl.makeXRCompatible();
-  const layer = new XRWebGLLayer(session, gl);
-  session.updateRenderState({ baseLayer: layer });
-  const binding = new XRWebGLBinding(session, gl);
-  const space = await session.requestReferenceSpace('local-floor');
-  const blit = blitProgram(gl);
-  r.features = session.enabledFeatures || [];
-  r.depthOn = r.features.includes('depth-sensing');
-  r.depthFormat = r.depthOn ? session.depthDataFormat || null : null;
-  // A tap on the overlay would otherwise also fire an XR "select" (lesson from sixthsense-lab).
-  $('hud').addEventListener('beforexrselect', (e) => e.preventDefault());
-  session.addEventListener('end', () => finish());
-  startImu(r);
-  showHud();
-  let encoderPending = null;
-
-  session.requestAnimationFrame(function loop(t, frame) {
-    if (r.stopping) return;
-    session.requestAnimationFrame(loop);
-    gl.bindFramebuffer(gl.FRAMEBUFFER, layer.framebuffer);
-    gl.clearColor(0, 0, 0, 0);
-    gl.clear(gl.COLOR_BUFFER_BIT);
-    const pose = frame.getViewerPose(space);
-    const index = r.frameCount++;
-    // Tracking loss shows up as emulatedPosition (orientation keeps updating, position freezes),
-    // not as a missing pose; mark it so the laptop can drop or bridge those frames.
-    const tracking = !pose ? 2 : pose.emulatedPosition ? 1 : 0;
-    if (tracking === 0) r.tracked++;
-    else r.lost++;
-    const view = pose?.views[0];
-    const camera = view?.camera;
-    let videoTs = null;
-    if (camera) {
-      if (!r.camera) {
-        r.camera = { width: camera.width, height: camera.height };
-        canvas.width = camera.width;
-        canvas.height = camera.height;
-        encoderPending = startEncoder(r, camera.width, camera.height).catch((error) => {
-          r.errors.push(error.message);
-          log(error.message);
-        });
-      }
-      if (r.encoder) {
-        const texture = binding.getCameraImage(camera);
-        if (texture) {
-          drawTexture(gl, blit, texture, camera.width, camera.height);
-          videoTs = encode(r, canvas, t);
-          if (r.depthOn && index % DEPTH_EVERY === 0) r.pendingSnapshot = snapshot(gl, blit, texture, r);
-        }
-      } else if (encoderPending) {
-        r.dropped++;
-      }
-    }
-    const m = view ? view.transform.matrix : null;
-    const p = view ? view.projectionMatrix : null;
-    r.frames.write(
-      csvRow([
-        index,
-        t,
-        videoTs,
-        tracking,
-        screen.orientation?.angle ?? 0,
-        ...(m ? Array.from(m) : Array(16).fill(null)),
-        p?.[0], p?.[5], p?.[8], p?.[9],
-        camera?.width,
-        camera?.height,
-      ])
-    );
-    if (r.depthOn && view && index % DEPTH_EVERY === 0) recordDepth(r, frame, view, index, t, r.pendingSnapshot);
-    r.pendingSnapshot = null;
-    if (index % 10 === 0) updateHud(r, t, tracking);
-  });
-}
-
-// A small copy of the camera image (rows bottom-up, as readPixels returns them) so the phone can
-// colour its quick model; the full-resolution colour stays in the video for the laptop.
-function snapshot(gl, blit, texture, r) {
-  if (!r.snap) {
-    const width = SNAPSHOT_WIDTH;
-    const height = Math.max(1, Math.round((SNAPSHOT_WIDTH * r.camera.height) / r.camera.width));
-    const target = gl.createTexture();
-    gl.bindTexture(gl.TEXTURE_2D, target);
-    gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, width, height, 0, gl.RGBA, gl.UNSIGNED_BYTE, null);
-    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
-    const framebuffer = gl.createFramebuffer();
-    gl.bindFramebuffer(gl.FRAMEBUFFER, framebuffer);
-    gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, target, 0);
-    r.snap = { width, height, framebuffer, rgba: new Uint8Array(width * height * 4) };
-  }
-  const { width, height, framebuffer, rgba } = r.snap;
-  try {
-    drawTexture(gl, blit, texture, width, height, framebuffer);
-    gl.readPixels(0, 0, width, height, gl.RGBA, gl.UNSIGNED_BYTE, rgba);
-  } catch {
-    return null;
-  } finally {
-    gl.bindFramebuffer(gl.FRAMEBUFFER, null);
-  }
-  const rgb = new Uint8Array(width * height * 3);
-  for (let i = 0, j = 0; i < rgba.length; i += 4, j += 3) {
-    rgb[j] = rgba[i];
-    rgb[j + 1] = rgba[i + 1];
-    rgb[j + 2] = rgba[i + 2];
-  }
-  return rgb;
-}
-
-function recordDepth(r, frame, view, index, t, colour) {
-  let depth;
-  try {
-    depth = frame.getDepthInformation(view);
-  } catch {
-    return;
-  }
-  if (!depth?.data) return;
-  const name = `depth/${String(index).padStart(6, '0')}.bin`;
-  const file = new BundleFile(name);
-  file.write(new Uint8Array(depth.data.slice(0)));
-  r.depthFiles.push(file);
-  if (colour) {
-    const snap = new BundleFile(name.replace(/\.bin$/, '.rgb'));
-    snap.write(colour);
-    r.depthFiles.push(snap);
-  }
-  const n = depth.normDepthBufferFromNormView?.matrix;
-  r.depthIndex.write(csvRow([index, t, name, depth.width, depth.height, depth.rawValueToMeters, ...(n ? Array.from(n) : Array(16).fill(null))]));
-}
-
 // ---- Camera mode (getUserMedia, no pose) -------------------------------------------------------
 
+async function applyOne(track, constraint) {
+  try {
+    await track.applyConstraints({ advanced: [constraint] });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+// Exposure and white balance start automatic, so the preview looks natural. The user locks them with one tap when
+// the view looks right (bright part and dark part of the room both readable), so the video keeps one exposure and
+// one colour for the whole walk, which splat training needs. Focus stays automatic (a locked focus blurs).
+async function widenLens(track) {
+  const caps = track.getCapabilities?.() || {};
+  const locks = {};
+  if (caps.zoom && caps.zoom.min < 1) locks.wide_lens = await applyOne(track, { zoom: caps.zoom.min });
+  if (caps.focusMode?.includes('continuous')) locks.focus_continuous = await applyOne(track, { focusMode: 'continuous' });
+  return locks;
+}
+
+async function setLook(track, locked) {
+  const caps = track.getCapabilities?.() || {};
+  const now = track.getSettings?.() || {};
+  const done = {};
+  if (caps.exposureMode?.includes(locked ? 'manual' : 'continuous')) {
+    const exposure = { exposureMode: locked ? 'manual' : 'continuous' };
+    if (locked && caps.exposureTime && now.exposureTime) exposure.exposureTime = now.exposureTime;
+    if (locked && caps.iso && now.iso) exposure.iso = now.iso;
+    done.exposure = await applyOne(track, exposure);
+  }
+  if (caps.whiteBalanceMode?.includes(locked ? 'manual' : 'continuous')) {
+    const balance = { whiteBalanceMode: locked ? 'manual' : 'continuous' };
+    if (locked && caps.colorTemperature && now.colorTemperature) balance.colorTemperature = now.colorTemperature;
+    done.white_balance = await applyOne(track, balance);
+  }
+  return done;
+}
+
+// Focus, like the phone's own camera app: tap the picture to focus there, press and hold (0.6 s) to lock focus at
+// that distance (tap again to go back to automatic). Works in the preview and while recording. The focus button
+// toggles the same lock. Phones without these controls in the browser just keep autofocus.
+// Where focus locks when the phone does not report its current focus distance: about 1.5 m keeps a wide lens sharp
+// from roughly arm's length to the far wall, which suits walking a room.
+const ROOM_FOCUS_M = 1.5;
+
+function focusControls(track) {
+  const caps = track.getCapabilities?.() || {};
+  const video = $('video'), button = $('focus-lock');
+  const canLock = !!caps.focusMode?.includes('manual');
+  const canPoint = 'pointsOfInterest' in (navigator.mediaDevices.getSupportedConstraints?.() || {});
+  button.hidden = !canLock;
+  let locked = false, timer = null;
+  const show = () => {
+    button.setAttribute('aria-pressed', String(locked));
+    button.textContent = locked ? 'Focus locked (tap to unlock)' : 'Lock focus';
+    $('hud-focus-lock').textContent = locked ? 'Unlock focus' : 'Lock focus';
+    $('hud-focus-lock').setAttribute('aria-pressed', String(locked));
+    $('hud-focus').textContent = locked ? 'focus locked' : '';
+  };
+  const lock = async (on) => {
+    const now = track.getSettings?.() || {};
+    let ok;
+    if (on) {
+      const range = caps.focusDistance;
+      const reported = now.focusDistance > 0 ? now.focusDistance : null;
+      const target = range ? Math.min(range.max, Math.max(range.min, reported ?? ROOM_FOCUS_M)) : null;
+      ok = await applyOne(track, { focusMode: 'manual', ...(target != null ? { focusDistance: target } : {}) });
+      if (ok && target != null) $('focus-note').textContent = `focus locked at ${target.toFixed(1)} m`;
+    } else {
+      ok = await applyOne(track, { focusMode: 'continuous' });
+      $('focus-note').textContent = '';
+    }
+    if (ok) locked = on;
+    if (rec) (rec.focusEvents ||= []).push({ t_ms: performance.now(), locked, ok });
+    show();
+  };
+  video.onpointerdown = (e) => {
+    const box = video.getBoundingClientRect();
+    const x = (e.clientX - box.left) / box.width, y = (e.clientY - box.top) / box.height;
+    timer = setTimeout(() => { timer = null; if (canLock) lock(true); }, 600);
+    if (canPoint && !locked) applyOne(track, { pointsOfInterest: [{ x, y }], focusMode: 'single-shot' })
+      .then((ok) => ok || applyOne(track, { pointsOfInterest: [{ x, y }] }));
+  };
+  video.onpointerup = video.onpointercancel = () => {
+    if (timer) { clearTimeout(timer); timer = null; if (locked) lock(false); }
+  };
+  button.onclick = () => lock(!locked);
+  $('hud-focus-lock').onclick = () => lock(!locked);
+  $('hud-focus-lock').hidden = !canLock;
+  show();
+  return () => locked;
+}
+
+// Manual camera controls, like a pro camera app: one slider per setting this phone's browser exposes. Moving ISO or
+// shutter switches exposure to manual, moving colour temperature switches white balance to manual; the "Lock" button
+// then freezes whatever is on screen. Only what the phone supports is shown.
+const MANUAL = [
+  ['exposureCompensation', 'Brightness (EV)', null],
+  ['iso', 'ISO', { exposureMode: 'manual' }],
+  ['exposureTime', 'Shutter (1/10000 s units)', { exposureMode: 'manual' }],
+  ['colorTemperature', 'Colour temperature (K)', { whiteBalanceMode: 'manual' }],
+  ['contrast', 'Contrast', null],
+  ['saturation', 'Saturation', null],
+  ['sharpness', 'Sharpness', null],
+  ['focusDistance', 'Focus distance (m)', { focusMode: 'manual' }],
+  ['zoom', 'Zoom', null],
+];
+function manualControls(track) {
+  const caps = track.getCapabilities?.() || {}, now = track.getSettings?.() || {}, box = $('manual');
+  box.textContent = '';
+  for (const [key, label, mode] of MANUAL) {
+    const range = caps[key];
+    if (!range || typeof range.min !== 'number' || range.max <= range.min) continue;
+    const row = document.createElement('label'); row.className = 'slider';
+    const name = document.createElement('span'), value = document.createElement('output'), input = document.createElement('input');
+    name.textContent = label; input.type = 'range';
+    Object.assign(input, { min: range.min, max: range.max, step: range.step || (range.max - range.min) / 100, value: now[key] ?? range.min });
+    const digits = key === 'exposureCompensation' || key === 'focusDistance' ? 1 : 0;
+    value.textContent = (+input.value).toFixed(digits);
+    input.oninput = () => {
+      value.textContent = (+input.value).toFixed(digits);
+      applyOne(track, { ...(mode || {}), [key]: +input.value });
+    };
+    row.append(name, value, input); box.append(row);
+  }
+  const auto = document.createElement('button');
+  auto.type = 'button'; auto.className = 'secondary'; auto.textContent = 'Back to automatic';
+  auto.onclick = async () => { await setLook(track, false); manualControls(track); };
+  if (box.children.length) box.append(auto);
+  else box.textContent = 'This phone does not expose manual camera settings to the browser.';
+}
+
+// Preview before recording: brightness slider (exposure compensation, while automatic), a lock toggle, Start.
+function previewControls(track) {
+  const caps = track.getCapabilities?.() || {};
+  const lock = $('lock');
+  let locked = false;
+  manualControls(track);
+  lock.hidden = !(caps.exposureMode?.includes('manual') || caps.whiteBalanceMode?.includes('manual'));
+  lock.setAttribute('aria-pressed', 'false');
+  lock.textContent = 'Lock exposure and colour';
+  lock.onclick = async () => {
+    locked = !locked;
+    const done = await setLook(track, locked);
+    lock.setAttribute('aria-pressed', String(locked));
+    lock.textContent = locked ? 'Locked (tap to unlock)' : 'Lock exposure and colour';
+    $('manual').querySelectorAll('input, button').forEach((el) => { el.disabled = locked; });
+    $('preview-note').textContent = locked && !done.exposure && !done.white_balance ? 'This phone does not let the browser lock them.' : '';
+  };
+  return new Promise((resolve) => { $('go').onclick = () => resolve({ locked }); });
+}
+
+// 4K at 30 fps first: resolution and sharpness matter more than 60 fps (the pipeline keeps only a few frames per
+// second, the sharpest of each window). Phones without 4K, or whose encoder cannot take it, fall back to 1080p 60.
+const CAMERA_MODES = {
+  '4k30': { width: { min: 3200, ideal: 3840 }, height: { min: 1800, ideal: 2160 }, frameRate: { ideal: 30, max: 30 } },
+  '1080p60': { width: { ideal: 1920 }, height: { ideal: 1080 }, frameRate: { ideal: 60 } },
+};
+
+async function openCamera() {
+  const wanted = $('quality')?.value || '4k30';
+  for (const mode of wanted === '4k30' ? ['4k30', '1080p60'] : ['1080p60']) {
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: false, video: { facingMode: { ideal: 'environment' }, ...CAMERA_MODES[mode] } });
+      const { width, height } = stream.getVideoTracks()[0].getSettings();
+      const config = await pickCodec(width - (width % 2), height - (height % 2), 30);
+      if (config || mode === '1080p60') return { stream, mode };
+      stream.getTracks().forEach((t) => t.stop());   // camera gives 4K but nothing can encode it here
+    } catch {
+      // no camera mode like this on this phone; try the next
+    }
+  }
+  throw new Error('Could not open the camera.');
+}
+
 async function startCamera() {
-  const stream = await navigator.mediaDevices.getUserMedia({
-    audio: false,
-    video: { facingMode: { ideal: 'environment' }, width: { ideal: 1920 }, height: { ideal: 1080 }, frameRate: { ideal: 30 } },
-  });
+  const { stream, mode } = await openCamera();
   const r = newRecording('camera');
   rec = r;
   const video = $('video');
   video.srcObject = stream;
   await video.play();
   r.track = stream.getVideoTracks()[0];
-  r.camera = { width: video.videoWidth, height: video.videoHeight, settings: r.track.getSettings?.() };
-  await startEncoder(r, video.videoWidth, video.videoHeight);
+  const lens = await widenLens(r.track);
+  r.focusLocked = focusControls(r.track);
+  document.body.dataset.screen = 'preview';
+  const { locked } = await previewControls(r.track);
+  const locks = { ...lens, look_locked_by_user: locked, focus_locked_at_start: r.focusLocked() };
+  r.startedAt = performance.now(); // the recording starts when the user presses Start, not at getUserMedia
+  r.startedWall = new Date().toISOString();
+  const settings = r.track.getSettings?.() || {};
+  r.camera = { width: video.videoWidth, height: video.videoHeight, settings, locks, mode };
+  await startEncoder(r, video.videoWidth, video.videoHeight, Math.round(settings.frameRate || 30));
   startImu(r);
   showHud();
   const onFrame = (now, metadata) => {
@@ -412,8 +449,11 @@ async function startCamera() {
     // captureTime is when the sensor exposed the frame; fall back to presentation time.
     const t = metadata?.captureTime || metadata?.expectedDisplayTime || now;
     const index = r.frameCount++;
-    const videoTs = encode(r, video, t);
-    r.frames.write(csvRow([index, t, videoTs, 3, screen.orientation?.angle ?? 0, ...Array(20).fill(null), video.videoWidth, video.videoHeight]));
+    // Camera mode has no AR pose, so strict mode checks only the motion sensors here.
+    const missing = r.strict ? missingSensors(r, 0) : null;
+    if (missing) reject(r, index, t, missing);
+    const videoTs = missing ? null : encode(r, video, t);
+    r.frames.write(csvRow([index, t, videoTs, 3, screen.orientation?.angle ?? 0, ...Array(20).fill(null), video.videoWidth, video.videoHeight, 0]));
     if (index % 10 === 0) updateHud(r, t, 3);
     video.requestVideoFrameCallback(onFrame);
   };
@@ -462,13 +502,21 @@ async function finish() {
     chunks: r.chunks,
     frames_tracked: r.tracked,
     frames_tracking_lost: r.lost,
+    strict: r.strict,
+    strict_rule: r.strict ? `kept only with ${r.mode === 'ar' ? 'a tracked AR pose and ' : ''}gyro, accelerometer and gravity samples no older than ${SENSOR_FRESH_MS} ms` : null,
+    gravity_source: r.hasGravitySensor ? 'GravitySensor' : 'accelerometer (includes gravity)',
+    frames_rejected: r.rejected,
+    ar_segments: r.segment + 1,
+    ar_resets: r.resets,
+    focus_events: r.focusEvents || [],
+    reject_reasons: r.rejectReasons,
     imu_rates_hz: rates,
     devicemotion_interval_ms: r.dmIntervalMs || null,
     errors: r.errors,
   };
   const metaFile = new BundleFile('meta.json');
   metaFile.write(JSON.stringify(meta, null, 2));
-  const files = [metaFile, r.frames, r.videoIndex, r.imu, ...(r.video ? [r.video] : [])];
+  const files = [metaFile, r.frames, r.videoIndex, r.imu, r.rejects, ...(r.video ? [r.video] : [])];
   if (r.depthFiles.length) files.push(r.depthIndex, ...r.depthFiles);
   const blob = new Blob(zipParts(files), { type: 'application/zip' });
   const name = `namma-${r.mode}-${r.startedWall.replace(/[:.]/g, '-').slice(0, 19)}.zip`;
@@ -494,8 +542,18 @@ function updateHud(r, t, tracking) {
   const gyro = r.imuCounts.gyro || r.imuCounts.dm_gyro || 0;
   $('hud-imu').textContent = seconds > 1 ? `${(gyro / seconds).toFixed(0)} Hz` : '…';
   const labels = ['tracking', 'tracking lost: slow down, aim at texture', 'no pose', 'camera only'];
-  $('hud-track').textContent = labels[tracking];
-  $('hud-track').dataset.ok = tracking === 0 || tracking === 3 ? 'yes' : 'no';
+  const reset = false;
+  const reason = r.strict ? missingSensors(r, 0) : null;
+  const fastTurn = r.lastFastTurn && performance.now() - r.lastFastTurn < 1500;
+  $('hud-track').textContent = reset ? 'AR tracking reset: walk back to an area you already scanned'
+    : fastTurn ? 'Turning too fast: stop, turn slowly, then walk on'
+    : reason ? `rejecting frames: ${reason.replaceAll('_', ' ').replaceAll('+', ', ')} missing` : labels[tracking];
+  $('hud-track').dataset.ok = !reason && !fastTurn && (tracking === 0 || tracking === 3) ? 'yes' : 'no';
+  $('hud-rejected').textContent = r.strict ? `${r.rejected}` : 'off';
+  if (r.coverage) {   // only bundles from the old AR recorder had depth coverage
+    const c = r.coverage.stats();
+    $('hud-cover').textContent = c.seen ? `${c.percent}% good · ${c.walls} wall${c.walls === 1 ? '' : 's'}` : 'point at a wall';
+  } else $('hud-cover').textContent = 'needs depth';
 }
 
 function showSummary(meta, bytes) {
@@ -504,8 +562,10 @@ function showSummary(meta, bytes) {
     ['Mode', meta.mode],
     ['Duration', `${meta.duration_s.toFixed(1)} s`],
     ['Camera image', meta.camera ? `${meta.camera.width} x ${meta.camera.height}` : 'none'],
+    ['Camera locks', meta.camera?.locks ? Object.entries(meta.camera.locks).map(([k, v]) => `${k.replace('_', ' ')} ${v ? 'on' : 'not supported'}`).join(', ') : 'n/a (AR mode)'],
     ['Codec', meta.codec?.codec || 'none'],
     ['Frames encoded', `${meta.frames_encoded} of ${meta.frames} (${(meta.frames_encoded / meta.duration_s).toFixed(1)} fps)`],
+    ['Frames rejected', meta.strict ? `${meta.frames_rejected} (${Object.entries(meta.reject_reasons).map(([k, v]) => `${k.replaceAll('_', ' ')} ${v}`).join(', ') || 'none'})` : 'strict mode off'],
     ['Pose tracked', meta.mode === 'ar' ? `${((100 * meta.frames_tracked) / Math.max(1, meta.frames)).toFixed(0)}% of frames` : 'n/a'],
     ['IMU rates', Object.entries(meta.imu_rates_hz).map(([k, v]) => `${k} ${v} Hz`).join(', ') || 'none'],
     ['Depth', meta.xr_features.includes('depth-sensing') ? 'on' : 'off'],
@@ -534,7 +594,6 @@ async function begin(starter) {
   }
 }
 
-$('start-ar').addEventListener('click', () => begin(startAr));
 $('start-camera').addEventListener('click', () => begin(startCamera));
 $('stop').addEventListener('click', () => finish());
 $('again').addEventListener('click', () => location.reload());

@@ -21,19 +21,31 @@
 
     <main id="setup" class="panel">
       <h1>NAMMA Space studio</h1>
-      <p>Records video, the AR pose of every frame, ARCore depth and motion sensors. A rough 3D model is built on this phone
-        right away; "Send for render" sends the recording to a render server (the cloud, Colab or your laptop) for the
-        photoreal model, which comes back here.</p>
+      <p>Records 4K video (where the phone allows) and motion sensors. "Send for render" sends the recording to a render
+        server (the cloud, Colab or your laptop) for the photoreal model, which comes back here.</p>
       <dl class="caps">
         <dt>HTTPS</dt><dd id="cap-secure">…</dd>
-        <dt>AR (ARCore)</dt><dd id="cap-ar">…</dd>
-        <dt>AR camera image</dt><dd id="cap-camera">…</dd>
         <dt>Video encoder</dt><dd id="cap-codec">…</dd>
         <dt>Motion sensors</dt><dd id="cap-imu">…</dd>
       </dl>
-      <label class="check"><input id="depth" type="checkbox" checked /> Record ARCore depth (needed for the quick 3D model on this phone)</label>
-      <button id="start-ar" type="button" disabled>Record with AR</button>
-      <button id="start-camera" class="secondary" type="button" disabled>Record camera only</button>
+      <details class="tips" open>
+        <summary>How to film for a good 3D model</summary>
+        <ol>
+          <li>Settings first: video HDR, scene optimiser and "super steady" stabilisation off. Lights on, blinds open.</li>
+          <li>Hold the phone upright at chest height, aimed at eye level. Use the widest lens.</li>
+          <li>Walk slowly, about one step a second. To change direction: stop, turn slowly, walk on. Never spin on the spot.</li>
+          <li>Each room: start under the door frame looking in, walk one lap close to the walls, a second lap the other way,
+            then cross both diagonals corner to corner. Then get close (30–60 cm) to anything you want sharp.</li>
+          <li>Cross doorways through the middle, looking ahead. Don't stop the video between rooms.</li>
+          <li>Plain walls, glass and mirrors are hard: tape up a poster or patterned item while filming, remove it after.</li>
+        </ol>
+        <p>The recorder films in 4K at 30 fps where the phone allows (otherwise 1080p at 60 fps). Before it starts you see a
+          preview with automatic exposure: adjust brightness, ISO, shutter and colour if needed, tap "Lock exposure and colour" when it looks natural, then Start.</p>
+      </details>
+      <label class="check"><input id="strict" type="checkbox" checked /> Strict: keep only frames with fresh gyro, accelerometer and gravity readings (others are listed in rejects.csv)</label>
+      <label class="select">Quality
+        <select id="quality"><option value="4k30" selected>4K, 30 fps (sharpest, if the phone has it)</option><option value="1080p60">1080p, 60 fps</option></select></label>
+      <button id="start-camera" type="button" disabled>Record</button>
       <label class="button secondary" for="open-file">Open a saved recording</label>
       <input id="open-file" type="file" accept=".zip,video/*" hidden />
       <button id="resume" class="secondary" type="button" hidden>Show my last render</button>
@@ -62,14 +74,32 @@
       </section>
     </main>
 
+    <section id="preview" class="hud preview">
+      <p>Set brightness, ISO, shutter and colour like a camera app (only what this phone allows is shown). Point at the bright and dark parts of the room; when it looks natural, lock it so the whole video keeps the same look.</p>
+      <details open><summary>Camera settings</summary><div id="manual" class="manual"></div></details>
+      <button id="lock" type="button" class="secondary" aria-pressed="false">Lock exposure and colour</button>
+      <button id="focus-lock" type="button" class="secondary" aria-pressed="false" hidden>Lock focus</button>
+      <p id="focus-note" class="note"></p>
+      <p class="note">Tap the picture to focus there; press and hold to lock focus (also while recording).</p>
+      <p id="preview-note" class="note"></p>
+      <button id="go" type="button">Start recording</button>
+    </section>
+
     <section id="hud" class="hud">
       <dl>
         <dt>Time</dt><dd id="hud-time">0 s</dd>
         <dt>Frames</dt><dd id="hud-frames">0</dd>
         <dt>Gyro</dt><dd id="hud-imu">…</dd>
+        <dt>Rejected</dt><dd id="hud-rejected">0</dd>
+        <dt hidden>Scanned</dt><dd id="hud-cover" hidden>…</dd>
       </dl>
+      <p class="legend"><span class="sw red"></span>seen from 1 direction <span class="sw yellow"></span>2 <span class="sw green"></span>3+, good · unpainted = not scanned yet · blue lines = walls found</p>
       <p id="hud-track" data-ok="yes">starting…</p>
-      <button id="stop" type="button">Stop and save</button>
+      <p id="hud-focus" class="note"></p>
+      <div class="hud-buttons">
+        <button id="hud-focus-lock" type="button" class="secondary" aria-pressed="false" hidden>Lock focus</button>
+        <button id="stop" type="button">Stop and save</button>
+      </div>
     </section>
 
     <main id="done" class="panel">

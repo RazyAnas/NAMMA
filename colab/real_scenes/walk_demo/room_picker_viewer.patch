@@ -1,0 +1,91 @@
+diff --git a/viewer/demo.html b/viewer/demo.html
+index 218b857..75388c3 100644
+--- a/viewer/demo.html
++++ b/viewer/demo.html
+@@ -12,15 +12,16 @@
+ 
+       <section id="start" class="start">
+         <p class="eyebrow">NAMMA walking demo</p>
+-        <h1>Walk the room.</h1>
+-        <p class="lede">A reconstructed living room with collision. Walls and furniture stop you, and you climb steps.</p>
++        <h1 id="room-title">Walk the room.</h1>
++        <p id="room-lede" class="lede">A reconstructed living room with collision. Walls and furniture stop you, and you climb steps.</p>
++        <nav id="rooms" class="rooms" aria-label="Rooms" hidden></nav>
+         <button id="go" type="button" disabled>Loading…</button>
+         <p id="progress-text" class="hint"></p>
+         <p id="error" role="alert"></p>
+       </section>
+ 
+       <aside id="hud" class="demo-hud" hidden>
+-        <span id="fps">—</span> fps · <span id="mode">walking</span>
++        <span id="fps">—</span> fps · <span id="mode">walking</span> · <a href="./">rooms</a>
+       </aside>
+ 
+       <div id="touch-ui" hidden>
+diff --git a/viewer/src/demo.css b/viewer/src/demo.css
+index 61edb83..ed7bb15 100644
+--- a/viewer/src/demo.css
++++ b/viewer/src/demo.css
+@@ -14,3 +14,7 @@ body.demo { overflow: hidden; touch-action: none; -webkit-user-select: none; use
+ .keys-help { position: fixed; z-index: 3; left: 16px; bottom: 16px; padding: 10px 14px; background: #07110fb5; color: #b8c6c1; font: 12px DM Mono, monospace; }
+ .keys-help p { margin: 4px 0; } .keys-help strong { color: #f3f6ed; margin-right: 6px; }
+ @media (max-width: 760px) { body.demo::after { content: none; display: none; } }
++.rooms { display: flex; flex-wrap: wrap; gap: 8px; margin: 0 0 22px; }
++.rooms a { padding: 8px 14px; border: 1px solid #ffffff40; border-radius: 99px; color: #f3f6ed; text-decoration: none; font: 13px DM Mono, monospace; }
++.rooms a[aria-current='true'] { background: #b8ff66; border-color: #b8ff66; color: #102015; }
++.demo-hud a { color: #b8ff66; }
+diff --git a/viewer/src/demo.js b/viewer/src/demo.js
+index 7ea4eac..e11a419 100644
+--- a/viewer/src/demo.js
++++ b/viewer/src/demo.js
+@@ -1,4 +1,5 @@
+-// Self-contained walking demo: loads ./data/{splat.ply,navmesh.json,collision.glb}
++// Self-contained walking demo: loads ./data/{splat.ply,navmesh.json,collision.glb}, or with
++// ./data/scenes.json one of several rooms from ./data/<dir>/ (picked on the start screen, ?scene=<id>)
+ // and walks it with keyboard + mouse on a laptop, or a touch stick, drag-to-look
+ // and optional gyro look on a phone. Same Rapier walker as the main viewer.
+ import * as THREE from 'three';
+@@ -28,10 +29,32 @@ let frame;
+ 
+ const setProgress = (text) => { $('progress-text').textContent = text; };
+ 
++// Room list: data/scenes.json = [{ id, dir, title, lede }]; without it, the single room in data/.
++async function chooseScene() {
++  const scenes = await fetch('./data/scenes.json').then((r) => (r.ok ? r.json() : null)).catch(() => null);
++  if (!scenes?.length) return './data/';
++  const wanted = new URLSearchParams(location.search).get('scene');
++  const scene = scenes.find((s) => s.id === wanted) || scenes[0];
++  $('room-title').textContent = scene.title;
++  $('room-lede').textContent = scene.lede;
++  const list = $('rooms');
++  list.hidden = false;
++  for (const s of scenes) {
++    const link = document.createElement('a');
++    link.href = `?scene=${encodeURIComponent(s.id)}`;
++    link.textContent = s.title;
++    if (s === scene) link.setAttribute('aria-current', 'true');
++    list.append(link);
++  }
++  document.title = `NAMMA · ${scene.title}`;
++  return `./data/${scene.dir}/`;
++}
++
+ async function load() {
++  const base = await chooseScene();
+   const [navigation, collisionBuffer] = await Promise.all([
+-    fetch('./data/navmesh.json').then((r) => { if (!r.ok) throw new Error('navmesh.json missing'); return r.json(); }),
+-    fetch('./data/collision.glb').then((r) => (r.ok ? r.arrayBuffer() : null)),
++    fetch(`${base}navmesh.json`).then((r) => { if (!r.ok) throw new Error('navmesh.json missing'); return r.json(); }),
++    fetch(`${base}collision.glb`).then((r) => (r.ok ? r.arrayBuffer() : null)),
+     RAPIER.init({}),
+   ]);
+   frame = new NavFrame(navigation);
+@@ -64,7 +87,7 @@ async function load() {
+     sceneRevealMode: GaussianSplats3D.SceneRevealMode.Instant,
+     freeIntermediateSplatData: true,
+   });
+-  await viewer.addSplatScene('./data/splat.ply', {
++  await viewer.addSplatScene(`${base}splat.ply`, {
+     format: GaussianSplats3D.SceneFormat.Ply,
+     splatAlphaRemovalThreshold: 5,
+     showLoadingUI: false,

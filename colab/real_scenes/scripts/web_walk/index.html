@@ -1,0 +1,128 @@
+<title>Lobby Walk</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<style>
+/* Layout: full-screen splat, a bottom control bar; dark single-look viewer */
+:root { --bg: #0d0f11; --panel: rgba(18, 21, 24, 0.86); --fg: #e8ecef; --muted: #9aa5ae; --accent: #6fb6d9; --line: rgba(255,255,255,0.12);
+  --body: "IBM Plex Sans", system-ui, sans-serif; --mono: "IBM Plex Mono", ui-monospace, monospace; color-scheme: dark; }
+html, body { height: 100%; }
+body { background: var(--bg); color: var(--fg); font: 14px/1.4 var(--body); overflow: hidden; }
+#view { position: fixed; top: 0; left: 50%; transform: translateX(-50%); height: 100%; touch-action: none; background: #000; }
+#view canvas { display: block; }
+.bar { position: fixed; left: 0; right: 0; bottom: 0; padding: 10px max(16px, env(safe-area-inset-right, 0px)) calc(12px + env(safe-area-inset-bottom, 0px)) max(16px, env(safe-area-inset-left, 0px));
+  background: var(--panel); border-top: 1px solid var(--line); display: grid; gap: 8px; backdrop-filter: blur(10px); }
+.row { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+button { font: 600 13px var(--body); color: var(--fg); background: rgba(255,255,255,0.06); border: 1px solid var(--line); border-radius: 8px; padding: 9px 12px; min-width: 44px; cursor: pointer; touch-action: none; }
+button:focus-visible, input:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+button[aria-pressed="true"] { background: var(--accent); color: #0b1a22; border-color: var(--accent); }
+input[type=range] { flex: 1; min-width: 120px; accent-color: var(--accent); }
+.note { color: var(--muted); font-size: 12px; }
+.tag { font: 500 12px var(--mono); color: var(--muted); font-variant-numeric: tabular-nums; }
+#status { position: fixed; top: calc(12px + env(safe-area-inset-top, 0px)); left: max(16px, env(safe-area-inset-left, 0px)); right: max(16px, env(safe-area-inset-right, 0px));
+  font: 500 12px var(--mono); color: var(--muted); pointer-events: none; }
+</style>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@500&family=IBM+Plex+Sans:wght@400;600&display=swap">
+<div id="view"></div>
+<div id="status">Loading the lobby model (13 MB)…</div>
+<div class="bar">
+  <div class="row">
+    <button id="back" aria-label="Walk back">◀</button>
+    <input id="scrub" type="range" min="0" max="1000" value="0" aria-label="Position along the filmed walk">
+    <button id="fwd" aria-label="Walk forward">▶</button>
+  </div>
+  <div class="row">
+    <button id="left" aria-label="Step left">⟵</button>
+    <button id="right" aria-label="Step right">⟶</button>
+    <button id="free" aria-pressed="false">Free roam</button>
+    <span class="tag" id="info">on path</span>
+  </div>
+  <div class="note">Drag to look. ◀ ▶ or W/S walk the filmed path; ⟵ ⟶ or A/D step aside (kept within the safe zone). "Free roam" removes the limit so you can see where the model breaks.</div>
+</div>
+
+<script type="module">
+import * as THREE from 'https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js';   // vector maths only
+import * as pc from 'https://cdn.jsdelivr.net/npm/playcanvas@2.20.0/build/playcanvas.mjs';     // splat renderer (same engine as Splat Tour)
+
+const SAFE = 0.03;        // max distance from the filmed path, scene units (about 1% of the walk's length: where renders stay clean)
+const status = document.getElementById('status'), info = document.getElementById('info'), scrub = document.getElementById('scrub');
+const path = await (await fetch('path.json')).json();
+// show only what the phone filmed: the view keeps the capture's portrait shape (wider views show parts never filmed)
+const ASPECT = 866 / 1920;
+function fitView() { const v = document.getElementById('view'); v.style.width = Math.min(innerWidth, innerHeight * ASPECT) + 'px'; }
+fitView(); addEventListener('resize', fitView);
+const P = path.pos.map((p) => new THREE.Vector3(...p)), F = path.fwd.map((f) => new THREE.Vector3(...f).normalize());
+const U = path.upv.map((u) => new THREE.Vector3(...u).normalize());   // the filmed camera's own up: views match the photos
+
+const canvas = document.createElement('canvas'); canvas.style.width = '100%'; canvas.style.height = '100%';
+document.getElementById('view').appendChild(canvas);
+const app = new pc.Application(canvas, { graphicsDeviceOptions: { antialias: false } });
+app.setCanvasFillMode(pc.FILLMODE_NONE); app.setCanvasResolution(pc.RESOLUTION_AUTO);
+const sizeCanvas = () => { const r = canvas.getBoundingClientRect(); app.resizeCanvas(r.width, r.height); };
+addEventListener('resize', sizeCanvas); app.start(); sizeCanvas();
+const camE = new pc.Entity('camera');
+camE.addComponent('camera', { clearColor: new pc.Color(0, 0, 0), fov: path.fovy, nearClip: 0.01, farClip: 100 });
+app.root.addChild(camE);
+const cam = { position: new THREE.Vector3(), up: new THREE.Vector3(0, 0, 1),
+  lookAt(target) { camE.setPosition(this.position.x, this.position.y, this.position.z);
+    camE.lookAt(new pc.Vec3(target.x, target.y, target.z), new pc.Vec3(this.up.x, this.up.y, this.up.z)); } };
+window.dbg = { app, camE, P, F };
+let t = 0, side = new THREE.Vector3(), yaw = 0, pitch = 0, free = false;
+function poseAt(t) {
+  const i = Math.min(Math.floor(t), P.length - 2), f = t - i;
+  return { p: P[i].clone().lerp(P[i + 1], f), d: F[i].clone().lerp(F[i + 1], f).normalize(), u: U[i].clone().lerp(U[i + 1], f).normalize() };
+}
+function clampSide() { if (!free && side.length() > SAFE) side.setLength(SAFE); }
+function apply() {
+  const { p, d, u } = poseAt(t);
+  const right = d.clone().cross(u).normalize();
+  const dir = d.clone().applyAxisAngle(u, yaw); const r2 = right.clone().applyAxisAngle(u, yaw);
+  dir.applyAxisAngle(r2, pitch); const up = u.clone().applyAxisAngle(r2, pitch);
+  cam.position.copy(p).add(side); cam.up.copy(up); cam.lookAt(cam.position.clone().add(dir));
+  scrub.value = Math.round(1000 * t / (P.length - 1));
+  info.textContent = `${free ? 'free roam' : 'safe zone'} · ${(side.length() / SAFE * 100).toFixed(0)}% of limit · frame ${Math.round(t) + 1}/${P.length}`;
+}
+function move(dt, fwd, strafe) {
+  t = Math.min(P.length - 1, Math.max(0, t + fwd * dt * 6));
+  if (strafe) {
+    const { d, u } = poseAt(t); const right = d.clone().cross(u).normalize().applyAxisAngle(u, yaw);
+    side.addScaledVector(right, strafe * dt * 0.05); clampSide();
+  }
+  apply();
+}
+const held = {};
+for (const [id, f, s] of [['fwd', 1, 0], ['back', -1, 0], ['left', 0, -1], ['right', 0, 1]]) {
+  const b = document.getElementById(id);
+  b.addEventListener('pointerdown', (e) => { e.preventDefault(); held[id] = [f, s]; });
+  for (const ev of ['pointerup', 'pointerleave', 'pointercancel']) b.addEventListener(ev, () => delete held[id]);
+}
+const keys = { KeyW: [1, 0], ArrowUp: [1, 0], KeyS: [-1, 0], ArrowDown: [-1, 0], KeyA: [0, -1], ArrowLeft: [0, -1], KeyD: [0, 1], ArrowRight: [0, 1] };
+addEventListener('keydown', (e) => { if (keys[e.code]) { held[e.code] = keys[e.code]; e.preventDefault(); } });
+addEventListener('keyup', (e) => delete held[e.code]);
+scrub.addEventListener('input', () => { t = scrub.value / 1000 * (P.length - 1); apply(); });
+document.getElementById('free').addEventListener('click', (e) => {
+  free = !free; e.currentTarget.setAttribute('aria-pressed', String(free)); if (!free) clampSide(); apply();
+});
+let drag = null; const view = document.getElementById('view');
+view.addEventListener('pointerdown', (e) => { drag = [e.clientX, e.clientY]; view.setPointerCapture(e.pointerId); });
+view.addEventListener('pointermove', (e) => {
+  if (!drag) return; yaw -= (e.clientX - drag[0]) * 0.004; pitch = Math.max(-1.2, Math.min(1.2, pitch - (e.clientY - drag[1]) * 0.004));
+  drag = [e.clientX, e.clientY]; apply();
+});
+view.addEventListener('pointerup', () => (drag = null));
+let last = performance.now();
+(function tick(now) {
+  const dt = Math.min(0.05, (now - last) / 1000); last = now;
+  let f = 0, s = 0; for (const [a, b] of Object.values(held)) { f += a; s += b; }
+  if (f || s) move(dt, Math.sign(f), Math.sign(s));
+  requestAnimationFrame(tick);
+})(last);
+
+apply();
+// the splat ships as lobby.wasm (the host serves only web file types; it is the raw .ply bytes); hand it to PlayCanvas as a .ply blob
+const plyUrl = URL.createObjectURL(await (await fetch('lobby.wasm')).blob());
+const asset = new pc.Asset('lobby', 'gsplat', { url: plyUrl, filename: 'lobby.ply' });
+app.assets.add(asset);
+asset.ready(() => { const e = new pc.Entity('splat'); e.addComponent('gsplat', { asset }); app.root.addChild(e);
+  status.textContent = 'Lobby, 30 s clip · Nerfstudio 30k steps · 235k splats'; apply(); });
+asset.on('error', (err) => { status.textContent = 'Could not load the model: ' + err; });
+app.assets.load(asset);
+</script>

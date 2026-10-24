@@ -1,0 +1,139 @@
+{
+  "schema_version": 1,
+  "status": "approved",
+  "navmesh_ready": true,
+  "coordinate_system": "colmap_world_floor_basis",
+  "units": "meters",
+  "source_units_to_meters": 1.0,
+  "viewer_units_to_meters": 1.0,
+  "source_to_viewer": [
+    [
+      1.0,
+      0.0,
+      0.0,
+      0.0
+    ],
+    [
+      0.0,
+      1.0,
+      0.0,
+      0.0
+    ],
+    [
+      0.0,
+      0.0,
+      1.0,
+      0.0
+    ],
+    [
+      0.0,
+      0.0,
+      0.0,
+      1.0
+    ]
+  ],
+  "viewer_to_source": [
+    [
+      1.0,
+      0.0,
+      0.0,
+      0.0
+    ],
+    [
+      0.0,
+      1.0,
+      0.0,
+      0.0
+    ],
+    [
+      0.0,
+      0.0,
+      1.0,
+      0.0
+    ],
+    [
+      0.0,
+      0.0,
+      0.0,
+      1.0
+    ]
+  ],
+  "unknown_space_policy": "block_unknown",
+  "source_dense_cloud": "dense/fused.ply",
+  "cell_size_m": 0.1,
+  "origin_floor_coordinates": [
+    -2.8171809305050224,
+    -6.436461247271253
+  ],
+  "width": 47,
+  "height": 88,
+  "walkable_count": 970,
+  "walkable_source": "floor_band",
+  "floor_support_count": 1534,
+  "blocked_obstacle_count": 779,
+  "component_count": 1,
+  "component_size": 970,
+  "agent_radius_m": 0.3,
+  "agent_height_m": 1.7,
+  "safety_margin_m": 0.1,
+  "max_slope_degrees": 35.0,
+  "basis": {
+    "axis_x": [
+      0.0,
+      -0.25896030281004195,
+      -0.965887965329588
+    ],
+    "axis_y": [
+      0.9999117405418128,
+      -0.012832545075002163,
+      0.003440481585576161
+    ],
+    "up": [
+      -0.013285749005707241,
+      -0.9658027165810984,
+      0.25893744711402394
+    ],
+    "plane_offset": 1.431607809475451
+  },
+  "spawn": {
+    "grid": [
+      19,
+      5
+    ],
+    "source_world": [
+      -5.888178927768759,
+      0.13747008058288523,
+      0.8609504069410353
+    ],
+    "eye_height_m": 1.5999999999999999
+  },
+  "walkable_encoding": "zlib_uint8_row_major_base64",
+  "walkable_grid_base64": "eJzt1EEOgDAIBED8/6eNXrRCWTbQRmP3PEUkpSJ/ztaE5NBP5ci/gj+Zz3va5l1dwfu6gDs6zz1N8nTnZXOxapPXpcNtq7n4euruIz2Vv+yZAz7TDMINx/jOI1o4ffkgF06zHC2Q6cdx4fnI8pb3Cqhh+t9TWwJ+p4DHn1Z8kcgDOX6OMsa9nhWPYH5p6TU8TjCa5SsrK5/PDs3OA8s=",
+  "walkable_sha256": "b4891a4dee3252ed4dc23e6dff7413b7d241474fe73e53c56c57b22af65b5e0d",
+  "movement": {
+    "encoding": "zlib_row_major_base64",
+    "standable_base64": "eJzt1UEOgCAMRNHO/S/tAjeIgQ5STMP89QtBKWqm8oa7hByRHAwHfBxt6/iLXse/L07pDm55F1d8IGvuwZsuhFPPca/ewmMfNfCYvBspnNHGaZarUyKnjhxpxs98YMec+y08/c+cfIOme66UytMFPtABnQ==",
+    "standable_count": 412,
+    "observed_count": 1590,
+    "hard_obstacle_count": 370,
+    "support_height_mm_base64": "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",
+    "support_height_dtype": "int16_le_mm",
+    "climb_top_mm_base64": "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",
+    "climbable_count": 490,
+    "max_climb_height_m": 1.2,
+    "step_clearance_m": 0.3,
+    "max_step_m": 0.25,
+    "inflation_radius_m": 0.3
+  },
+  "reason": "Generated conservatively; human review must approve floor, scale, and unknown-space boundaries before enabling movement collision.",
+  "created_at": "2026-10-19T05:41:07.988754+00:00",
+  "approved_by": "real-scene",
+  "approval_notes": "Our poses and anchored monocular depth",
+  "approved_at": "2026-10-19T05:41:07.990369+00:00",
+  "validation": {
+    "passed": true,
+    "errors": [],
+    "checked_at": "2026-10-19T05:41:07.990338+00:00",
+    "walkable_count": 970
+  }
+}

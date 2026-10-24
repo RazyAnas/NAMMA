@@ -1,0 +1,5 @@
+base {"kept": 369782, "of": 369782, "psnr_mean": 33.796, "psnr_min": 27.83, "delta_vs_base": 0.0, "seconds": 375}
+needle6 {"needles_shrunk": 112460, "kept": 369782, "of": 369782, "psnr_mean": 32.602, "psnr_min": 27.67, "delta_vs_base": -1.194, "seconds": 336}
+needle4 {"needles_shrunk": 163508, "kept": 369782, "of": 369782, "psnr_mean": 31.543, "psnr_min": 26.8, "delta_vs_base": -2.253, "seconds": 328}
+near25 {"near_removed": 9619, "kept": 360163, "of": 369782, "psnr_mean": 29.586, "psnr_min": 15.75, "delta_vs_base": -4.21, "seconds": 363}
+fog {"fog_removed": 854, "kept": 368928, "of": 369782, "psnr_mean": 32.211, "psnr_min": 25.32, "delta_vs_base": -1.585, "seconds": 373}

@@ -1,0 +1,28 @@
+--- a/model.cpp	2026-10-19 21:18:30
++++ b/model.cpp	2026-10-19 21:18:30
+@@ -548,14 +548,24 @@
+ 
+     long long removeBudget = pruneMask.sum().item<int64_t>() / 2;
+     torch::Tensor finalPrune = parentMask | sanityMask;
++    // NAMMA: drop Gaussians whose parameters went non-finite (seen on the CPU backend); they would also
++    // poison the multinomial below.
++    torch::Tensor finite = torch::isfinite(means).all(-1) & torch::isfinite(scales).all(-1) & torch::isfinite(quats).all(-1)
++        & torch::isfinite(opacities.reshape({N, -1})).all(-1) & torch::isfinite(featuresDc.reshape({N, -1})).all(-1);
++    finalPrune |= ~finite;
+     if (removeBudget > 0){
+         torch::Tensor weights = torch::zeros({N}, torch::TensorOptions().dtype(torch::kFloat32).device(device));
+         long long S = (std::min)(static_cast<long long>(pruningScore.size(0)), N);
+-        weights.index_put_({Slice(None, S)}, 1.0f / (1e-6f + 1.0f - pruningScore.index({Slice(None, S)})));
++        weights.index_put_({Slice(None, S)}, torch::nan_to_num(1.0f / (1e-6f + 1.0f - pruningScore.index({Slice(None, S)})), 0.0, 0.0, 0.0).clamp_min(0.0f));
++        weights.masked_fill_(~finite, 0.0f);
++        long long positive = (weights > 0).sum().item<int64_t>();
++        if (positive < removeBudget) removeBudget = positive;   // NAMMA: all-NaN scores leave nothing to sample
++        if (removeBudget > 0){
+         torch::Tensor sampledIdx = torch::multinomial(weights.cpu(), removeBudget, false).to(device);
+         torch::Tensor sampledMask = torch::zeros({N}, boolOpts);
+         sampledMask.index_put_({sampledIdx}, true);
+         finalPrune |= (pruneMask & sampledMask);
++        }
+     }
+ 
+     long long cullCount = finalPrune.sum().item<int64_t>();

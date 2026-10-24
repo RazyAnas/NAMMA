@@ -14,3 +14,7 @@ body.demo { overflow: hidden; touch-action: none; -webkit-user-select: none; use
 .keys-help { position: fixed; z-index: 3; left: 16px; bottom: 16px; padding: 10px 14px; background: #07110fb5; color: #b8c6c1; font: 12px DM Mono, monospace; }
 .keys-help p { margin: 4px 0; } .keys-help strong { color: #f3f6ed; margin-right: 6px; }
 @media (max-width: 760px) { body.demo::after { content: none; display: none; } }
+.rooms { display: flex; flex-wrap: wrap; gap: 8px; margin: 0 0 22px; }
+.rooms a { padding: 8px 14px; border: 1px solid #ffffff40; border-radius: 99px; color: #f3f6ed; text-decoration: none; font: 13px DM Mono, monospace; }
+.rooms a[aria-current='true'] { background: #b8ff66; border-color: #b8ff66; color: #102015; }
+.demo-hud a { color: #b8ff66; }

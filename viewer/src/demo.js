@@ -1,9 +1,12 @@
-// Self-contained walking demo: loads ./data/{splat.ply,navmesh.json,collision.glb}
+// Self-contained walking demo: loads ./data/{splat.ply,navmesh.json,collision.glb}, or with
+// ./data/scenes.json one of several rooms from ./data/<dir>/ (picked on the start screen, ?scene=<id>)
 // and walks it with keyboard + mouse on a laptop, or a touch stick, drag-to-look
 // and optional gyro look on a phone. Same Rapier walker as the main viewer.
 import * as THREE from 'three';
 import * as GaussianSplats3D from '@mkkellogg/gaussian-splats-3d';
 import RAPIER from '@dimforge/rapier3d-compat';
+import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
+import { MeshoptDecoder } from 'three/examples/jsm/libs/meshopt_decoder.module.js';
 import './style.css';
 import './demo.css';
 import { NavFrame, Walker, decodeMovementLayers, readGlbTriangles } from './walker.js';
@@ -25,15 +28,100 @@ let viewer;
 let camera;
 let walker;
 let frame;
+// Optional data/<room>/cameras.json: the capture's camera centres in splat coordinates. A splat is only
+// trustworthy near where the phone filmed from, so flying is kept inside a tube of radius_m around them.
+let corridor = null;
+const nearest = new THREE.Vector3();
+// Hybrid view (optional data/<room>/mesh.glb): measured on a held-out stretch of the phone room, the splat is best on the
+// capture path (~34 dB) but a fused mesh beats it once you leave it (18.8 vs 15.3-16.6 dB). So the mesh is drawn behind
+// the splat and the splat fades out between FADE_NEAR and FADE_FAR metres from the nearest capture camera.
+const FADE_NEAR = 0.15;
+const FADE_FAR = 0.6;
+let roomMesh = null;
+let splatShare = 1;
+// M cycles the view: fill = splat in front, mesh behind it only plugs the holes (default; never worse than the splat alone),
+// auto = fade to the mesh away from the capture path, splat = splat only, mesh = mesh only.
+const BLEND_MODES = ['fill', 'auto', 'splat', 'mesh'];
+let blendMode = 'fill';
+
+function nearestPathDistance(position) {
+  let best = Infinity;
+  for (const c of corridor.centers) {
+    const d = c.distanceToSquared(position);
+    if (d < best) { best = d; nearest.copy(c); }
+  }
+  return Math.sqrt(best) * frame.navigation.viewer_units_to_meters;
+}
+
+function keepNearPath(position) {
+  if (!corridor) return;
+  const distance = nearestPathDistance(position);
+  const radius = corridor.radius;
+  if (distance > radius) position.sub(nearest).setLength(radius / frame.navigation.viewer_units_to_meters).add(nearest);
+}
+
+function blendSplatAndMesh() {
+  if (!roomMesh) return;
+  roomMesh.visible = blendMode !== 'splat';
+  if (blendMode === 'auto' && corridor) {
+    splatShare = 1 - THREE.MathUtils.smoothstep(nearestPathDistance(camera.position), FADE_NEAR, FADE_FAR);
+  } else splatShare = blendMode === 'mesh' ? 0 : 1;
+  viewer.getSplatScene(0).opacity = splatShare;
+  const share = splatShare > 0.99 ? 'splat' : splatShare < 0.01 ? 'mesh' : `splat ${Math.round(splatShare * 100)}%`;
+  $('blend').textContent = blendMode === 'auto' ? `auto: ${share}` : blendMode === 'fill' ? 'splat + mesh fill' : share;
+}
+
+async function loadRoomMesh(url) {
+  const buffer = await fetch(url).then((r) => (r.ok ? r.arrayBuffer() : null)).catch(() => null);
+  if (!buffer) return null;
+  // mesh.glb is packed with gltfpack (meshopt compression, ~5x smaller); plain GLBs load too.
+  const gltf = await new GLTFLoader().setMeshoptDecoder(MeshoptDecoder).parseAsync(buffer, '');
+  const scene = new THREE.Scene();
+  gltf.scene.traverse((o) => {
+    if (!o.isMesh) return;
+    o.material = new THREE.MeshBasicMaterial({ vertexColors: true });
+    // The splat is drawn after this scene; clearing depth here keeps the mesh from hiding splats that sit on its surface.
+    o.onAfterRender = (r) => r.clearDepth();
+  });
+  scene.add(gltf.scene);
+  return scene;
+}
 
 const setProgress = (text) => { $('progress-text').textContent = text; };
 
+// Room list: data/scenes.json = [{ id, dir, title, lede }]; without it, the single room in data/.
+async function chooseScene() {
+  const scenes = await fetch('./data/scenes.json').then((r) => (r.ok ? r.json() : null)).catch(() => null);
+  if (!scenes?.length) return './data/';
+  const wanted = new URLSearchParams(location.search).get('scene');
+  const scene = scenes.find((s) => s.id === wanted) || scenes[0];
+  $('room-title').textContent = scene.title;
+  $('room-lede').textContent = scene.lede;
+  const list = $('rooms');
+  list.hidden = false;
+  for (const s of scenes) {
+    const link = document.createElement('a');
+    link.href = `?scene=${encodeURIComponent(s.id)}`;
+    link.textContent = s.title;
+    if (s === scene) link.setAttribute('aria-current', 'true');
+    list.append(link);
+  }
+  document.title = `NAMMA · ${scene.title}`;
+  return `./data/${scene.dir}/`;
+}
+
 async function load() {
-  const [navigation, collisionBuffer] = await Promise.all([
-    fetch('./data/navmesh.json').then((r) => { if (!r.ok) throw new Error('navmesh.json missing'); return r.json(); }),
-    fetch('./data/collision.glb').then((r) => (r.ok ? r.arrayBuffer() : null)),
+  const base = await chooseScene();
+  const [navigation, collisionBuffer, cameraPath] = await Promise.all([
+    fetch(`${base}navmesh.json`).then((r) => { if (!r.ok) throw new Error('navmesh.json missing'); return r.json(); }),
+    fetch(`${base}collision.glb`).then((r) => (r.ok ? r.arrayBuffer() : null)),
+    fetch(`${base}cameras.json`).then((r) => (r.ok ? r.json() : null)).catch(() => null),
     RAPIER.init({}),
   ]);
+  const meshScene = await loadRoomMesh(`${base}mesh.glb`);
+  // With a mesh to fall back on, flying may go further from the capture path than with the splat alone.
+  const radius = (cameraPath?.radius_m ?? 0.6) * (meshScene ? 2.5 : 1);
+  corridor = cameraPath?.centers?.length ? { centers: cameraPath.centers.map((c) => new THREE.Vector3(...c)), radius } : null;
   frame = new NavFrame(navigation);
   const layers = await decodeMovementLayers(navigation);
   if (!layers) throw new Error('This NavMesh has no movement layers; rebuild it with the current backend.');
@@ -63,8 +151,12 @@ async function load() {
     sphericalHarmonicsDegree: touchDevice ? 0 : 1,
     sceneRevealMode: GaussianSplats3D.SceneRevealMode.Instant,
     freeIntermediateSplatData: true,
+    threeScene: meshScene ?? undefined,
+    enableOptionalEffects: !!meshScene,
   });
-  await viewer.addSplatScene('./data/splat.ply', {
+  roomMesh = meshScene;
+  $('blend-wrap').hidden = !roomMesh;
+  await viewer.addSplatScene(`${base}splat.ply`, {
     format: GaussianSplats3D.SceneFormat.Ply,
     splatAlphaRemovalThreshold: 5,
     showLoadingUI: false,
@@ -145,6 +237,7 @@ function step(dt) {
     const vertical = Number(keys.has('KeyE')) - Number(keys.has('KeyQ'));
     move.addScaledVector(up, vertical);
     camera.position.addScaledVector(move, (speed * dt) / frame.navigation.viewer_units_to_meters);
+    keepNearPath(camera.position);
     return;
   }
   const amount = Math.min(1, move.length());
@@ -163,6 +256,7 @@ function loop(now) {
   previous = now;
   step(dt);
   syncCamera();
+  blendSplatAndMesh();
   viewer.update();
   viewer.render();
   frames += 1;
@@ -203,6 +297,7 @@ document.addEventListener('keydown', (event) => {
     $('mode').textContent = flying ? 'flying, no collision' : 'walking';
   }
   if (event.code === 'KeyR' && walker) reset();
+  if (event.code === 'KeyM' && !event.repeat && roomMesh) blendMode = BLEND_MODES[(BLEND_MODES.indexOf(blendMode) + 1) % BLEND_MODES.length];
   keys.add(event.code);
 });
 document.addEventListener('keyup', (event) => keys.delete(event.code));
