@@ -1,0 +1,177 @@
+{
+ "note": "Measured 2026-10-18. Train frames 309 of the whole ICL-NUIM lr1 room, scored against true depth. Anchors: saved sparse.ply projected with our poses, hidden points removed (anchors.py). Both sources go through prep_whole.py boot code unchanged.",
+ "today_prep_stats": {
+  "depth_boot": {
+   "absrel": 0.02781,
+   "within_5pct": 0.848,
+   "median_err_cm": 2.74
+  }
+ },
+ "da_v2_rebuilt": {
+  "depth_loc": {
+   "absrel": 0.035822787013580465,
+   "within_5pct": 0.8065361333446595,
+   "median_err_cm": 3.034232359591238,
+   "coverage": 0.9917549786778587
+  },
+  "depth_boot": {
+   "absrel": 0.02885252065566377,
+   "within_5pct": 0.8351278449227568,
+   "median_err_cm": 2.677993074632745,
+   "coverage": 0.9917549786778587
+  },
+  "depth_boot_mv": {
+   "absrel": 0.020733549763667616,
+   "within_5pct": 0.8933222125288072,
+   "median_err_cm": 2.0961097775646476,
+   "coverage": 0.8219593931196063
+  }
+ },
+ "vggt": {
+  "depth_loc": {
+   "absrel": 0.040547803254017314,
+   "within_5pct": 0.8462056127964696,
+   "median_err_cm": 2.48837341981909,
+   "coverage": 0.9916846177184466
+  },
+  "depth_boot": {
+   "absrel": 0.023631953017229326,
+   "within_5pct": 0.881514350061056,
+   "median_err_cm": 2.1722833794735275,
+   "coverage": 0.9917549786778587
+  },
+  "depth_boot_mv": {
+   "absrel": 0.019775736714804076,
+   "within_5pct": 0.9134124187573953,
+   "median_err_cm": 1.8954520004197062,
+   "coverage": 0.8717588238268609
+  }
+ },
+ "paired_boot_absrel": {
+  "frames": 309,
+  "vggt_better": 202,
+  "mean_gain_points": 0.5204166973214281,
+  "ci95_points": [
+   0.3777818029051779,
+   0.6730825963486377
+  ]
+ },
+ "floor_vs_truth": {
+  "today": {
+   "standable": {
+    "truth": 391,
+    "test": 255,
+    "both": 209,
+    "iou": 0.4782608695652174,
+    "recall": 0.5345268542199488,
+    "false_cells": 46
+   },
+   "walkable": {
+    "truth": 300,
+    "test": 22,
+    "both": 22,
+    "iou": 0.07333333333333333,
+    "recall": 0.07333333333333333,
+    "false_cells": 0
+   }
+  },
+  "da_v2_rebuilt": {
+   "standable": {
+    "truth": 391,
+    "test": 177,
+    "both": 158,
+    "iou": 0.3853658536585366,
+    "recall": 0.4040920716112532,
+    "false_cells": 19
+   },
+   "walkable": {
+    "truth": 300,
+    "test": 77,
+    "both": 73,
+    "iou": 0.24013157894736842,
+    "recall": 0.24333333333333335,
+    "false_cells": 4
+   }
+  },
+  "vggt": {
+   "standable": {
+    "truth": 391,
+    "test": 226,
+    "both": 203,
+    "iou": 0.49033816425120774,
+    "recall": 0.5191815856777494,
+    "false_cells": 23
+   },
+   "walkable": {
+    "truth": 300,
+    "test": 213,
+    "both": 199,
+    "iou": 0.6337579617834395,
+    "recall": 0.6633333333333333,
+    "false_cells": 14
+   }
+  }
+ },
+ "splat_heldout": {
+  "views": 44,
+  "today_psnr": 31.334151806427066,
+  "vggt_psnr": 31.11211405929924,
+  "diff_db": -0.22203774712782606,
+  "ci95_db": [
+   -0.38287783550682103,
+   -0.07615961065540518
+  ],
+  "vggt_better": 20,
+  "today_ssim": 0.8768341497161442,
+  "vggt_ssim": 0.8733730469522759,
+  "ssim_diff_ci95": [
+   -0.0068156963305125344,
+   -0.0006936438214590348
+  ],
+  "worst5_vggt_minus_today": [
+   [
+    2848,
+    -1.59
+   ],
+   [
+    2080,
+    -1.51
+   ],
+   [
+    352,
+    -1.32
+   ],
+   [
+    2016,
+    -1.14
+   ],
+   [
+    224,
+    -1.11
+   ]
+  ],
+  "best5": [
+   [
+    672,
+    0.62
+   ],
+   [
+    864,
+    0.38
+   ],
+   [
+    928,
+    0.37
+   ],
+   [
+    2656,
+    0.3
+   ],
+   [
+    480,
+    0.29
+   ]
+  ],
+  "rerun_check": "today's points retrained here: 37 views rendered (the run was memory-killed during the last 7 renders), within 0.1 dB of today per view, mean 31.78 vs 31.80 on those 37"
+ }
+}
