@@ -63,9 +63,35 @@ Lessons: sharp dense frames are the biggest lever; SuperPoint+LightGlue solves w
 - Feed-forward demo without any GPU: Hugging Face Space `depth-anything/depth-anything-3` via `gradio_client`
   (`/handle_uploads` then `/gradio_demo` with `infer_gs=True`, `num_max_points` ≤ 100000).
 
-## Running now (2026-10-24)
-- `anasrazy/namma-room-render-mcmc` v2: the room with Nerfstudio `splatfacto-big` at 1080x1920 (more, smaller splats).
-- `anasrazy/namma-worldmirror2` v5 (queued): WorldMirror 2.0 on ~22 frames of the room.
+## Status at 2026-10-24 17:15 UTC (latest; read this first)
+
+Direction from the owner: **no long per-scene splat training** (it never gets photoreal). Build the room with feed-forward
+3D + generative world models (Matrix-3D style), free GPUs only (Kaggle / Colab, no paid GPUs), quick results.
+
+| Job / test | State | Where |
+|---|---|---|
+| `namma-room-render-mcmc` (Nerfstudio splatfacto-big) | **stopped on purpose**, don't restart | — |
+| `namma-worldmirror2` (Tencent WorldMirror 2.0) | **dropped**: v5 "No available kernel" (attention), v6 died with an empty log (out of memory on T4). Depth Anything 3 does the same job in 61 s | repo `colab/real_scenes/kaggle_worldmirror/` |
+| Difix3D+ repair test (NVIDIA, HF Space `georgeniu/difix`, `/restore_image`, ~70 s/image, no training) | done: fixes soft/smeared renders into a believable room, cannot rescue garbage, so it needs a decent base | repo `colab/real_scenes/matrix3d/results/difix_compare.jpg`, `difix_best.png` |
+| **360° panorama of the real room** | done, looks good: Depth Anything 3 points rendered as an equirectangular image from the camera-path centre (55% unseen) + SDXL inpainting of only the unseen pixels, real pixels pasted back | repo `colab/real_scenes/matrix3d/results/pano_raw.jpg` (real only), `pano_img.jpg` (filled) |
+| **`anasrazy/namma-matrix3d` v3** (Skywork Matrix-3D, 5B 720p, low-VRAM, 2×T4) | **running** since 17:15 UTC, ~1 h: pano → 360° walk-through video `pano_video.mp4` | kaggle.com/code/anasrazy/namma-matrix3d; job source repo `colab/real_scenes/matrix3d/kaggle/` |
+
+Matrix-3D facts:
+- Repo github.com/SkyworkAI/Matrix-3D. Steps: (1) image → panorama (uses FLUX.1-dev, gated, 24 GB: **skipped**, we make the pano
+  from the real room instead), (2) `torchrun code/panoramic_image_to_video.py --inout_dir=<dir with pano_img.jpg + prompt.txt>
+  --resolution=720 --use_5b_model --enable_vram_management`, (3) `code/panoramic_video_to_3DScene.py --inout_dir=... --resolution=720`
+  (optimisation-based, ~10 GB VRAM; needs nvdiffrast, simple-knn, ODGS, pytorch3d builds: **not done yet**).
+- Weights are gated on Hugging Face. The 5B LoRA (243 MB) is on the Mac at `/Users/mariyafatima/NAMMA/pano_video_gen_720p_5b.safetensors`
+  and on Kaggle as private dataset `anasrazy/namma-matrix3d-5b`. Base model `Wan-AI/Wan2.2-TI2V-5B` and `Ruicheng/moge-vitl` are public.
+- Don't run the repo's `download_checkpoints.py`: it pulls the 14B and LRM models (tens of GB, Kaggle disk runs out).
+- The 5B LoRA path in the code is `checkpoints/Wan-AI/wan-lora/` (hyphen), the download script uses `wan_lora` (underscore).
+
+## Next steps (in order)
+1. When Matrix-3D v3 finishes: `kaggle kernels output anasrazy/namma-matrix3d -p <dir>`, look at `pano_video.mp4`. If it failed,
+   read the log, fix `run.py`, push again (`kaggle kernels push -p colab/real_scenes/matrix3d/kaggle`).
+2. Add step 3 (video → 3D Gaussian scene `generated_3dgs_opt.ply`) to the same job, then view it in `colab/real_scenes/scripts/web_walk`.
+3. Better panorama input: more Depth Anything 3 frames (only 22 so far) so less of it is invented; one panorama per room.
+4. Merge per-room results with real camera poses (multi-room, later multi-floor). Difix3D+ with a real reference frame as final clean-up.
 
 ## Gotchas already solved (don't repeat them)
 - Kaggle's Python is 3.13 and uv targets it: create a 3.10/3.11 venv and pass `--python <venv>/bin/python` to every `uv pip install`.
