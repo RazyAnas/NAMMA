@@ -17,7 +17,7 @@ sh('ls -R /kaggle/input | head -40')
 _v = sorted(glob.glob('/kaggle/input/**/*.mp4', recursive=True) + glob.glob('/kaggle/input/**/*.mov', recursive=True))
 assert _v, 'no video under /kaggle/input: attach dataset anasrazy/namma-room-2026-10-22 (see ls above)'
 VIDEO = _v[0]; print('VIDEO', VIDEO)
-NFRAMES = int(os.environ.get('NFRAMES', 60))
+NFRAMES = int(os.environ.get('NFRAMES', 200))
 sh(f'git clone -q --depth 1 -b claude/wonderful-cori-i3fn41 https://github.com/RazyAnas/NAMMA {W}/repo', check=True)
 sys.path.insert(0, f'{W}/repo/colab/real_scenes/final')
 
@@ -82,13 +82,17 @@ def _():
     import fuse_nav as F
     F.fuse(f'{W}/da3.npz', f'{O}/model'); print(json.dumps({k: v for k, v in F.navigate(f'{O}/model/cloud.npz', f'{O}/model').items() if k != 'demo_path_cells'}))
     import build_viewer; print(build_viewer.build(f'{O}/model'), '-> model/viewer.html')
-@stage('4 splat fit (gsplat, 15 min cap)')
+@stage('4 splat fit A/B (gsplat)')
 def _():
     import torch
     sh('nvcc --version | tail -1; pip -q install ninja 2>&1 | tail -1')
     tv = torch.__version__.split('+')[0].split('.'); cu = (torch.version.cuda or '').replace('.', '')
     if sh(f'pip -q install gsplat --index-url https://docs.gsplat.studio/whl/pt{tv[0]}{tv[1]}cu{cu} 2>&1 | tail -2') != 0 or sh('python -c "import gsplat"') != 0:
         sh('pip -q install gsplat 2>&1 | tail -2', check=True)
-    import train_splat; train_splat.train(f'{W}/da3.npz', f'{O}/model/cloud.npz', f'{W}/frames', f'{O}/model/splat.ply', steps=int(os.environ.get('STEPS', 20000)))
+    import train_splat as T, gc
+    steps = int(os.environ.get('STEPS', 15000)); d, c, f, o = f'{W}/da3.npz', f'{O}/model/cloud.npz', f'{W}/frames', f'{O}/model'
+    T.train(d, c, f, f'{o}/splat.ply', steps=steps)                                        # A: plain fit (safe baseline, always written first)
+    try: T.train(d, c, f, f'{o}/splat_v2.ply', steps=steps, pose_opt=True, depth_w=0.05)   # B: + camera correction + depth anchor
+    except Exception: print('variant B FAILED (baseline splat.ply is intact)'); traceback.print_exc()
 
 print('files:', os.listdir(O))
