@@ -76,25 +76,47 @@ def _():
     k = np.where(have)[0]; np.savez(f'{W}/da3.npz', depth=D[k], K=Ks[k], c2w=C[k], rgb=rgb[k], idx=k)
     print('merged', len(k), 'of', len(files), 'frames; median depth', float(np.median(D[k][D[k] > 0])), '(metric)')
 
+@stage('2b SfM cameras (hloc SuperPoint+LightGlue, proven on this video: 574/578)')
+def _():
+    # DA3's cameras come from 40 chained chunks and drift (training had to move them 7.6 cm / 2.6 deg on average). SfM gives one
+    # globally consistent set; DA3 then only supplies metric scale and dense depth (sfm_align.py). Python 3.10 venv: the combo
+    # (torch 2.1.2 cu118 + hloc + LightGlue) that solved this video before.
+    E = f'{W}/sfmenv/bin/python'; P = f'--python {E}'
+    sh(f'pip -q install uv 2>&1 | tail -1; unset UV_SYSTEM_PYTHON UV_PYTHON PIP_TARGET; uv venv -q -p 3.10 {W}/sfmenv && '
+       f'uv pip install -q {P} torch==2.1.2 torchvision==0.16.2 --index-url https://download.pytorch.org/whl/cu118 > {W}/sfm_pip.log 2>&1; '
+       f'git clone -q --recursive https://github.com/cvg/Hierarchical-Localization {W}/hloc && '
+       f'uv pip install -q {P} "numpy<2" -e {W}/hloc "lightglue @ git+https://github.com/cvg/LightGlue" >> {W}/sfm_pip.log 2>&1; tail -3 {W}/sfm_pip.log')
+    sh(f'{E} -c "import hloc, lightglue, pycolmap; print(\'hloc ok, pycolmap\', pycolmap.__version__)"', check=True)
+    sh(f'cd {W} && {E} {W}/repo/colab/real_scenes/final/sfm_hloc.py {W}/frames {W}/sfm 2>&1 | grep -v "it/s" | grep -v "s/it" | tail -25')
+    import sfm_align; sfm_align.align(f'{W}/sfm/sfm.npz', f'{W}/da3.npz', f'{W}/da3_sfm.npz')
+
 @stage('3 fuse + floor plan + path')
 def _():
     sh('pip -q install open3d trimesh scipy matplotlib 2>&1 | tail -1')
     import fuse_nav as F
-    F.fuse(f'{W}/da3.npz', f'{O}/model'); print(json.dumps({k: v for k, v in F.navigate(f'{O}/model/cloud.npz', f'{O}/model').items() if k != 'demo_path_cells'}))
+    src = f'{W}/da3_sfm.npz' if os.path.exists(f'{W}/da3_sfm.npz') else f'{W}/da3.npz'; print('geometry from', src)
+    F.fuse(src, f'{O}/model'); print(json.dumps({k: v for k, v in F.navigate(f'{O}/model/cloud.npz', f'{O}/model').items() if k != 'demo_path_cells'}))
     import build_viewer; print(build_viewer.build(f'{O}/model'), '-> model/viewer.html')
-@stage('4 splat fit A/B (gsplat)')
+@stage('4 splat fits: SfM vs DA3 cameras, then SfM + 2M splats + reflections')
 def _():
     import torch
     sh('nvcc --version | tail -1; pip -q install ninja 2>&1 | tail -1')
     tv = torch.__version__.split('+')[0].split('.'); cu = (torch.version.cuda or '').replace('.', '')
     if sh(f'pip -q install gsplat --index-url https://docs.gsplat.studio/whl/pt{tv[0]}{tv[1]}cu{cu} 2>&1 | tail -2') != 0 or sh('python -c "import gsplat"') != 0:
         sh('pip -q install gsplat 2>&1 | tail -2', check=True)
-    import train_splat as T, gc
-    steps = int(os.environ.get('STEPS', 15000)); d, c, f, o = f'{W}/da3.npz', f'{O}/model/cloud.npz', f'{W}/frames', f'{O}/model'
-    T.train(d, c, f, f'{o}/splat.ply', steps=steps)                                        # A: plain fit (safe baseline, always written first)
-    try: T.train(d, c, f, f'{o}/splat_v2.ply', steps=steps, pose_opt=True, depth_w=0.05)   # B: + camera correction + depth anchor
-    except Exception: print('variant B FAILED (baseline splat.ply is intact)'); traceback.print_exc()
-    try: T.train(d, c, f, f'{o}/splat_v3_2M.ply', steps=12000, max_seconds=1100, pose_opt=True, depth_w=0.05, mcmc_cap=2000000)   # C: B + MCMC, up to 2M splats
-    except Exception: print('variant C FAILED (A and B are intact)'); traceback.print_exc()
+    import train_splat as T, fuse_nav as F
+    steps = int(os.environ.get('STEPS', 15000)); f, o = f'{W}/frames', f'{O}/model'
+    def run(name, *a, **k):
+        try: T.train(*a, **k)
+        except Exception: print(f'variant {name} FAILED (earlier files are intact)'); traceback.print_exc()
+    if os.path.exists(f'{W}/da3_sfm.npz'):
+        s, cs = f'{W}/da3_sfm.npz', f'{O}/model/cloud.npz'                  # stage 3 fused this cloud on the SfM cameras
+        run('S1', s, cs, f, f'{o}/splat_sfm.ply', steps=steps, pose_opt=True, depth_w=0.05)            # SfM cameras
+        F.fuse(f'{W}/da3.npz', f'{W}/cloud_da3')                                                      # same training, DA3 cameras
+        run('D', f'{W}/da3.npz', f'{W}/cloud_da3/cloud.npz', f, f'{o}/splat_da3.ply', steps=steps, pose_opt=True, depth_w=0.05)
+        run('S2', s, cs, f, f'{o}/splat_sfm_2M_sh3.ply', steps=10000, max_seconds=1300, pose_opt=True, depth_w=0.05, mcmc_cap=2000000, sh=3)
+    else:
+        print('no SfM cameras: falling back to DA3 cameras')
+        run('C', f'{W}/da3.npz', f'{o}/cloud.npz', f, f'{o}/splat_da3_2M_sh3.ply', steps=10000, max_seconds=1300, pose_opt=True, depth_w=0.05, mcmc_cap=2000000, sh=3)
 
 print('files:', os.listdir(O))
