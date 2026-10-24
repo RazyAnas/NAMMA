@@ -86,6 +86,13 @@ Matrix-3D facts:
 - Don't run the repo's `download_checkpoints.py`: it pulls the 14B and LRM models (tens of GB, Kaggle disk runs out).
 - The 5B LoRA path in the code is `checkpoints/Wan-AI/wan-lora/` (hyphen), the download script uses `wan_lora` (underscore).
 
+## Matrix-3D job log (latest first)
+- v5 (17:41 UTC): all installs and imports OK, models downloaded (Wan2.2-TI2V-5B is 33 GB on disk, fits). Failed in MoGe:
+  `AttributeError: module 'utils3d.numpy' has no attribute 'icosahedron'`. **Fix next:** pin `utils3d` to the older commit that
+  MoGe v1 was written for (the latest utils3d renamed things) in `colab/real_scenes/matrix3d/kaggle/run.py`, push v6.
+- v4: missing pyrender (fixed: all imports now pre-checked). v3: DiffSynth install broke on pkg_resources (fixed). v1/v2: clone into existing folder (fixed).
+- Local working copy of the job: scratchpad `km3d/` (same as repo `colab/real_scenes/matrix3d/kaggle/` plus the v4/v5 fixes).
+
 ## Next steps (in order)
 1. When Matrix-3D v3 finishes: `kaggle kernels output anasrazy/namma-matrix3d -p <dir>`, look at `pano_video.mp4`. If it failed,
    read the log, fix `run.py`, push again (`kaggle kernels push -p colab/real_scenes/matrix3d/kaggle`).
