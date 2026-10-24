@@ -25,6 +25,8 @@ class Settings(BaseSettings):
     log_dir: Path = Path("./logs")
     database_url: str = "sqlite:///./data/namma.db"
     max_concurrent_jobs: int = 1
+    # True on the Modal web container: jobs run on GPU containers, so a restart must not mark them failed.
+    jobs_run_elsewhere: bool = False
     max_upload_mb: int = 2048
     frame_sample_fps: float = 2.0
     frame_max_width: int = 1280
@@ -87,6 +89,13 @@ class Settings(BaseSettings):
     navigation_floor_support_above_m: float = 0.12
     navigation_min_floor_points_per_cell: int = 2
     navigation_obstacle_min_height_m: float = 0.15
+    navigation_max_support_height_m: float = 1.0
+    navigation_step_clearance_m: float = 0.30
+    navigation_max_step_m: float = 0.25
+    navigation_max_climb_height_m: float = 1.2
+    navigation_min_obstacle_points_per_cell: int = 3
+    navigation_obstacle_neighbor_radius_m: float = 0.08
+    navigation_min_obstacle_neighbor_voxels: int = 12
     navigation_grid_max_dimension: int = 512
     navigation_component_min_cells: int = 20
     agent_radius_meters: float = 0.30

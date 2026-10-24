@@ -1,0 +1,20 @@
+{
+ "scene": "../../colab/real_scenes/walk_demo/data/phone_room/collision.glb",
+ "floor_height_along_up": -1.102,
+ "up": [
+  -0.308,
+  -0.031,
+  -0.951
+ ],
+ "grid": [
+  106,
+  95
+ ],
+ "cell_m": 0.05,
+ "radius_m": 0.25,
+ "floor_seen_m2": 8.01,
+ "walkable_m2": 0.99,
+ "analyse_s": 0.51,
+ "astar_s": 0.002,
+ "path_len_m": 2.15
+}

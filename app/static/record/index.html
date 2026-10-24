@@ -1,0 +1,144 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+    <meta name="theme-color" content="#07110f" />
+    <title>NAMMA Space Studio</title>
+    <link rel="stylesheet" href="record.css" />
+    <script type="importmap">
+      {
+        "imports": {
+          "three": "./vendor/three.module.min.js",
+          "three/addons/": "./vendor/addons/",
+          "@sparkjsdev/spark": "./vendor/spark.module.min.js"
+        }
+      }
+    </script>
+  </head>
+  <body data-screen="setup">
+    <video id="video" playsinline muted autoplay></video>
+
+    <main id="setup" class="panel">
+      <h1>NAMMA Space studio</h1>
+      <p>Records 4K video (where the phone allows) and motion sensors. "Send for render" sends the recording to a render
+        server (the cloud, Colab or your laptop) for the photoreal model, which comes back here.</p>
+      <dl class="caps">
+        <dt>HTTPS</dt><dd id="cap-secure">…</dd>
+        <dt>Video encoder</dt><dd id="cap-codec">…</dd>
+        <dt>Motion sensors</dt><dd id="cap-imu">…</dd>
+      </dl>
+      <details class="tips" open>
+        <summary>How to film for a good 3D model</summary>
+        <ol>
+          <li>Settings first: video HDR, scene optimiser and "super steady" stabilisation off. Lights on, blinds open.</li>
+          <li>Hold the phone upright at chest height, aimed at eye level. Use the widest lens.</li>
+          <li>Walk slowly, about one step a second. To change direction: stop, turn slowly, walk on. Never spin on the spot.</li>
+          <li>Each room: start under the door frame looking in, walk one lap close to the walls, a second lap the other way,
+            then cross both diagonals corner to corner. Then get close (30–60 cm) to anything you want sharp.</li>
+          <li>Cross doorways through the middle, looking ahead. Don't stop the video between rooms.</li>
+          <li>Plain walls, glass and mirrors are hard: tape up a poster or patterned item while filming, remove it after.</li>
+        </ol>
+        <p>The recorder films in 4K at 30 fps where the phone allows (otherwise 1080p at 60 fps). Before it starts you see a
+          preview with automatic exposure: adjust brightness, ISO, shutter and colour if needed, tap "Lock exposure and colour" when it looks natural, then Start.</p>
+      </details>
+      <label class="check"><input id="strict" type="checkbox" checked /> Strict: keep only frames with fresh gyro, accelerometer and gravity readings (others are listed in rejects.csv)</label>
+      <label class="select">Quality
+        <select id="quality"><option value="4k30" selected>4K, 30 fps (sharpest, if the phone has it)</option><option value="1080p60">1080p, 60 fps</option></select></label>
+      <button id="start-camera" type="button" disabled>Record</button>
+      <label class="button secondary" for="open-file">Open a saved recording</label>
+      <input id="open-file" type="file" accept=".zip,video/*" hidden />
+      <button id="resume" class="secondary" type="button" hidden>Show my last render</button>
+      <p id="status"></p>
+      <p id="error" role="alert"></p>
+
+      <section class="render">
+        <h2>Render server</h2>
+        <p id="pair-status" class="note">Not paired yet.</p>
+        <details id="pair-box">
+          <summary>Change server</summary>
+          <p class="note">Open this page from your cloud link, or tap the link Colab or the laptop prints, and it pairs by
+            itself. Or paste the address and key here.</p>
+          <input id="server" type="url" inputmode="url" placeholder="https://…modal.run or https://….trycloudflare.com" autocomplete="off" />
+          <input id="key" type="text" placeholder="pairing key" autocomplete="off" autocapitalize="off" />
+          <button id="pair-test" class="secondary" type="button">Test connection</button>
+          <a id="colab" class="button secondary" target="_blank" rel="noopener"
+            href="https://colab.research.google.com/github/RazyAnas/NAMMA/blob/claude/project-thread-6fvpyc/notebooks/phone_render_colab.ipynb">Start a free Colab GPU</a>
+        </details>
+      </section>
+
+      <section id="history-box" class="render" hidden>
+        <h2>Your scans</h2>
+        <ul id="history" class="history"></ul>
+        <p id="history-status" class="note"></p>
+      </section>
+    </main>
+
+    <section id="preview" class="hud preview">
+      <p>Set brightness, ISO, shutter and colour like a camera app (only what this phone allows is shown). Point at the bright and dark parts of the room; when it looks natural, lock it so the whole video keeps the same look.</p>
+      <details open><summary>Camera settings</summary><div id="manual" class="manual"></div></details>
+      <button id="lock" type="button" class="secondary" aria-pressed="false">Lock exposure and colour</button>
+      <button id="focus-lock" type="button" class="secondary" aria-pressed="false" hidden>Lock focus</button>
+      <p id="focus-note" class="note"></p>
+      <p class="note">Tap the picture to focus there; press and hold to lock focus (also while recording).</p>
+      <p id="preview-note" class="note"></p>
+      <button id="go" type="button">Start recording</button>
+    </section>
+
+    <section id="hud" class="hud">
+      <dl>
+        <dt>Time</dt><dd id="hud-time">0 s</dd>
+        <dt>Frames</dt><dd id="hud-frames">0</dd>
+        <dt>Gyro</dt><dd id="hud-imu">…</dd>
+        <dt>Rejected</dt><dd id="hud-rejected">0</dd>
+        <dt hidden>Scanned</dt><dd id="hud-cover" hidden>…</dd>
+      </dl>
+      <p class="legend"><span class="sw red"></span>seen from 1 direction <span class="sw yellow"></span>2 <span class="sw green"></span>3+, good · unpainted = not scanned yet · blue lines = walls found</p>
+      <p id="hud-track" data-ok="yes">starting…</p>
+      <p id="hud-focus" class="note"></p>
+      <div class="hud-buttons">
+        <button id="hud-focus-lock" type="button" class="secondary" aria-pressed="false" hidden>Lock focus</button>
+        <button id="stop" type="button">Stop and save</button>
+      </div>
+    </section>
+
+    <main id="done" class="panel">
+      <h1 id="done-title">Recording ready</h1>
+      <div id="view3d" class="view3d"><p id="view-hint">Building the quick 3D model…</p></div>
+      <div class="toggles">
+        <label><input id="show-quick" type="checkbox" checked /> Quick model</label>
+        <label><input id="show-photo" type="checkbox" checked disabled /> Photoreal</label>
+        <label><input id="show-path" type="checkbox" checked /> Path</label>
+      </div>
+      <p id="quick-status" class="note"></p>
+
+      <section class="render">
+        <h2>Photoreal render</h2>
+        <p id="send-target" class="note">Not paired with a render server yet: see the first screen.</p>
+        <label class="select">Quality
+          <select id="quality">
+            <option value="fast">Fast (minutes)</option>
+            <option value="balanced" selected>Balanced</option>
+            <option value="best">Best (slow)</option>
+          </select>
+        </label>
+        <button id="send" type="button" disabled>Send for render</button>
+        <progress id="render-progress" max="1" value="0" hidden></progress>
+        <ol id="render-steps" class="steps"></ol>
+        <p id="render-status" class="note"></p>
+        <div id="render-action" hidden>
+          <a id="render-action-link" class="button" target="_blank" rel="noopener"></a>
+          <button id="retry" type="button" class="secondary">Try again</button>
+        </div>
+      </section>
+
+      <dl id="summary" class="caps"></dl>
+      <a id="save" class="button secondary" href="#">Save bundle</a>
+      <a id="save-quick" class="button secondary" href="#" hidden>Save quick model (.ply)</a>
+      <button id="again" class="secondary" type="button">Record again</button>
+    </main>
+
+    <script type="module" src="record.js"></script>
+    <script type="module" src="studio.js"></script>
+  </body>
+</html>
