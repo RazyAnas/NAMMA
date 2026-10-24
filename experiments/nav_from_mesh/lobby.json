@@ -1,0 +1,20 @@
+{
+ "scene": "../../colab/real_scenes/walk_demo/data/lobby/collision.glb",
+ "floor_height_along_up": 1.445,
+ "up": [
+  0.028,
+  0.974,
+  -0.226
+ ],
+ "grid": [
+  105,
+  179
+ ],
+ "cell_m": 0.05,
+ "radius_m": 0.25,
+ "floor_seen_m2": 20.9,
+ "walkable_m2": 15.17,
+ "analyse_s": 0.44,
+ "astar_s": 0.028,
+ "path_len_m": 8.75
+}
