@@ -27,12 +27,12 @@ def delta_pose(c):
     R = torch.eye(3, device=c.device) + torch.sin(th) * Kx + (1 - torch.cos(th)) * (Kx @ Kx)
     top = torch.cat([R, t[:, None]], 1); return torch.cat([top, torch.tensor([[0., 0., 0., 1.]], device=c.device)], 0)
 
-def train(da3, cloud, frames_dir, out_ply, steps=15000, max_seconds=600, dev='cuda', pose_opt=False, depth_w=0.0, max_init=500000):
+def train(da3, cloud, frames_dir, out_ply, steps=15000, max_seconds=600, dev='cuda', pose_opt=False, depth_w=0.0, max_init=500000, mcmc_cap=0):
     """pose_opt: learn a small per-view camera correction (the cameras come from chained feed-forward chunks, so they drift).
     depth_w: weight of an L1 loss against the feed-forward depth, fading to 0 at 60% of training (anchors geometry early)."""
     import torch, torch.nn.functional as F
     from gsplat import rasterization
-    from gsplat.strategy import DefaultStrategy
+    from gsplat.strategy import DefaultStrategy, MCMCStrategy
     imgs, Ks, V, DEP = load_views(da3, frames_dir); imgs, Ks, V, DEP = imgs.to(dev), Ks.to(dev), V.to(dev), DEP.to(dev); N, H, W, _ = imgs.shape
     c = np.load(cloud); pts, col = c['pts'], c['col'] / 255.0
     sel = np.random.default_rng(0).choice(len(pts), min(len(pts), max_init), replace=False); pts, col = pts[sel], col[sel]
@@ -45,7 +45,9 @@ def train(da3, cloud, frames_dir, out_ply, steps=15000, max_seconds=600, dev='cu
         'sh0': ((torch.tensor(col, dtype=torch.float32) - 0.5) / 0.28209479)[:, None, :], 'shN': torch.zeros(len(pts), 0, 3)}).to(dev)
     lrs = {'means': 1.6e-4 * scene_scale, 'scales': 5e-3, 'quats': 1e-3, 'opacities': 5e-2, 'sh0': 2.5e-3, 'shN': 1.25e-4}
     opts = {k: torch.optim.Adam([params[k]], lr=lrs[k], eps=1e-15) for k in params}
-    strat = DefaultStrategy(verbose=False, refine_stop_iter=int(steps * 0.7)); strat.check_sanity(params, opts); st = strat.initialize_state(scene_scale=scene_scale)
+    if mcmc_cap:                                                 # MCMC: an explicit splat budget (relocates dead splats, adds up to cap_max)
+        strat = MCMCStrategy(cap_max=mcmc_cap, refine_stop_iter=int(steps * 0.8), verbose=False); strat.check_sanity(params, opts); st = strat.initialize_state()
+    else: strat = DefaultStrategy(verbose=False, refine_stop_iter=int(steps * 0.7)); strat.check_sanity(params, opts); st = strat.initialize_state(scene_scale=scene_scale)
     cam = torch.zeros(N, 6, device=dev, requires_grad=True); opt_cam = torch.optim.Adam([cam], lr=3e-4) if pose_opt else None
     def view(i, refined=True): return (delta_pose(cam[i]) @ V[i])[None] if (pose_opt and refined) else V[i:i + 1]
     test = [i for i in range(3, N, 8)]; train_ids = [i for i in range(N) if i not in test]   # every 8th frame held out (neighbours are close: mild test)
@@ -55,12 +57,18 @@ def train(da3, cloud, frames_dir, out_ply, steps=15000, max_seconds=600, dev='cu
         out, a, info = rasterization(params['means'], F.normalize(params['quats'], dim=-1), torch.exp(params['scales']), torch.sigmoid(params['opacities']),
                                      torch.cat([params['sh0'], params['shN']], 1), view(i), Ks[i:i + 1], W, H, sh_degree=0, packed=False, render_mode='RGB+ED')
         r, ed = out[0, ..., :3], out[0, ..., 3]
-        strat.step_pre_backward(params, opts, st, step, info)
+        if not mcmc_cap: strat.step_pre_backward(params, opts, st, step, info)
         loss = 0.8 * (r - imgs[i]).abs().mean() + 0.2 * (1 - ssim(r, imgs[i]))
         if depth_w > 0 and step < 0.6 * steps:
             gt = F.interpolate(DEP[i][None, None], size=(H, W), mode='bilinear', align_corners=False)[0, 0]; m = (gt > 0) & (a[0, ..., 0] > 0.5)
             if m.any(): loss = loss + depth_w * (1 - step / (0.6 * steps)) * ((ed - gt).abs() / (gt + 0.2))[m].mean()
-        loss.backward(); strat.step_post_backward(params, opts, st, step, info, packed=False)
+        if mcmc_cap: loss = loss + 0.01 * torch.sigmoid(params['opacities']).mean() + 0.01 * torch.exp(params['scales']).mean()   # keeps splats from all staying big/opaque
+        loss.backward()
+        if mcmc_cap:
+            lr_m = lrs['means'] * 0.01 ** (step / steps)         # exponential decay of the position lr; MCMC also uses it to scale its noise
+            for g in opts['means'].param_groups: g['lr'] = lr_m
+            strat.step_post_backward(params, opts, st, step, info, lr=lr_m)
+        else: strat.step_post_backward(params, opts, st, step, info, packed=False)
         for o in opts.values(): o.step(); o.zero_grad(set_to_none=True)
         if opt_cam is not None: opt_cam.step(); opt_cam.zero_grad(set_to_none=True)
         if step % 500 == 0: print(f'step {step} loss {loss.item():.4f} gaussians {len(params["means"])} {time.time()-t0:.0f}s', flush=True)

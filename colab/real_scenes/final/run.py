@@ -94,5 +94,7 @@ def _():
     T.train(d, c, f, f'{o}/splat.ply', steps=steps)                                        # A: plain fit (safe baseline, always written first)
     try: T.train(d, c, f, f'{o}/splat_v2.ply', steps=steps, pose_opt=True, depth_w=0.05)   # B: + camera correction + depth anchor
     except Exception: print('variant B FAILED (baseline splat.ply is intact)'); traceback.print_exc()
+    try: T.train(d, c, f, f'{o}/splat_v3_2M.ply', steps=12000, max_seconds=1100, pose_opt=True, depth_w=0.05, mcmc_cap=2000000)   # C: B + MCMC, up to 2M splats
+    except Exception: print('variant C FAILED (A and B are intact)'); traceback.print_exc()
 
 print('files:', os.listdir(O))
