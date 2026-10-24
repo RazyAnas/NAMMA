@@ -13,7 +13,10 @@ def stage(name):
         try: f(); print(f'== {name}: ok [{time.time()-T0:.0f}s]', flush=True)
         except Exception: print(f'== {name}: FAILED'); traceback.print_exc()
     return deco
-VIDEO = (glob.glob('/kaggle/input/*/video.mp4') or glob.glob('/kaggle/input/*/*.mp4'))[0]
+sh('ls -R /kaggle/input | head -40')
+_v = sorted(glob.glob('/kaggle/input/**/*.mp4', recursive=True) + glob.glob('/kaggle/input/**/*.mov', recursive=True))
+assert _v, 'no video under /kaggle/input: attach dataset anasrazy/namma-room-2026-10-22 (see ls above)'
+VIDEO = _v[0]; print('VIDEO', VIDEO)
 NFRAMES = int(os.environ.get('NFRAMES', 60))
 
 @stage('1 frames')
