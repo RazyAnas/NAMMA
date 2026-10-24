@@ -50,7 +50,12 @@ def _():
             print('missing', e.name, '-> pip', pkg); sh(f'pip -q install {pkg} 2>&1 | tail -1')
     model = DepthAnything3.from_pretrained('depth-anything/DA3NESTED-GIANT-LARGE').to('cuda').eval()
     files = sorted(glob.glob(f'{W}/frames/*.jpg'))
-    pred = model.inference(files)                             # depth (N,H,W), extrinsics (N,3,4) w2c, intrinsics (N,3,3)
+    while True:                                               # all views attend to each other: halve the view count until it fits the T4
+        try:
+            pred = model.inference(files); break                  # depth (N,H,W), extrinsics (N,3,4) w2c, intrinsics (N,3,3)
+        except torch.OutOfMemoryError:
+            torch.cuda.empty_cache(); files = files[::2]; print('OOM -> retry with', len(files), 'frames', flush=True)
+            if len(files) < 8: raise
     ext = np.concatenate([pred.extrinsics, np.tile([[[0, 0, 0, 1.]]], (len(files), 1, 1))], 1)
     np.savez(f'{W}/da3.npz', depth=pred.depth, K=pred.intrinsics, c2w=np.linalg.inv(ext), rgb=pred.processed_images)
     print('depth', pred.depth.shape, 'median depth', float(np.median(pred.depth)), '(DA3 nested = metric)')
