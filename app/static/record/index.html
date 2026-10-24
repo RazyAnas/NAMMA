@@ -63,7 +63,7 @@
           <input id="key" type="text" placeholder="pairing key" autocomplete="off" autocapitalize="off" />
           <button id="pair-test" class="secondary" type="button">Test connection</button>
           <a id="colab" class="button secondary" target="_blank" rel="noopener"
-            href="https://colab.research.google.com/github/RazyAnas/NAMMA/blob/claude/project-thread-6fvpyc/notebooks/phone_render_colab.ipynb">Start a free Colab GPU</a>
+            href="https://colab.research.google.com/github/RazyAnas/NAMMA/blob/claude/project-thread-eopuhz/notebooks/phone_render_colab.ipynb">Start a free Colab GPU</a>
         </details>
       </section>
 
@@ -74,12 +74,11 @@
       </section>
     </main>
 
+    <button id="focus-lock" type="button" class="secondary focus-float" aria-pressed="false" hidden>Lock focus</button>
     <section id="preview" class="hud preview">
       <p>Set brightness, ISO, shutter and colour like a camera app (only what this phone allows is shown). Point at the bright and dark parts of the room; when it looks natural, lock it so the whole video keeps the same look.</p>
       <details open><summary>Camera settings</summary><div id="manual" class="manual"></div></details>
       <button id="lock" type="button" class="secondary" aria-pressed="false">Lock exposure and colour</button>
-      <button id="focus-lock" type="button" class="secondary" aria-pressed="false" hidden>Lock focus</button>
-      <p id="focus-note" class="note"></p>
       <p class="note">Tap the picture to focus there; press and hold to lock focus (also while recording).</p>
       <p id="preview-note" class="note"></p>
       <button id="go" type="button">Start recording</button>
@@ -96,10 +95,7 @@
       <p class="legend"><span class="sw red"></span>seen from 1 direction <span class="sw yellow"></span>2 <span class="sw green"></span>3+, good · unpainted = not scanned yet · blue lines = walls found</p>
       <p id="hud-track" data-ok="yes">starting…</p>
       <p id="hud-focus" class="note"></p>
-      <div class="hud-buttons">
-        <button id="hud-focus-lock" type="button" class="secondary" aria-pressed="false" hidden>Lock focus</button>
-        <button id="stop" type="button">Stop and save</button>
-      </div>
+      <button id="stop" type="button">Stop and save</button>
     </section>
 
     <main id="done" class="panel">
