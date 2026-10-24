@@ -16,8 +16,9 @@ sh(f'unset UV_SYSTEM_PYTHON UV_PYTHON; cd {W} && uv venv -q -p 3.11 env && '
    f'uv pip install -q {P} torch==2.7.1 torchvision==0.22.1 --index-url https://download.pytorch.org/whl/cu128 > pip.log 2>&1; '
    f'for r in ninja setuptools wheel "diffusers==0.34.0" "transformers==4.56.0" accelerate "modelscope==1.28.2" xfuser peft easydict '
    f'imageio imageio-ffmpeg opencv-python-headless einops plyfile trimesh py360convert decord safetensors sentencepiece ftfy '
-   f'"git+https://github.com/EasternJournalist/utils3d.git" scipy open3d natsort; do uv pip install -q {P} "$r" >> pip.log 2>&1 || echo "FAILED $r"; done; '
-   f'uv pip install -q {P} -e repo/code/DiffSynth-Studio >> pip.log 2>&1 || echo FAILED diffsynth; '
+   f'"git+https://github.com/EasternJournalist/utils3d.git" scipy open3d natsort pyrender PyOpenGL pandas scikit-image matplotlib omegaconf click "xformers==0.0.31"; do uv pip install -q {P} "$r" >> pip.log 2>&1 || echo "FAILED $r"; done; '
+   f'uv pip install -q {P} "setuptools<70" protobuf controlnet-aux >> pip.log 2>&1; '
+   f'uv pip install -q {P} --no-build-isolation -e repo/code/DiffSynth-Studio >> pip.log 2>&1 || echo FAILED diffsynth; '
    f'uv pip install -q {P} --no-build-isolation ./repo/submodules/nvdiffrast >> pip.log 2>&1 || echo FAILED nvdiffrast; tail -5 pip.log')
 PY = f'{W}/env/bin/python'
 # Fill the unseen half of the panorama (SDXL inpainting, fp16, about a minute on a T4).
@@ -57,7 +58,9 @@ snapshot_download("Wan-AI/Wan2.2-TI2V-5B", local_dir="checkpoints/Wan-AI/Wan2.2-
 print("checkpoints ok")
 ''' % W)
 sh(f'{PY} {W}/dl.py 2>&1 | tail -3; du -sh {W}/repo/checkpoints/*')
-code = sh(f'cd {W}/repo && {W}/env/bin/torchrun --nproc_per_node 2 code/panoramic_image_to_video.py --inout_dir={CASE} '
+ENV = f'PYOPENGL_PLATFORM=egl PATH={W}/env/bin:$PATH PYTHONPATH={W}/repo/code/DiffSynth-Studio:{W}/repo/code'
+sh(f'cd {W}/repo && {ENV} python -c "import diffsynth, nvdiffrast.torch, xfuser, pyrender, pandas, skimage, matplotlib, omegaconf, click, utils3d, xformers, peft, modelscope, trimesh, imageio, utils_3dscene.nvrender; print(\'imports ok\')"')
+code = sh(f'cd {W}/repo && {ENV} {W}/env/bin/torchrun --nproc_per_node 2 code/panoramic_image_to_video.py --inout_dir={CASE} '
           f'--resolution=720 --use_5b_model --enable_vram_management 2>&1 | grep -vE "it/s|s/it" | tail -60')
 sh(f'cp {CASE}/*.mp4 {CASE}/*.jpg {CASE}/*.json {O}/ 2>/dev/null; ls -la {CASE} {O}')
 sys.exit(code)
