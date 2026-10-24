@@ -67,7 +67,7 @@ NP=$(python -c "import json; print(len(json.load(open('$W/data/transforms.json')
 if [ "$FINAL" = 1 ]; then
   LOG train
   ns-train splatfacto --max-num-iterations $STEPS --vis tensorboard --output-dir $W/out --experiment-name full --timestamp final \
-    --viewer.quit-on-train-completion True nerfstudio-data --data $W/data --eval-mode all > $W/train_final.log 2>&1 \
+    --viewer.quit-on-train-completion True $TRAIN_ARGS nerfstudio-data --data $W/data --eval-mode all $DATA_ARGS > $W/train_final.log 2>&1 \
     || { echo TRAIN_FAILED; tail -25 $W/train_final.log; exit 1; }
   LOG export
   ns-export gaussian-splat --load-config $(ls $W/out/full/*/final/config.yml | head -1) --output-dir $W/export > $W/export.log 2>&1 \
