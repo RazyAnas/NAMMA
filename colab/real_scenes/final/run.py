@@ -18,6 +18,8 @@ _v = sorted(glob.glob('/kaggle/input/**/*.mp4', recursive=True) + glob.glob('/ka
 assert _v, 'no video under /kaggle/input: attach dataset anasrazy/namma-room-2026-10-22 (see ls above)'
 VIDEO = _v[0]; print('VIDEO', VIDEO)
 NFRAMES = int(os.environ.get('NFRAMES', 60))
+sh(f'git clone -q --depth 1 -b claude/wonderful-cori-i3fn41 https://github.com/RazyAnas/NAMMA {W}/repo', check=True)
+sys.path.insert(0, f'{W}/repo/colab/real_scenes/final')
 
 @stage('1 frames')
 def _():
@@ -50,28 +52,33 @@ def _():
             print('missing', e.name, '-> pip', pkg); sh(f'pip -q install {pkg} 2>&1 | tail -1')
     model = DepthAnything3.from_pretrained('depth-anything/DA3NESTED-GIANT-LARGE').to('cuda').eval()
     files = sorted(glob.glob(f'{W}/frames/*.jpg'))
-    import gc
-    files = files[::2]                                        # start at 30 views: 60 does not fit a 15 GB T4
-    while True:                                               # all views attend to each other: halve the view count until it fits
-        oom = False
-        try:
-            with torch.no_grad(): pred = model.inference(files)  # depth (N,H,W), extrinsics (N,3,4) w2c, intrinsics (N,3,3)
-            break
-        except (torch.OutOfMemoryError, RuntimeError) as e:
-            if 'out of memory' not in str(e).lower() and 'cudnn' not in str(e).lower(): raise
-            oom = True
-        # free OUTSIDE the except block: inside it the traceback still pins every tensor and the retry OOMs at any size
-        gc.collect(); torch.cuda.empty_cache(); torch.cuda.synchronize()
-        files = files[::2]; print('OOM -> retry with', len(files), 'frames', 'free MiB', torch.cuda.mem_get_info()[0] >> 20, flush=True)
-        if len(files) < 6: raise RuntimeError('DA3 does not fit even with 6 views')
-    ext = np.concatenate([pred.extrinsics, np.tile([[[0, 0, 0, 1.]]], (len(files), 1, 1))], 1)
-    np.savez(f'{W}/da3.npz', depth=pred.depth, K=pred.intrinsics, c2w=np.linalg.inv(ext), rgb=pred.processed_images)
-    print('depth', pred.depth.shape, 'median depth', float(np.median(pred.depth)), '(DA3 nested = metric)')
+    import gc, chunk_align as CA
+    CH, STEP = int(os.environ.get('CHUNK', 8)), int(os.environ.get('STEP', 5))   # 8 views fit a T4; 30 and 15 ran out of memory
+    chunks = []
+    for a in range(0, max(1, len(files) - CH + STEP), STEP):
+        idx = list(range(a, min(a + CH, len(files))))
+        if len(idx) < 3: break
+        pred = None
+        for attempt in range(2):
+            try:
+                with torch.no_grad(): pred = model.inference([files[i] for i in idx]); break
+            except (torch.OutOfMemoryError, RuntimeError) as e:
+                if 'out of memory' not in str(e).lower() and 'cudnn' not in str(e).lower(): raise
+            gc.collect(); torch.cuda.empty_cache()        # free OUTSIDE the except block (the traceback pins the tensors there)
+        if pred is None: print('chunk', a, 'skipped (OOM)'); continue
+        ext = np.concatenate([pred.extrinsics, np.tile([[[0, 0, 0, 1.]]], (len(idx), 1, 1))], 1)
+        chunks.append(dict(idx=idx, depth=np.asarray(pred.depth), K=np.asarray(pred.intrinsics), c2w=np.linalg.inv(ext), rgb=np.asarray(pred.processed_images)))
+        print('chunk', a, 'ok', len(chunks), flush=True); gc.collect(); torch.cuda.empty_cache()
+    D, Ks, C, have = CA.merge(chunks)                       # each chunk is in its own frame; fit a similarity on the shared frames
+    rgb = np.zeros(D.shape + (3,), np.uint8)
+    for c in chunks:
+        for j, g in enumerate(c['idx']): rgb[g] = c['rgb'][j]
+    k = np.where(have)[0]; np.savez(f'{W}/da3.npz', depth=D[k], K=Ks[k], c2w=C[k], rgb=rgb[k])
+    print('merged', len(k), 'of', len(files), 'frames; median depth', float(np.median(D[k][D[k] > 0])), '(metric)')
 
 @stage('3 fuse + floor plan + path')
 def _():
     sh('pip -q install open3d trimesh scipy matplotlib 2>&1 | tail -1')
-    sh(f'git clone -q --depth 1 -b claude/wonderful-cori-i3fn41 https://github.com/RazyAnas/NAMMA {W}/repo', check=True)
-    sys.path.insert(0, f'{W}/repo/colab/real_scenes/final'); import fuse_nav as F
+    import fuse_nav as F
     F.fuse(f'{W}/da3.npz', f'{O}/model'); print(json.dumps({k: v for k, v in F.navigate(f'{O}/model/cloud.npz', f'{O}/model').items() if k != 'demo_path_cells'}))
 print('files:', os.listdir(O))
