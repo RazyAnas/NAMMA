@@ -7,9 +7,16 @@ import argparse, heapq, json, time
 import numpy as np, trimesh
 from scipy import ndimage
 
-def estimate_up(m):
-    n, a = m.face_normals, m.area_faces
-    w, v = np.linalg.eigh((n * a[:, None]).T @ n)   # dominant normal axis = floor/ceiling
+def load_points(path):
+    """Mesh -> area-uniform surface samples + normals; a point cloud (.ply/.npy xyz+normals) is used as is."""
+    if str(path).endswith(".npz"):
+        d = np.load(path); return d["pts"], d["nrm"]
+    m = trimesh.load(path, force="mesh")
+    pts, fi = trimesh.sample.sample_surface(m, 400000, seed=0)
+    return pts, m.face_normals[fi]
+
+def estimate_up(n):
+    w, v = np.linalg.eigh(n.T @ n)   # dominant normal axis = floor/ceiling
     up = v[:, -1]
     # floor+ceiling are antiparallel; vertical walls are orthogonal. Pick the sign with the lower big mass (floor is lowest)
     return up
@@ -20,10 +27,9 @@ def floor_frame(up):
 
 def analyse(path, radius=0.25, cell=0.05, head=1.7, step=0.15):
     t0 = time.time()
-    m = trimesh.load(path, force="mesh")
-    up = estimate_up(m)
-    pts, fi = trimesh.sample.sample_surface(m, 400000, seed=0)
-    horiz = np.abs(m.face_normals[fi] @ up) > .85
+    pts, nrm = load_points(path)
+    up = estimate_up(nrm)
+    horiz = np.abs(nrm @ up) > .85
     def floor_of(sign):
         h = sign * (pts @ up); hh = h[horiz]
         lo, hi = hh.min(), hh.max()
@@ -57,7 +63,7 @@ def analyse(path, radius=0.25, cell=0.05, head=1.7, step=0.15):
     lab, n = ndimage.label(walk)
     if n:
         sizes = ndimage.sum(walk, lab, range(1, n + 1)); walk = lab == (1 + int(np.argmax(sizes)))
-    return dict(mesh=m, up=up, floor=floor, grid=(W, H, u0, v0, cell), floor_hit=floor_hit, obst=obst, walk=walk,
+    return dict(up=up, floor=floor, grid=(W, H, u0, v0, cell), floor_hit=floor_hit, obst=obst, walk=walk,
                 seconds=time.time() - t0)
 
 def astar(walk, s, g):

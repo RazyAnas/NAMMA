@@ -1,10 +1,10 @@
 {
  "scene": "../../colab/real_scenes/walk_demo/data/icl_room/collision.glb",
- "floor_height_along_up": -2.628,
+ "floor_height_along_up": -2.633,
  "up": [
-  -0.002,
+  -0.0,
   -1.0,
-  0.001
+  0.002
  ],
  "grid": [
   146,
@@ -12,9 +12,9 @@
  ],
  "cell_m": 0.05,
  "radius_m": 0.25,
- "floor_seen_m2": 25.71,
- "walkable_m2": 14.44,
- "analyse_s": 0.4,
- "astar_s": 0.004,
+ "floor_seen_m2": 25.73,
+ "walkable_m2": 14.45,
+ "analyse_s": 0.29,
+ "astar_s": 0.005,
  "path_len_m": 5.76
 }
