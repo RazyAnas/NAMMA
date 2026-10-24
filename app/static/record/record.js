@@ -290,45 +290,37 @@ async function setLook(track, locked) {
 // Focus, like the phone's own camera app: tap the picture to focus there, press and hold (0.6 s) to lock focus at
 // that distance (tap again to go back to automatic). Works in the preview and while recording. The focus button
 // toggles the same lock. Phones without these controls in the browser just keep autofocus.
-// Where focus locks when the phone does not report its current focus distance: about 1.5 m keeps a wide lens sharp
-// from roughly arm's length to the far wall, which suits walking a room.
-const ROOM_FOCUS_M = 1.5;
-
 function focusControls(track) {
   const caps = track.getCapabilities?.() || {};
   const video = $('video'), button = $('focus-lock');
-  const canLock = !!caps.focusMode?.includes('manual');
+  const canLock = !!caps.focusMode?.includes('single-shot');
   const canPoint = 'pointsOfInterest' in (navigator.mediaDevices.getSupportedConstraints?.() || {});
   button.hidden = !canLock;
   let locked = false, timer = null;
   const show = () => {
     button.setAttribute('aria-pressed', String(locked));
     button.textContent = locked ? 'Focus locked (tap to unlock)' : 'Lock focus';
-    $('hud-focus-lock').textContent = locked ? 'Unlock focus' : 'Lock focus';
-    $('hud-focus-lock').setAttribute('aria-pressed', String(locked));
     $('hud-focus').textContent = locked ? 'focus locked' : '';
   };
-  const lock = async (on) => {
-    const now = track.getSettings?.() || {};
-    let ok;
-    if (on) {
-      const range = caps.focusDistance;
-      const reported = now.focusDistance > 0 ? now.focusDistance : null;
-      const target = range ? Math.min(range.max, Math.max(range.min, reported ?? ROOM_FOCUS_M)) : null;
-      ok = await applyOne(track, { focusMode: 'manual', ...(target != null ? { focusDistance: target } : {}) });
-      if (ok && target != null) $('focus-note').textContent = `focus locked at ${target.toFixed(1)} m`;
-    } else {
-      ok = await applyOne(track, { focusMode: 'continuous' });
-      $('focus-note').textContent = '';
-    }
+  // Locking focus = focus once on the chosen spot ('single-shot'), which then holds that distance. A 'manual' lock
+  // without a reliable current distance made Chrome jump to the nearest focus on a real phone, so it is used only
+  // when the "Focus distance" slider sets an explicit value.
+  const lock = async (on, point) => {
+    const target = point ? { pointsOfInterest: [point] } : {};
+    const ok = on
+      ? (canPoint && point ? await applyOne(track, { ...target, focusMode: 'single-shot' }) : false)
+        || await applyOne(track, { focusMode: 'single-shot' })
+      : await applyOne(track, { focusMode: 'continuous' });
     if (ok) locked = on;
-    if (rec) (rec.focusEvents ||= []).push({ t_ms: performance.now(), locked, ok });
+    if (rec) (rec.focusEvents ||= []).push({ t_ms: performance.now(), locked, ok, point: point || null });
     show();
   };
   video.onpointerdown = (e) => {
-    const box = video.getBoundingClientRect();
-    const x = (e.clientX - box.left) / box.width, y = (e.clientY - box.top) / box.height;
-    timer = setTimeout(() => { timer = null; if (canLock) lock(true); }, 600);
+    // The picture is shown with object-fit: cover, so map the tap back into the video's own frame.
+    const s = Math.max(innerWidth / video.videoWidth, innerHeight / video.videoHeight);
+    const x = Math.min(1, Math.max(0, (e.clientX - (innerWidth - video.videoWidth * s) / 2) / (video.videoWidth * s)));
+    const y = Math.min(1, Math.max(0, (e.clientY - (innerHeight - video.videoHeight * s) / 2) / (video.videoHeight * s)));
+    timer = setTimeout(() => { timer = null; if (canLock) lock(true, { x, y }); }, 600);
     if (canPoint && !locked) applyOne(track, { pointsOfInterest: [{ x, y }], focusMode: 'single-shot' })
       .then((ok) => ok || applyOne(track, { pointsOfInterest: [{ x, y }] }));
   };
@@ -336,8 +328,6 @@ function focusControls(track) {
     if (timer) { clearTimeout(timer); timer = null; if (locked) lock(false); }
   };
   button.onclick = () => lock(!locked);
-  $('hud-focus-lock').onclick = () => lock(!locked);
-  $('hud-focus-lock').hidden = !canLock;
   show();
   return () => locked;
 }
@@ -353,8 +343,8 @@ const MANUAL = [
   ['contrast', 'Contrast', null],
   ['saturation', 'Saturation', null],
   ['sharpness', 'Sharpness', null],
-  ['focusDistance', 'Focus distance (m)', { focusMode: 'manual' }],
   ['zoom', 'Zoom', null],
+  ['focusDistance', 'Focus distance (manual focus)', { focusMode: 'manual' }],
 ];
 function manualControls(track) {
   const caps = track.getCapabilities?.() || {}, now = track.getSettings?.() || {}, box = $('manual');
@@ -366,10 +356,9 @@ function manualControls(track) {
     const name = document.createElement('span'), value = document.createElement('output'), input = document.createElement('input');
     name.textContent = label; input.type = 'range';
     Object.assign(input, { min: range.min, max: range.max, step: range.step || (range.max - range.min) / 100, value: now[key] ?? range.min });
-    const digits = key === 'exposureCompensation' || key === 'focusDistance' ? 1 : 0;
-    value.textContent = (+input.value).toFixed(digits);
+    value.textContent = (+input.value).toFixed(key === 'exposureCompensation' ? 1 : 0);
     input.oninput = () => {
-      value.textContent = (+input.value).toFixed(digits);
+      value.textContent = (+input.value).toFixed(key === 'exposureCompensation' ? 1 : 0);
       applyOne(track, { ...(mode || {}), [key]: +input.value });
     };
     row.append(name, value, input); box.append(row);
