@@ -39,11 +39,17 @@ EOF
 source $ENV/modp_vars.sh
 
 # 3. MODP's own installer (PyTorch 2.5.1 cu118, gsplat, fused-ssim, DepthCov, lietorch). The CUDA builds take 10-20 min.
-bash setup_env.sh
+# MODP's installer has no `set -e`: if the PyTorch cu118 download fails, a later line silently pulls a CUDA 12 torch from PyPI
+# and lietorch then fails to build. Stop at the first failing line, and pin torch so no later package can replace it.
+grep -q '^set -e' setup_env.sh || sed -i '1a set -e' setup_env.sh
+printf 'torch==2.5.1\ntorchvision==0.20.1\ntorchaudio==2.5.1\n' > $ENV/torch_pin.txt
+PIP_CONSTRAINT=$ENV/torch_pin.txt bash setup_env.sh
 python -m pip install pyyaml
 # 4. compile gsplat's CUDA kernels now (otherwise the first MODP run does it silently) and check everything imports
 python - <<'EOF'
-import torch, lietorch, depth_cov, fused_ssim, gsplat, lpips
+import torch
+assert torch.version.cuda == '11.8', f'wrong PyTorch build: {torch.__version__} (CUDA {torch.version.cuda}), MODP needs 2.5.1 cu118'
+import lietorch, depth_cov, fused_ssim, gsplat, lpips
 from gsplat.rendering import rasterization
 m = torch.randn(10, 3, device='cuda') + torch.tensor([0, 0, 3.], device='cuda')
 q = torch.nn.functional.normalize(torch.randn(10, 4, device='cuda'), dim=-1); s = torch.rand(10, 3, device='cuda') * .1

@@ -36,7 +36,7 @@ for name in sorted(os.listdir(R), key=lambda n: (n.split('_')[0], 'stock' not in
         used.append((c['image'], f))
     if not ps: print(name, 'no renders yet'); continue
     row = dict(run=name, scene=meta['scene'], label=meta['label'], heldout_frames=len(ps), psnr=float(np.mean(ps)), ssim=float(np.mean(ss)),
-               lpips=float(np.mean(ls)) if ls else None, native=native, **{k: info.get(k) for k in ('online_fps', 'online_seconds', 'post_refinement_seconds', 'final_gaussians', 'peak_vram_gb', 'gpu')})
+               lpips=float(np.mean(ls)) if ls else None, native=native, **{k: info.get(k) for k in ('online_fps', 'online_seconds', 'post_refinement_seconds', 'final_gaussians', 'peak_vram_gb', 'gpu', 'frac_aniso_over_10')})
     rows.append(row); by_scene.setdefault(meta['scene'], []).append((row, used, scene))
 
 json.dump(rows, open(f'{R}/summary.json', 'w'), indent=1, default=str)
@@ -44,9 +44,9 @@ fmt = lambda x, n=2: 'n/a' if x is None else f'{x:.{n}f}'
 out = ['# MODP runs on our footage (measured on this Colab GPU)', '',
        'Held-out = every 8th frame, never shown to MODP; scored against the real photo. Higher PSNR/SSIM and lower LPIPS are better.', '']
 for sc, items in by_scene.items():
-    out += [f'## {sc}', '', '| Run | Inputs | PSNR | SSIM | LPIPS | Online FPS | Post-refine s | Gaussians | GPU |', '|---|---|---|---|---|---|---|---|---|']
+    out += [f'## {sc}', '', '| Run | Inputs | PSNR | SSIM | LPIPS | Online FPS | Post-refine s | Gaussians | Needles >10:1 | GPU |', '|---|---|---|---|---|---|---|---|---|---|']
     for r, _, _ in items:
-        out.append(f"| {r['run']} | {r['label']} | {fmt(r['psnr'])} | {fmt(r['ssim'], 3)} | {fmt(r['lpips'], 3)} | {fmt(r['online_fps'])} | {r['post_refinement_seconds']} | {r['final_gaussians']} | {r['gpu']} |")
+        out.append(f"| {r['run']} | {r['label']} | {fmt(r['psnr'])} | {fmt(r['ssim'], 3)} | {fmt(r['lpips'], 3)} | {fmt(r['online_fps'])} | {r['post_refinement_seconds']} | {r['final_gaussians']} | {'n/a' if r.get('frac_aniso_over_10') is None else f"{r['frac_aniso_over_10']:.1%}"} | {r['gpu']} |")
     out.append('')
 open(f'{R}/summary.md', 'w').write('\n'.join(out)); print('\n'.join(out))
 
@@ -64,3 +64,20 @@ for sc, items in by_scene.items():   # GT | each run, for 3 held-out frames
     for t in tiles: sheet.paste(t, (0, y)); y += t.height
     sheet.save(f'{R}/side_by_side_{sc}.jpg', quality=90)
     print(f'side_by_side_{sc}.jpg: columns = real photo, ' + ', '.join(r['run'] for r, _, _ in items))
+
+# orbit views (viewpoints the video never saw): one row per run, columns = swing left 60/30, original, right 30/60, from above
+orb = [n for n in sorted(os.listdir(R)) if os.path.isdir(f'{R}/{n}/orbit')]
+if orb:
+    tags = ['yaw-60', 'yaw-30', 'yaw+00', 'yaw+30', 'yaw+60', 'above']; rows = []
+    for n in orb:
+        ims = [Image.open(f'{R}/{n}/orbit/{t}.png').convert('RGB') for t in tags if os.path.exists(f'{R}/{n}/orbit/{t}.png')]
+        if not ims: continue
+        w, h = ims[0].size; k = 240 / max(w, h); ims = [i.resize((int(w * k), int(h * k))) for i in ims]
+        row = Image.new('RGB', (sum(i.width for i in ims), ims[0].height)); x = 0
+        for i in ims: row.paste(i, (x, 0)); x += i.width
+        rows.append(row)
+    if rows:
+        sheet = Image.new('RGB', (max(r.width for r in rows), sum(r.height for r in rows))); y = 0
+        for r in rows: sheet.paste(r, (0, y)); y += r.height
+        sheet.save(f'{R}/orbit_views.jpg', quality=90)
+        print('orbit_views.jpg: rows =', ', '.join(orb), '| columns =', ', '.join(tags))
