@@ -22,7 +22,7 @@ def fuse(npz, out, voxel=0.02, max_depth=8.0, stride=2):
     pc = pc.voxel_down_sample(voxel)
     pc.estimate_normals(o3d.geometry.KDTreeSearchParamHybrid(radius=voxel * 4, max_nn=30))
     o3d.io.write_point_cloud(str(out / "cloud.ply"), pc)
-    np.savez(out / "cloud.npz", pts=np.asarray(pc.points), nrm=np.asarray(pc.normals))
+    np.savez(out / "cloud.npz", pts=np.asarray(pc.points), nrm=np.asarray(pc.normals), col=(np.asarray(pc.colors) * 255).astype(np.uint8))
     return pc
 
 def navigate(mesh_path, out, radius=0.25, cell=0.05):
@@ -35,6 +35,7 @@ def navigate(mesh_path, out, radius=0.25, cell=0.05):
                 walkable_m2=float(walk.sum() * c * c), floor_seen_m2=float(R["floor_hit"].sum() * c * c),
                 demo_path_cells=None if path is None else [list(map(int, p)) for p in path])
     json.dump(info, open(out / "nav.json", "w"))
+    np.savez(out / "walk.npz", walk=walk, up=R["up"], grid=np.array([u0, v0, c]), floor=R["floor"])
     import matplotlib; matplotlib.use("Agg"); import matplotlib.pyplot as plt
     img = np.ones((H, W, 3)) * .08; img[R["floor_hit"].T] = [.25, .25, .3]; img[walk.T] = [.2, .55, .35]; img[R["obst"].T] = [.9, .9, .9]
     fig, ax = plt.subplots(figsize=(7, 7 * H / W)); ax.imshow(img, origin="lower"); ax.axis("off")

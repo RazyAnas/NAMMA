@@ -81,4 +81,5 @@ def _():
     sh('pip -q install open3d trimesh scipy matplotlib 2>&1 | tail -1')
     import fuse_nav as F
     F.fuse(f'{W}/da3.npz', f'{O}/model'); print(json.dumps({k: v for k, v in F.navigate(f'{O}/model/cloud.npz', f'{O}/model').items() if k != 'demo_path_cells'}))
+    import build_viewer; print(build_viewer.build(f'{O}/model'), '-> model/viewer.html')
 print('files:', os.listdir(O))
