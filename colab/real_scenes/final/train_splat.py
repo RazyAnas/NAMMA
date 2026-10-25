@@ -27,7 +27,7 @@ def delta_pose(c):
     R = torch.eye(3, device=c.device) + torch.sin(th) * Kx + (1 - torch.cos(th)) * (Kx @ Kx)
     top = torch.cat([R, t[:, None]], 1); return torch.cat([top, torch.tensor([[0., 0., 0., 1.]], device=c.device)], 0)
 
-def train(da3, cloud, frames_dir, out_ply, steps=15000, max_seconds=600, dev='cuda', pose_opt=False, depth_w=0.0, max_init=500000, mcmc_cap=0, sh=0, depth_floor=0.0):
+def train(da3, cloud, frames_dir, out_ply, steps=15000, max_seconds=600, dev='cuda', pose_opt=False, depth_w=0.0, max_init=500000, mcmc_cap=0, sh=0, depth_floor=0.0, aniso=0.0, aniso_max=10.0):
     """pose_opt: learn a small per-view camera correction (the cameras come from chained feed-forward chunks, so they drift).
     depth_w: weight of an L1 loss against the feed-forward depth, fading to 0 at 60% of training (anchors geometry early)."""
     import torch, torch.nn.functional as F
@@ -71,6 +71,8 @@ def train(da3, cloud, frames_dir, out_ply, steps=15000, max_seconds=600, dev='cu
         if depth_w > 0 and (step < 0.6 * steps or depth_floor > 0):
             gt = F.interpolate(DEP[i][None, None], size=(H, W), mode='bilinear', align_corners=False)[0, 0]; m = (gt > 0) & (a[0, ..., 0] > 0.5)
             if m.any(): loss = loss + depth_w * max(depth_floor, 1 - step / (0.6 * steps)) * ((ed - gt).abs() / (gt + 0.2))[m].mean()
+        if aniso > 0:                                            # needles: penalise splats longer than aniso_max x their thinnest axis
+            s3 = torch.exp(params['scales']); loss = loss + aniso * torch.relu(s3.max(1).values / s3.min(1).values.clamp_min(1e-8) - aniso_max).mean()
         if mcmc_cap: loss = loss + 0.01 * torch.sigmoid(params['opacities']).mean() + 0.01 * torch.exp(params['scales']).mean()   # keeps splats from all staying big/opaque
         loss.backward()
         lr_m = lrs['means'] * 0.01 ** (step / steps)             # exponential decay of the position lr (gsplat default schedule)
@@ -98,6 +100,8 @@ def train(da3, cloud, frames_dir, out_ply, steps=15000, max_seconds=600, dev='cu
             o_, a_, _ = rasterization(params['means'], F.normalize(params['quats'], dim=-1), torch.exp(params['scales']), op,
                                       torch.cat([params['sh0'], params['shN']], 1), V[i:i + 1], Ks[i:i + 1], W, H, sh_degree=0, render_mode='ED')
             mk = gt > 0; derr.append(((o_[0, ..., 0] - gt).abs() / gt)[mk].median().item())
+        s3 = torch.exp(params['scales']); ar = (s3.max(1).values / s3.min(1).values.clamp_min(1e-8))
+        print(f'needles: splats stretched > 10x: {(ar > 10).float().mean().item()*100:.1f}%, > 30x: {(ar > 30).float().mean().item()*100:.1f}%', flush=True)
         print(f'splat size (largest axis) median {q[0]*100:.1f} cm, 90% {q[1]*100:.1f} cm, 99% {q[2]*100:.1f} cm | splats > 20 cm: '
               f'{(sz > 0.2).float().mean().item()*100:.1f}% | mean opacity {op.mean().item():.2f} | held-out depth error vs prior '
               f'(median rel.) {np.median(derr)*100 if derr else float("nan"):.1f}% over {len(derr)} views', flush=True)
