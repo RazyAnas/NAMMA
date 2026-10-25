@@ -106,18 +106,26 @@ def tour_step():
     run(f'python {FIN}/make_tour.py build {OUT} {OUT}/tour {T}/node_modules/@playcanvas/supersplat-viewer/public {T}/node_modules/.bin/splat-transform')
     say('tour built:', json.load(open(f'{OUT}/tour/tour.json')))
 
-def publish_tour(api, user):
-    """Private static Hugging Face Space <user>/namma-tour: one folder per run + an index page. Only the owner can open it."""
-    sp = f'{user}/namma-tour'; api.create_repo(sp, repo_type='space', space_sdk='static', private=True, exist_ok=True)
-    api.upload_folder(folder_path=f'{OUT}/tour', path_in_repo=RUN, repo_id=sp, repo_type='space', ignore_patterns=['plan.json'])
-    runs = sorted({f.split('/')[0] for f in api.list_repo_files(sp, repo_type='space') if f.endswith('/index.html')}, reverse=True)
-    links = ''.join(f'<li><a href="./{r}/index.html">{r}</a></li>' for r in runs)
-    page = f'<!doctype html><meta charset="utf-8"><title>NAMMA tours</title><body style="font:16px sans-serif;padding:24px"><h1>NAMMA 3D tours</h1><ul>{links}</ul>'
+def publish_tour(api, user, results_repo):
+    """Public static Hugging Face Space <user>/namma-tour, like splattour's share links: each tour in a folder with a random
+    name (only people with the link find it), no listing page. A private static Space cannot serve its files to a browser
+    (the page loads, its scene/scripts do not), so the owner chose public. The link is NOT printed here (GitHub logs of this
+    repo are public): it goes to tour_url.txt in the private results dataset."""
+    import re, secrets
+    sp = f'{user}/namma-tour'; api.create_repo(sp, repo_type='space', space_sdk='static', private=False, exist_ok=True)
+    for f in {x.split('/')[0] for x in api.list_repo_files(sp, repo_type='space') if '/' in x}:      # old guessable folders out
+        if not re.fullmatch(r'\d{8}-\d{4}-[0-9a-f]{20}', f): api.delete_folder(f, repo_id=sp, repo_type='space')
+    folder = f'{RUN}-{secrets.token_hex(10)}'
+    api.upload_folder(folder_path=f'{OUT}/tour', path_in_repo=folder, repo_id=sp, repo_type='space', ignore_patterns=['plan.json'])
+    page = '<!doctype html><meta charset="utf-8"><title>NAMMA</title><body style="font:16px sans-serif;padding:24px;background:#111;color:#ddd"><h1>NAMMA 3D tours</h1><p>Open a tour with its link.</p>'
     open('tours_index.html', 'w').write(page); api.upload_file(path_or_fileobj='tours_index.html', path_in_repo='index.html', repo_id=sp, repo_type='space')
     open('space_readme.md', 'w').write('---\ntitle: NAMMA tour\nemoji: 🏠\ncolorFrom: gray\ncolorTo: gray\nsdk: static\npinned: false\n---\n')
     api.upload_file(path_or_fileobj='space_readme.md', path_in_repo='README.md', repo_id=sp, repo_type='space')
-    url = f'https://huggingface.co/spaces/{sp}'; say('TOUR URL', url, '-> tour', f'https://{user}-namma-tour.static.hf.space/{RUN}/index.html')
-    if os.environ.get('GITHUB_STEP_SUMMARY'): open(os.environ['GITHUB_STEP_SUMMARY'], 'a').write(f'Tour: {url} (folder {RUN})\n')
+    try: api.update_repo_settings(sp, repo_type='space', private=False)
+    except Exception: api.update_repo_visibility(sp, private=False, repo_type='space')
+    open('tour_url.txt', 'w').write(f'https://{user}-namma-tour.static.hf.space/{folder}/index.html\n')
+    api.upload_file(path_or_fileobj='tour_url.txt', path_in_repo=f'{RUN}/tour_url.txt', repo_id=results_repo, repo_type='dataset')
+    say('tour published (public Space, random folder; link in the private results dataset: tour_url.txt)')
 
 try: tour_step()
 except Exception as e: say('tour failed:', str(e)[:400])
@@ -129,7 +137,7 @@ if tok:
         api.upload_folder(folder_path=OUT, path_in_repo=RUN, repo_id=repo, repo_type='dataset', ignore_patterns=[f'{n}/model.ply' for n in os.listdir(OUT) if n != 'full'] + ['images/*'])
         say(f'results: https://huggingface.co/datasets/{repo}/tree/main/{RUN}')
         if os.path.exists(f'{OUT}/tour/scene.sog'):
-            try: publish_tour(api, repo.split('/')[0])
+            try: publish_tour(api, repo.split('/')[0], repo)
             except Exception as e: say('tour publish failed:', str(e)[:300])
         if os.environ.get('GITHUB_STEP_SUMMARY'):
             open(os.environ['GITHUB_STEP_SUMMARY'], 'a').write(f'Results: https://huggingface.co/datasets/{repo}/tree/main/{RUN}\n')
