@@ -1,18 +1,22 @@
 """Run INSIDE the Python 3.10 SfM venv: hloc SuperPoint + LightGlue cameras for a folder of frames, exported to one npz.
 Pairs: every frame with its next 10 (walk order) + NetVLAD top-15 (loop closures). One shared PINHOLE camera.
-Usage: python sfm_hloc.py <frames_dir> <out_dir>  ->  <out_dir>/sfm.npz"""
+Usage: python sfm_hloc.py <frames_dir> <out_dir> [seq=10] [retrieval=15]  ->  <out_dir>/sfm.npz
+retrieval=0: walk-order pairs only. In a repetitive corridor retrieval links the two look-alike ends of the corridor and pulls
+whole stretches into the wrong place (found by ibr_check: frames 86-108 at ~11 dB, a door rebuilt as a window)."""
 import sys, numpy as np, pycolmap
 from pathlib import Path
 from hloc import extract_features, match_features, reconstruction, pairs_from_retrieval
 frames, out = Path(sys.argv[1]), Path(sys.argv[2]); out.mkdir(parents=True, exist_ok=True)
+SEQ = int(sys.argv[3]) if len(sys.argv) > 3 else 10; RET = int(sys.argv[4]) if len(sys.argv) > 4 else 15
 names = sorted(p.name for p in frames.glob('*.jpg'))
 fc, mc, rc = extract_features.confs['superpoint_max'], match_features.confs['superpoint+lightglue'], extract_features.confs['netvlad']
-pairs = {(names[i], names[j]) for i in range(len(names)) for j in range(i + 1, min(len(names), i + 11))}
-ret = extract_features.main(rc, frames, out)
-pairs_from_retrieval.main(ret, out / 'pairs_ret.txt', num_matched=15)
-for line in open(out / 'pairs_ret.txt'):
-    a, b = line.split()
-    if a != b: pairs.add(tuple(sorted((a, b))))
+pairs = {(names[i], names[j]) for i in range(len(names)) for j in range(i + 1, min(len(names), i + SEQ + 1))}
+if RET:
+    ret = extract_features.main(rc, frames, out)
+    pairs_from_retrieval.main(ret, out / 'pairs_ret.txt', num_matched=RET)
+    for line in open(out / 'pairs_ret.txt'):
+        a, b = line.split()
+        if a != b: pairs.add(tuple(sorted((a, b))))
 (out / 'pairs.txt').write_text('\n'.join(f'{a} {b}' for a, b in sorted(pairs)))
 print('pairs', len(pairs), flush=True)
 feats = extract_features.main(fc, frames, out)

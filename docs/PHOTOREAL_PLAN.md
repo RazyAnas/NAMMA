@@ -48,6 +48,10 @@ Rule for every step: a proof that runs in 5-10 minutes before any long job.
 - P3 (Difix demo): small effect on our images. Final polish only.
 - Next: `ibr_check.py` scores every frame to list the wrong cameras (synthetic test: finds exactly the 3 planted ones).
 
+- **Camera check on all 596 frames**: real-pixel rebuild median **34.3 dB**; ~75% of frames 30-47 dB. Wrong cameras: 20 isolated
+  plus whole stretches (86-108 ~11 dB, 321-330 ~15, 525-549 ~17, 15-27 ~20). Worst frames: a door frame placed where the window
+  frames are: NetVLAD retrieval linked the look-alike corridor ends. Next: re-solve with walk-order pairs only (`namma-resfm`).
+
 ## 5. Final pipeline (built from what passes)
 prep (exists: frames, SfM, depth) → base 3D (WorldMirror 2.0 or DA3 Gaussians, per room) → Difix3D+ clean-up → hole fill (P4) →
 viewer with real-frame mode + collision + floor plan. Long jobs only at this last step.
