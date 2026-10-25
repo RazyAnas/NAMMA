@@ -3,7 +3,6 @@ draws the nearest real frame first and lets the next ones fill only what it did 
 see the photo itself and nothing is invented. Holes stay visible (H key: magenta = never filmed from here).
 Usage: python photo_viewer.py <cache> <keep.json> <out_dir>. CPU only. Open with: cd out_dir && python3 -m http.server"""
 import json, os, shutil, sys, urllib.request, numpy as np
-import fuse_nav as F
 
 def build(cache, keep, out, stride=2):
     z = np.load(f'{cache}/da3_sfm.npz'); d = {k: z[k] for k in z.files}
@@ -15,7 +14,8 @@ def build(cache, keep, out, stride=2):
         g = int(d['idx'][j]); shutil.copy(f'{cache}/frames/{files[g]}', f'{out}/f/{g:04d}.jpg')
         (np.clip(d['depth'][j][::stride, ::stride] * 1000, 0, 65535).astype('<u2')).tofile(f'{out}/f/{g:04d}.bin')   # millimetres
         cams.append(dict(g=g, K=d['K'][j][:2].ravel().round(3).tolist(), c2w=d['c2w'][j][:3].ravel().round(5).tolist()))
-    tmp = f'{out}/_c.npz'; np.savez(tmp, c2w=d['c2w'][sel]); up = F.camera_up(tmp); os.remove(tmp)
+    x = d['c2w'][sel][:, :3, 0]; up = np.linalg.eigh(x.T @ x)[1][:, 0]                 # same as fuse_nav.camera_up (that module needs open3d)
+    if up @ (-d['c2w'][sel][:, :3, 1].mean(0)) < 0: up = -up
     json.dump(dict(Hd=int(Hd), Wd=int(Wd), stride=stride, up=up.round(5).tolist(), cams=cams), open(f'{out}/cams.json', 'w'))
     if not os.path.exists(f'{out}/three.min.js'):
         urllib.request.urlretrieve('https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js', f'{out}/three.min.js')
