@@ -151,3 +151,37 @@ The Claude cloud container **cannot reach kaggle.com** (proxy 403). GitHub's run
 - `docs/CAPTURE_GUIDE.md` is the owner's filming guide; `docs/VIDEO_METHOD_PLAN.md`, `docs/PHOTOREAL_PLAN.md` older plans;
   `docs/TODO_2026-10-26.md` the to-do written before v3 (its "one-command job" item is now v3).
 - Status page: `dash/status.json` (+ `dash/index.html`, `dash/watch.sh`).
+
+## 9. Work since 00:30 IST, 26 Oct (keep this section current)
+- **Run 3 started 00:16 IST** (GitHub Actions run `40222839346`, RUN.json `n: 4`): same hotel room, VARIANTS
+  `full` (1.5M splats) vs `big` (3M) on the two T4s, with the fixed QA (dollhouse views, true needle metric) and `sparse/` saved
+  to the output. Expected ~01:50 IST, results in `hf://datasets/anasrazy/namma-v3-out/<run>/`. Not yet judged.
+- **run.py / gh_run.py**: `VARIANTS` env = JSON list `[name, steps, cap(, '2dgs')]`, first two run on the two GPUs, the rest
+  queue; gh_run skips the DL3DV download when the Kaggle dataset already exists; HF upload skips `model.ply` except `full/`.
+- **Geometry ("mould") branch, built + CPU-tested, not yet run on a GPU**: `final/mesh_tsdf.py` renders median depth from a
+  2DGS checkpoint (gsplat `examples/simple_trainer_2dgs.py`, `--normal-loss --dist-loss`) or expected depth from the 3DGS
+  model, fuses all cameras into a TSDF on the GPU, marching cubes (scikit-image), drops loose pieces, colours vertices from the
+  real undistorted photos, applies `full/level.json` (written by `to_splat.level`, p' = R p + t) so the mesh lines up with
+  `full/model.splat`. Outputs `mesh/{mesh.ply, mesh.glb, mesh_sheet.jpg, mesh.json}`. run.py builds it at the end of every run
+  (from a `'2dgs'` variant if present, else from `full`). Synthetic test: 0.4 voxel median error, 97% faces toward cameras.
+  Planned run 4: VARIANTS `[["full",30000,1500000],["geo",30000,0,"2dgs"]]`.
+- **Owner wants results "exactly like splattour.com, not messy output".** Their own pages (read via the screenshot tool):
+  capture = one uncut video per floor, phone upright, 0.5x ultra-wide, per room 3 passes (lap along walls, reverse lap, both
+  diagonals), ~6 min for a 60 m2 flat; processing = frames 1-2 fps, COLMAP, gsplat training 20-90 min, SOG/SPZ compression;
+  product = per-room splats in one shared frame streamed by room, floor plan + room thumbnails, 360 panoramas from real frames,
+  floor markers to move. Sample tours: splattour.com/en/t/Terrassa_Apartment, /Manresa_Premium, /Airbnb_Santa_Teresa (they load
+  `cdn.splattour.com/configs/<tour>.json`, `<room>.sog`, `thumbs/floorplan-*.jpg`, `thumbs/rooms/*.jpg`). Our splat quality is
+  already in their class (hotel room); what we lack is capture discipline, room cropping and a tour viewer.
+- **Screenshot tool**: `scripts/site_look/look.py` + `.github/workflows/site-look.yml` (push a change to
+  `scripts/site_look/URLS.txt`; lines `tour <url>` are walked through). Screenshots land in
+  `hf://datasets/anasrazy/namma-v3-out/site_look/<time>/` (view with hf_fs `attach`). WebGL on the runner is software-rendered:
+  screenshots of 3D viewers need long timeouts (fixed: 240 s, 1100x700 viewport).
+- **Tour viewer plan (in progress)**: use the official **SuperSplat Viewer** (`@playcanvas/supersplat-viewer@1.37.0`, static
+  site in `public/`, settings.json schema v2: start camera, `animTracks` (guided fly-through along the real camera path),
+  `annotations` (hotspots), walk mode with a collision `.glb` = our mesh) and **`@playcanvas/splat-transform@3.10.1`**
+  (rotate/translate to level, `--filter-box` room crop, `--filter-floaters`, `.sog` output, even `.html` viewer output with
+  `--viewer-settings`). Engine `playcanvas@2.23.2`. Build on the GitHub runner after collecting a run, publish to a private
+  HF static Space only the owner can open, screenshot it with the site-look tool (token header) before handing over.
+- Network facts for the cloud container: kaggle.com, huggingface.co, splattour.com, unpkg/jsdelivr and Azure blob (workflow
+  artifacts) are blocked; github.com, raw.githubusercontent.com, api.github.com (public JSON) and registry.npmjs.org work.
+- **Capture guide**: update `docs/CAPTURE_GUIDE.md` to SplatTour's method (upright, ultra-wide, 3 passes per room).
