@@ -1,0 +1,186 @@
+{
+ "updated": "2026-10-25 20:40 IST",
+ "goal": "Phone video -> photoreal, walkable 3D of the REAL room. Real pixels first, 3D model for in-between views, generation only for holes (flagged). Free GPUs.",
+ "now": "namma-all: a real handheld room video (Apple ARKitScenes) -> frames -> depth -> cameras -> check -> align -> model v2 (no needles) -> levelled .splat + viewer. ~75 min, one command.",
+ "phases": [
+  {
+   "name": "TOMORROW 26 Oct",
+   "steps": [
+    [
+     "running",
+     "Pipeline on a properly captured real handheld room video (ARKitScenes, free) - namma-all, one command"
+    ],
+    [
+     "todo",
+     "Owner: re-film the room per docs/CAPTURE_GUIDE.md (landscape, locked exposure, slow turns, one loop), upload to Kaggle"
+    ],
+    [
+     "todo",
+     "Claude: one-command job for the whole pipeline (frames -> cameras -> check -> align -> depth -> model -> level -> viewer)"
+    ],
+    [
+     "todo",
+     "Model v2: no needles (anisotropy cap), 30 min, higher resolution, drone views from real pixels, unfilmed pixels masked"
+    ],
+    [
+     "todo",
+     "Claude checks renders (inside, off-path, outside, held-out) before the owner opens anything"
+    ],
+    [
+     "todo",
+     "Viewer: trained model between photo spots; Techfest R1 materials"
+    ]
+   ]
+  },
+  {
+   "name": "A. Capture & cameras",
+   "steps": [
+    [
+     "done",
+     "600 sharp frames from the 4K video"
+    ],
+    [
+     "done",
+     "SfM cameras (hloc): 595/600 placed"
+    ],
+    [
+     "done",
+     "Metric depth (Depth Anything 3) aligned to cameras"
+    ],
+    [
+     "done",
+     "Camera check on every frame: median 34.3 dB, 89 wrong (corridor look-alikes)"
+    ],
+    [
+     "done",
+     "Keep-list: 507 verified cameras (good_frames.json)"
+    ],
+    [
+     "done",
+     "Re-check with 507 cameras: held-out 27.0 -> 30.4 dB, SSIM 0.90; but 28 more bad frames surfaced"
+    ],
+    [
+     "done",
+     "Stricter check: 319/596 cameras kept, all >= 20 dB; held-out 30.7 dB / SSIM 0.91; off-path coverage 94%"
+    ],
+    [
+     "todo",
+     "Recover dropped frames (re-place them against the verified cameras) - 46% of frames dropped"
+    ],
+    [
+     "done",
+     "Cross-pass check: passes disagree (11-17 dB; door rebuilt as window) - look-alike places fooled the global solve"
+    ],
+    [
+     "done",
+     "Pass grouping: 10 passes -> 5 groups that agree (biggest: 4 passes, 198 frames); nothing moved"
+    ],
+    [
+     "done",
+     "Bridges + whole-group check: cross-pass median 15.7 -> 28.2 dB; 2 groups (162 + 94 frames)"
+    ],
+    [
+     "done",
+     "Run 6: group 0 = 4 passes, 162 frames, cross-pass median 30.8 dB (453-488: 28.2 -> 30.8 with ICP); other passes stay apart (13-20 dB)"
+    ]
+   ]
+  },
+  {
+   "name": "B. Quick proofs (5-10 min each)",
+   "steps": [
+    [
+     "done",
+     "P1 real-pixel rebuild: 27.0 dB, SSIM 0.86 (splats 18.8) - PASSED"
+    ],
+    [
+     "done",
+     "P2 Tencent WorldMirror demo: right room, streaky - shape only"
+    ],
+    [
+     "done",
+     "P3 Difix repair: small effect - final polish only"
+    ],
+    [
+     "running",
+     "P4 run 2: run 1 invented a door/screen/figure in a big hole (one pass as source). Now: all aligned passes first, model fills small gaps only, big unfilmed areas never invented"
+    ]
+   ]
+  },
+  {
+   "name": "C. Final build",
+   "steps": [
+    [
+     "done",
+     "3D model on cameras that agree: A 38.1 dB held-out / SSIM 0.957 / 900k splats (needles 38%); B MCMC 1.5M 34.2 dB"
+    ],
+    [
+     "done",
+     "Floor plan: 21.6 m2 floor seen, 5.6 m2 walkable"
+    ],
+    [
+     "done",
+     "Real-photo viewer + fused 3D fill behind the photos; instant splat (no training) of group 0"
+    ],
+    [
+     "done",
+     "Depth for 318/319 verified frames (namma-dense, 8 min)"
+    ],
+    [
+     "todo",
+     "Difix polish of in-between views"
+    ],
+    [
+     "todo",
+     "Hole-only generation, flagged per pixel"
+    ]
+   ]
+  },
+  {
+   "name": "D. Later",
+   "steps": [
+    [
+     "todo",
+     "Multi-room, then multi-floor"
+    ],
+    [
+     "running",
+     "Techfest R1 (31 Oct): draft abstract + video storyboard in docs/TECHFEST_R1.md; filming guide docs/CAPTURE_GUIDE.md"
+    ]
+   ]
+  }
+ ],
+ "results": [
+  [
+   "Trained 3D model (group 0, held-out frames)",
+   "38.1 dB / SSIM 0.957 (was 18.8 dB on wrong cameras)"
+  ],
+  [
+   "Cross-pass agreement (group 0, 162 frames)",
+   "30.8 dB median (was 15.7 before the pass fix)"
+  ],
+  [
+   "IBR held-out (real pixels)",
+   "27.0 dB / SSIM 0.86 / 99% coverage"
+  ],
+  [
+   "IBR held-out, 507 cameras",
+   "30.4 dB / SSIM 0.90 / 98% coverage; off-path coverage 88%"
+  ],
+  [
+   "IBR held-out, 319 verified cameras",
+   "30.7 dB / SSIM 0.91 / 99% coverage; off-path coverage 94%"
+  ],
+  [
+   "Off-path 30 cm coverage",
+   "95%"
+  ],
+  [
+   "Camera check (all 596)",
+   "median 34.3 dB, 67 below 18 dB"
+  ],
+  [
+   "Best splat held-out",
+   "18.8 dB (fog) - dropped as main path"
+  ]
+ ]
+}
