@@ -1,7 +1,7 @@
 {
- "updated": "2026-10-25 19:10 IST",
+ "updated": "2026-10-25 19:30 IST",
  "goal": "Phone video -> photoreal, walkable 3D of the REAL room. Real pixels first, 3D model for in-between views, generation only for holes (flagged). Free GPUs.",
- "now": "FINAL push (owner has 4-5 h): namma-model = 3D model on the 162 cameras that agree (group 0, 30.8 dB) + floor plan + viewer; namma-fill run 2 in parallel.",
+ "now": "Trained 3D model (gsplat) on the 162 cameras that agree (namma-model, ~35 min). Viewer: 3D fill behind photos (done).",
  "phases": [
   {
    "name": "A. Capture & cameras",
@@ -90,7 +90,7 @@
     ],
     [
      "done",
-     "Real-photo viewer: 103 real photos, click-to-walk lands on photos, holes visible"
+     "Real-photo viewer + fused 3D fill behind the photos; instant splat (no training) of group 0"
     ],
     [
      "done",

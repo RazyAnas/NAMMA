@@ -1,4 +1,4 @@
-# Kaggle job anasrazy/namma-model (2x T4, ~50 min): THE 3D MODEL on cameras that agree. Every splat before was trained on camera
+# Kaggle job anasrazy/namma-model (2x T4, ~35 min): THE 3D MODEL on cameras that agree. Every splat before was trained on camera
 # positions whose walk passes disagreed (look-alike merges), which explains the fog and needles. Now:
 #   1. align the walk passes (align_passes: video bridges + whole-group check + ICP) -> group 0 = 162 frames agreeing at ~31 dB;
 #   2. group-0 data: cameras + dense depth + real colours; fused point cloud (init), floor plan + walkable grid, real-photo viewer;
@@ -40,8 +40,8 @@ sh('pip -q install ninja "gsplat==1.5.3" 2>&1 | tail -1', check=True)
 sh(f'mkdir -p ~/.cache && tar xzf {cache}/gsplat_ext.tgz -C ~/.cache')
 sh('find $(python -c "import importlib.util, os; print(os.path.dirname(importlib.util.find_spec(\'gsplat\').origin))") -exec touch -d "2000-01-01" {} +')
 sh(f'{sys.executable} {F}/gsplat_warm.py', check=True)
-V = [dict(name='A', out='splat.ply', kw=dict(steps=20000, max_seconds=1500, depth_w=0.05, sh=3)),
-     dict(name='B', out='splat_mcmc.ply', kw=dict(steps=20000, max_seconds=1500, depth_w=0.05, sh=3, mcmc_cap=1500000, aniso=0.1))]
+V = [dict(name='A', out='splat.ply', kw=dict(steps=15000, max_seconds=900, depth_w=0.05, sh=3)),     # 15 min each, both GPUs at once
+     dict(name='B', out='splat_mcmc.ply', kw=dict(steps=15000, max_seconds=900, depth_w=0.05, sh=3, mcmc_cap=1500000, aniso=0.1))]
 procs = []
 for gpu, v in enumerate(V):
     job = json.dumps(dict(args=[f'{S}/da3_sfm.npz', f'{O}/model/cloud.npz', f'{cache}/frames', f'{O}/model/{v["out"]}'], kw=v['kw']))
