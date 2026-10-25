@@ -40,6 +40,9 @@ def visit_tour(ctx, url, k):
 with sync_playwright() as p:
     b = p.chromium.launch(executable_path=os.environ.get('CHROME') or None, args=['--use-angle=swiftshader', '--enable-unsafe-swiftshader', '--ignore-gpu-blocklist', '--enable-webgl'])
     ctx = b.new_context(viewport={'width': 1100, 'height': 700}, locale='en-US')
+    tok = os.environ.get('HF_TOKEN')
+    if tok:                                                                                 # private HF Spaces: token only to *.hf.space
+        ctx.route(re.compile(r'https://[^/]+\.hf\.space/.*'), lambda route: route.continue_(headers={**route.request.headers, 'authorization': f'Bearer {tok}'}))
     for i, u in enumerate(urls):
         if u.startswith('tour '):                                                           # a tour page: walk around inside it
             log[f'tour{i}'] = visit_tour(ctx, u[5:].strip(), i); print('TOUR', i, json.dumps(log[f'tour{i}'])[:3000], flush=True); continue

@@ -77,13 +77,58 @@ for f in ['sfm_report.json', 'v3_summary.json', 'preview/metrics.json', 'full/me
 for lg in glob.glob(f'{OUT}/*.log'): print(f'==== {os.path.basename(lg)} (last 120 lines)\n' + ''.join(open(lg, errors='ignore').readlines()[-120:]), flush=True)
 say('files:', sorted(os.path.relpath(f, OUT) for f in glob.glob(f'{OUT}/**/*', recursive=True) if os.path.isfile(f)))
 
+def tour_step():
+    """Tour like splattour.com (final/make_tour.py): cameras need gsplat's examples + CPU torch, the converter needs Node.
+    Frames come from the run's images/ (saved since run 4) or are rebuilt from the scene's Kaggle dataset like the job did."""
+    if not os.path.exists(f'{OUT}/full/model.ply') or not os.path.isdir(f'{OUT}/sparse'): say('tour: no model or cameras'); return
+    T = os.path.abspath('tourwork'); FIN = os.path.join(os.path.dirname(V), 'final'); env_ = cfg.get('env', {})
+    run = lambda c: subprocess.run(c, shell=True, check=True, executable='/bin/bash')
+    run(f'git clone -q --depth 1 -b v1.5.3 https://github.com/nerfstudio-project/gsplat {T}/gsplat && touch {T}/gsplat/examples/datasets/__init__.py')
+    run('pip install -q torch --index-url https://download.pytorch.org/whl/cpu && pip install -q opencv-python-headless imageio tqdm plyfile scipy '
+        'typing_extensions "git+https://github.com/rmbrualla/pycolmap@cc7ea4b7301720ac29287dbe450952511b32125e" && sed -i '
+        '"s/np.uint64(-1)/np.uint64(np.iinfo(np.uint64).max)/" $(python -c "import importlib.util as u; print(u.find_spec(\'pycolmap\').submodule_search_locations[0])")/scene_manager.py')
+    run(f'cd {T} && npm init -y >/dev/null && npm i -s --no-audit --no-fund playcanvas@2.23.2 @playcanvas/supersplat-viewer@1.37.0 @playcanvas/splat-transform@3.10.1 | tail -1')
+    data = f'{T}/data'; os.makedirs(data, exist_ok=True); shutil.copytree(f'{OUT}/sparse', f'{data}/sparse', dirs_exist_ok=True)
+    if os.path.isdir(f'{OUT}/images'): os.symlink(f'{OUT}/images', f'{data}/images')
+    else:                                                                                  # same frames as the job made (frames.py)
+        DS = f"{KU}/namma-dl3dv-{src[6:16]}" if src.startswith('dl3dv:') else src[7:]
+        rc, o = kg('datasets', 'download', DS, '-p', f'{T}/ds', '--unzip', check=False)
+        if rc: raise RuntimeError(f'dataset download failed: {o[-300:]}')
+        for z in glob.glob(f'{T}/ds/**/*.zip', recursive=True): shutil.unpack_archive(z, f'{T}/ds/unz')
+        cnt = {}
+        for f in glob.glob(f'{T}/ds/**/*', recursive=True):
+            if f.lower().endswith(('.jpg', '.jpeg', '.png')): cnt[os.path.dirname(f)] = cnt.get(os.path.dirname(f), 0) + 1
+        sys.path.insert(0, FIN); import frames
+        frames.from_images(max(cnt, key=cnt.get), f'{data}/images', int(env_.get('NFRAMES', 300)), int(env_.get('LONG', 1280)))
+    run(f'python {FIN}/make_tour.py plan {T}/gsplat/examples {data} {OUT} {OUT}/tour')
+    run(f'python {FIN}/make_tour.py build {OUT} {OUT}/tour {T}/node_modules/@playcanvas/supersplat-viewer/public {T}/node_modules/.bin/splat-transform')
+    say('tour built:', json.load(open(f'{OUT}/tour/tour.json')))
+
+def publish_tour(api, user):
+    """Private static Hugging Face Space <user>/namma-tour: one folder per run + an index page. Only the owner can open it."""
+    sp = f'{user}/namma-tour'; api.create_repo(sp, repo_type='space', space_sdk='static', private=True, exist_ok=True)
+    api.upload_folder(folder_path=f'{OUT}/tour', path_in_repo=RUN, repo_id=sp, repo_type='space', ignore_patterns=['plan.json'])
+    runs = sorted({f.split('/')[0] for f in api.list_repo_files(sp, repo_type='space') if f.endswith('/index.html')}, reverse=True)
+    links = ''.join(f'<li><a href="./{r}/index.html">{r}</a></li>' for r in runs)
+    page = f'<!doctype html><meta charset="utf-8"><title>NAMMA tours</title><body style="font:16px sans-serif;padding:24px"><h1>NAMMA 3D tours</h1><ul>{links}</ul>'
+    open('tours_index.html', 'w').write(page); api.upload_file(path_or_fileobj='tours_index.html', path_in_repo='index.html', repo_id=sp, repo_type='space')
+    open('space_readme.md', 'w').write('---\ntitle: NAMMA tour\nemoji: 🏠\ncolorFrom: gray\ncolorTo: gray\nsdk: static\npinned: false\n---\n')
+    api.upload_file(path_or_fileobj='space_readme.md', path_in_repo='README.md', repo_id=sp, repo_type='space')
+    url = f'https://huggingface.co/spaces/{sp}'; say('TOUR URL', url, '-> tour', f'https://{user}-namma-tour.static.hf.space/{RUN}/index.html')
+    if os.environ.get('GITHUB_STEP_SUMMARY'): open(os.environ['GITHUB_STEP_SUMMARY'], 'a').write(f'Tour: {url} (folder {RUN})\n')
+
+try: tour_step()
+except Exception as e: say('tour failed:', str(e)[:400])
 tok = os.environ.get('HF_TOKEN')
 if tok:
     try:
         from huggingface_hub import HfApi
         api = HfApi(token=tok); repo = f"{api.whoami()['name']}/namma-v3-out"; api.create_repo(repo, repo_type='dataset', private=True, exist_ok=True)
-        api.upload_folder(folder_path=OUT, path_in_repo=RUN, repo_id=repo, repo_type='dataset', ignore_patterns=[f'{n}/model.ply' for n in os.listdir(OUT) if n != 'full'])
+        api.upload_folder(folder_path=OUT, path_in_repo=RUN, repo_id=repo, repo_type='dataset', ignore_patterns=[f'{n}/model.ply' for n in os.listdir(OUT) if n != 'full'] + ['images/*'])
         say(f'results: https://huggingface.co/datasets/{repo}/tree/main/{RUN}')
+        if os.path.exists(f'{OUT}/tour/scene.sog'):
+            try: publish_tour(api, repo.split('/')[0])
+            except Exception as e: say('tour publish failed:', str(e)[:300])
         if os.environ.get('GITHUB_STEP_SUMMARY'):
             open(os.environ['GITHUB_STEP_SUMMARY'], 'a').write(f'Results: https://huggingface.co/datasets/{repo}/tree/main/{RUN}\n')
     except Exception as e: say('HF upload failed:', str(e)[:300])

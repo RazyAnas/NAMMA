@@ -23,7 +23,9 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          sparse-checkout: colab/real_scenes/v3
+          sparse-checkout: |
+            colab/real_scenes/v3
+            colab/real_scenes/final
       - uses: actions/setup-python@v5
         with:
           python-version: "3.11"
