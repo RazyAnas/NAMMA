@@ -134,3 +134,14 @@ not match the video. Earlier notes calling its contents "real" were reported, ne
   Fix (kmax): keep adding photos (any aligned pass) while they still fill holes. Reproduced on the owner's data here: holes at
   30 cm 13.1 -> 7.0%, at 50 cm 24.3 -> 13.7% (real pixels; checked visually: the dark doorway behind the pillar, not misplaced).
   Verdict: video-model filling is honest now but adds little (0.8% of pixels for 20 GPU-minutes); real coverage matters more.
+- **26 Oct (night of 25th): namma-all failed, v3 planned and built.** namma-all (ARKitScenes iPad video): Depth Anything 3 ran
+  out of GPU memory on landscape frames, merged 5 of 300, every later stage failed on missing depth; SfM placed 168/300 frames in
+  2 models. Decision (approved plan): stop compensating with custom code; the default path is now the standard stack: frames ->
+  hloc SuperPoint+LightGlue (COLMAP model, SIMPLE_RADIAL) -> gsplat's own examples/simple_trainer.py (MCMC, bilateral grid for
+  auto-exposure, SfM depth loss, held-out eval every 8th frame) -> v3_qa.py (QA sheet: held-out real | model, 50 cm off the walk,
+  outside, top-down; metrics.json with pass = exposure-fair held-out PSNR >= 28 dB and < 10% needles) -> levelled .splat.
+  Job: colab/real_scenes/v3 (preview 7k steps on GPU 1 while the full 30k model trains on GPU 0). Trained classic (not
+  antialiased) so SuperSplat shows exactly what was measured. Checked here on CPU: trainer deps import on Python 3.13 + numpy 2
+  (pycolmap fork needs np.uint64(-1) patched), Parser reads hloc-style COLMAP binaries incl. SIMPLE_RADIAL undistortion, the
+  trainer CLI accepts every flag, depth-loss loader works, QA renders match the real frames (stub renderer), levelled floor y = 0,
+  sharpest-frame picker skips blurred frames. Not checkable here: GPU training, fused-ssim build (pure-torch shim as fallback).

@@ -11,9 +11,10 @@ def qmul(a, b):
     return np.stack([w1*w2 - x1*x2 - y1*y2 - z1*z2, w1*x2 + x1*w2 + y1*z2 - z1*y2, w1*y2 - x1*z2 + y1*w2 + z1*x2, w1*z2 + x1*y2 - y1*x2 + z1*w2], 1)
 
 def level(rec, nav):
-    """Rotate so the floor normal (nav up, given in the SfM frame; the .splat is that frame with y and z flipped) becomes +y,
+    """Rotate so the floor normal (nav up, given in the SfM frame; our own .ply had y and z flipped, gsplat's simple_trainer
+    output does not: nav 'flipped' false) becomes +y,
     put the floor at y = 0 and the model's middle at x = z = 0."""
-    n = json.load(open(nav)); u = np.array(n['up'], float) * np.array([1, -1, -1]); u /= np.linalg.norm(u); y = np.array([0., 1, 0])
+    n = json.load(open(nav)); u = np.array(n['up'], float) * (np.array([1, -1, -1]) if n.get('flipped', True) else 1); u /= np.linalg.norm(u); y = np.array([0., 1, 0])
     v = np.cross(u, y); c = float(u @ y); K = np.array([[0, -v[2], v[1]], [v[2], 0, -v[0]], [-v[1], v[0], 0]])
     R = np.eye(3) + K + K @ K / (1 + c)                                               # rotation taking u to +y
     p = rec['p'] @ R.T; p[:, 1] -= n['floor']                                        # up . p = floor on the floor (flip keeps the dot product)
