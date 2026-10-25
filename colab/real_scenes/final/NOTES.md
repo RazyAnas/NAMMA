@@ -66,3 +66,8 @@ not match the video. Earlier notes calling its contents "real" were reported, ne
 - `photo_viewer.py` + `photo_viewer.html`: browser walkthrough from real photos (depth mesh per verified frame, nearest frame
   drawn first, others fill only its holes via stencil, depth edges cut). Synthetic box room: at a filmed pose the view matches
   the photo (26.5-26.9 dB on a hard 8-px random texture at 2x upscale); off-pose shows holes as holes.
+- Owner, viewer: photos from different angles pop up in the wrong places (left wall appears when going right). The neighbour
+  check only compares frames with their own walk-neighbours, so whole passes placed wrongly relative to each other pass it.
+  Camera heights of the kept groups differ by up to ~0.75 m (not plausible for a hand-held walk). New `ibr_check --cross`:
+  rebuild each frame only from OTHER walk pieces; synthetic test with one piece shifted 36 cm: 13.6 dB vs ~28 dB for correct pieces.
+  Viewer now uses one walk pass at a time by default (M mixes passes).

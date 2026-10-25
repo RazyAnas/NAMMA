@@ -1,7 +1,7 @@
 {
- "updated": "2026-10-25 16:20 IST",
+ "updated": "2026-10-25 16:35 IST",
  "goal": "Phone video -> photoreal, walkable 3D of the REAL room. Real pixels first, 3D model for in-between views, generation only for holes (flagged). Free GPUs.",
- "now": "Depth for all 319 verified frames + viewer with ~3x more photos (Kaggle namma-dense, T4 ~15 min).",
+ "now": "Owner: photos from different walk passes land in wrong places. Cross-pass check (namma-ibr CPU) + denser depth (namma-dense GPU).",
  "phases": [
   {
    "name": "A. Capture & cameras",
@@ -37,6 +37,10 @@
     [
      "todo",
      "Recover dropped frames (re-place them against the verified cameras) - 46% of frames dropped"
+    ],
+    [
+     "running",
+     "Cross-pass check: rebuild each frame only from OTHER walk passes (do the passes agree?)"
     ]
    ]
   },
