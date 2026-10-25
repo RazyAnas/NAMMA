@@ -123,3 +123,8 @@ not match the video. Earlier notes calling its contents "real" were reported, ne
   photos drawn as floating cut-out cards with dark gaps. Fix: fused 3D points of the group (viewer_to_splat --viewer,
   cloud_<g>.bin) drawn behind the photos where no photo drew (stencil): views 30-60 cm off the path and turned 40 deg now show the
   whole room continuously. Instant splat (no training) of group 0: 1.79M splats, 57 MB, owner opened it in SuperSplat.
+- **namma-model (25 Oct): first good trained model.** Group 0 (162 frames, cameras agree at ~31 dB). A (default densify, SH3,
+  depth 0.05, 15k steps / 15 min): **held-out 38.1 dB, SSIM 0.957**, 900k splats, but 37.8% splats stretched > 10x (smears).
+  B (MCMC 1.5M, aniso 0.1): 34.2 dB / 0.946, needles 0.1%, only 7.6k steps in 15 min, mean opacity 0.02. Earlier splats on
+  disagreeing cameras: 18.8 dB (fog). The camera fix was the missing piece. Floor 21.6 m2 seen, 5.6 m2 walkable.
+  Model was tilted 7.9 deg (SfM world not gravity-aligned): to_splat.py now levels with nav.json (floor at y = 0).

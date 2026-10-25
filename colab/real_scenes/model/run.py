@@ -51,5 +51,5 @@ for gpu, v in enumerate(V):
 for v, lg, p in procs:
     p.wait(); print(f'---- splat {v["name"]} (exit {p.returncode}) ----'); print(''.join(l for l in open(lg) if 'step ' not in l or '000 loss' in l)[-3000:], flush=True)
     ply = f'{O}/model/{v["out"]}'
-    if os.path.exists(ply): sh(f'{sys.executable} {F}/to_splat.py {ply} {ply[:-4]}.splat')
+    if os.path.exists(ply): sh(f'{sys.executable} {F}/to_splat.py {ply} {ply[:-4]}.splat {O}/model/nav.json')   # levelled, floor at y = 0
 print(f'done in {time.time()-T0:.0f}s; files:', sorted(os.listdir(f'{O}/model')), flush=True)

@@ -1,7 +1,7 @@
 {
- "updated": "2026-10-25 19:30 IST",
+ "updated": "2026-10-25 20:15 IST",
  "goal": "Phone video -> photoreal, walkable 3D of the REAL room. Real pixels first, 3D model for in-between views, generation only for holes (flagged). Free GPUs.",
- "now": "Trained 3D model (gsplat) on the 162 cameras that agree (namma-model, ~35 min). Viewer: 3D fill behind photos (done).",
+ "now": "First trained 3D model of the room: held-out 38.1 dB / SSIM 0.957 (was 18.8 dB). Next: level it, fix needles, drone views.",
  "phases": [
   {
    "name": "A. Capture & cameras",
@@ -81,12 +81,12 @@
    "name": "C. Final build",
    "steps": [
     [
-     "running",
-     "3D model (gsplat, SH3; default + MCMC 1.5M) trained ONLY on cameras that agree (group 0)"
+     "done",
+     "3D model on cameras that agree: A 38.1 dB held-out / SSIM 0.957 / 900k splats (needles 38%); B MCMC 1.5M 34.2 dB"
     ],
     [
-     "running",
-     "Floor plan + walkable grid from group-0 geometry"
+     "done",
+     "Floor plan: 21.6 m2 floor seen, 5.6 m2 walkable"
     ],
     [
      "done",
@@ -121,6 +121,10 @@
   }
  ],
  "results": [
+  [
+   "Trained 3D model (group 0, held-out frames)",
+   "38.1 dB / SSIM 0.957 (was 18.8 dB on wrong cameras)"
+  ],
   [
    "Cross-pass agreement (group 0, 162 frames)",
    "30.8 dB median (was 15.7 before the pass fix)"
