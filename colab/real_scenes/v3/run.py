@@ -7,8 +7,10 @@
 #   4 QA       per model: qa_sheet.jpg (held-out real | model, 50 cm off the walk, outside, top-down), metrics.json (pass/fail),
 #              levelled model.splat (SuperSplat), model.ply (full colour detail), walkthrough.mp4 (trainer's fly-through: colour | depth)
 # SOURCE  dl3dv:auto | dl3dv:<scene hash>   handheld scene from HF DL3DV/DL3DV-Benchmark (Kaggle secret HF_TOKEN; "Agree" on HF once)
+#         kaggle:<dataset name>             video or frames (or a .zip of them) in that attached Kaggle dataset
 #         kaggle                            first .mp4/.mov under /kaggle/input (attach the video as a Kaggle dataset)
 #         <path>                            a video file or a folder of frames
+# Usually started from GitHub (.github/workflows/namma-v3.yml -> gh_run.py), which fetches DL3DV itself and attaches it as a dataset.
 # With a write HF_TOKEN each result is also uploaded as soon as it exists to the private HF dataset <user>/namma-v3-out, so the
 # preview can be checked while the full model still trains.
 import glob, json, os, shutil, subprocess, sys, time
@@ -29,6 +31,7 @@ def say(*a): print(f'[{time.time()-T0:5.0f}s]', *a, flush=True)
 
 sh(f'git clone -q --depth 1 -b claude/wonderful-cori-i3fn41 https://github.com/RazyAnas/NAMMA {W}/repo', check=True)
 F = f'{W}/repo/colab/real_scenes/final'; sys.path.insert(0, F)
+sh('ls /kaggle/input /kaggle/input/* | head -30')
 EX = f'{W}/gsplat/examples'
 
 # training dependencies install in the background while the cameras are solved (system Python; the SfM venv is separate because
@@ -70,30 +73,17 @@ def push(path, name):
         say('uploaded', name)
     except Exception as e: say('upload failed:', str(e)[:150])
 
-DL3DV = 'DL3DV/DL3DV-Benchmark'
-def pick_dl3dv(csv):
-    """Indoor scene with the fewest 'more reflection / more transparency' marks. The meta columns are undocumented, so match on values."""
-    import pandas as pd
-    df = pd.read_csv(csv); say('DL3DV meta columns:', list(df.columns))
-    hc = next(c for c in df.columns if df[c].astype(str).str.fullmatch(r'[0-9a-f]{64}').mean() > 0.9)
-    def score(row):
-        v = ' '.join(str(x).lower() for x in row.values)
-        indoor = 'indoor' in v and 'outdoor' not in v or ('bounded' in v and 'unbounded' not in v)
-        return indoor * 10 - v.count('more')
-    best = df.loc[df.apply(score, axis=1).idxmax()]; say('picked DL3DV scene:', best.to_dict()); return str(best[hc])
+sys.path.insert(0, f'{W}/repo/colab/real_scenes/v3'); import dl3dv
 
 def source():
     if SOURCE.startswith('dl3dv:'):
         tok = hf_token()
         assert tok, ('DL3DV needs a Hugging Face token: on huggingface.co open datasets/DL3DV/DL3DV-Benchmark and click Agree, create a token '
                      '(huggingface.co/settings/tokens), then in this Kaggle notebook: Add-ons -> Secrets -> add HF_TOKEN and attach it')
-        hf_setup(tok)
-        from huggingface_hub import hf_hub_download, snapshot_download
-        scene = SOURCE[6:]
-        if scene == 'auto': scene = pick_dl3dv(hf_hub_download(DL3DV, 'benchmark-meta.csv', repo_type='dataset', token=tok))
-        snapshot_download(DL3DV, repo_type='dataset', allow_patterns=[f'{scene}/nerfstudio/images_4/*'], local_dir=f'{W}/dl3dv', token=tok)
-        json.dump(dict(source=f'{DL3DV}/{scene}', frames='nerfstudio/images_4 (960 x 540)'), open(f'{O}/source.json', 'w'))
-        return f'{W}/dl3dv/{scene}/nerfstudio/images_4'
+        hf_setup(tok); scene, folder = dl3dv.fetch(SOURCE[6:], f'{W}/dl3dv', tok)
+        json.dump(dict(source=f'{dl3dv.REPO}/{scene}', frames='nerfstudio/images_4 (960 x 540)'), open(f'{O}/source.json', 'w'))
+        return folder
+    if SOURCE.startswith('kaggle:'): return attached(SOURCE[7:])
     hf_setup(hf_token())
     if SOURCE == 'kaggle':
         v = sorted(glob.glob('/kaggle/input/**/*.mp4', recursive=True) + glob.glob('/kaggle/input/**/*.mov', recursive=True)
@@ -101,6 +91,21 @@ def source():
         assert v, 'SOURCE=kaggle but no .mp4/.mov under /kaggle/input: attach the video as a dataset'
         json.dump(dict(source=v[0]), open(f'{O}/source.json', 'w')); return v[0]
     return SOURCE
+
+def attached(name):
+    """Video, frame folder or .zip of frames inside the attached Kaggle dataset `name` (its mount path differs between Kaggle layouts)."""
+    roots = [d for d in glob.glob('/kaggle/input/**/', recursive=True) if os.path.basename(d.rstrip('/')) == name]
+    assert roots, f'dataset {name} is not attached (see ls /kaggle/input above)'
+    root = roots[0]; files = glob.glob(f'{root}/**/*', recursive=True)
+    vid = sorted(f for f in files if f.lower().endswith(('.mp4', '.mov')))
+    if vid: return vid[0]
+    for z in [f for f in files if f.lower().endswith('.zip')]: shutil.unpack_archive(z, f'{W}/unzipped')
+    if os.path.exists(f'{W}/unzipped'): files = glob.glob(f'{W}/unzipped/**/*', recursive=True)
+    count = {}
+    for f in files:
+        if f.lower().endswith(('.jpg', '.jpeg', '.png')): count[os.path.dirname(f)] = count.get(os.path.dirname(f), 0) + 1
+    assert count, f'no video or frames in dataset {name}'
+    return max(count, key=count.get)                                                       # the folder with the most frames
 
 # 1 frames
 import frames

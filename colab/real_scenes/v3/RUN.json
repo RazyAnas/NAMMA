@@ -1,0 +1,2 @@
+{"n": 0, "source": "dl3dv:auto", "kaggle_user": "anasrazy", "env": {"STEPS": "30000", "PREVIEW": "7000"},
+ "how": "change n (and source) and push to start a run: .github/workflows/namma-v3.yml -> gh_run.py"}
