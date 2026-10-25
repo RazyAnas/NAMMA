@@ -1,6 +1,4 @@
-# plain lines: screenshot + text; 'tour <url>': open it and move around inside
-https://splattour.com/en/tour-virtual-gaussian-splatting
-https://splattour.com/en/video-a-tour-virtual
+# plain lines: screenshot + text; "tour <url>": open it and move around inside (run 2: slow software WebGL)
 tour https://splattour.com/en/t/Terrassa_Apartment
 tour https://splattour.com/en/t/Manresa_Premium
 tour https://splattour.com/en/t/Airbnb_Santa_Teresa

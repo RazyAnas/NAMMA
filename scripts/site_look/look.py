@@ -9,7 +9,8 @@ urls = [u.strip() for u in open(os.path.join(os.path.dirname(__file__), 'URLS.tx
 log = {}
 
 def shot(page, name):
-    page.screenshot(path=f'{OUT}/{name}.jpg', type='jpeg', quality=80); print('shot', name, flush=True)
+    try: page.screenshot(path=f'{OUT}/{name}.jpg', type='jpeg', quality=85, timeout=240000); print('shot', name, flush=True)
+    except Exception as e: print('shot failed', name, str(e)[:120], flush=True)
 
 def visit_tour(ctx, url, k):
     page = ctx.new_page(); rec = dict(url=url, requests=[])
@@ -28,12 +29,17 @@ def visit_tour(ctx, url, k):
                 page.get_by_text(label, exact=True).first.click(timeout=5000); page.wait_for_timeout(9000); shot(page, f'tour{k}_e{n}_' + re.sub(r'\W+', '_', label)[:20])
             except Exception as e: print('click failed', label, str(e)[:80], flush=True)
         rec['text'] = page.inner_text('body')[:3000]
+        for n, img in enumerate([r for r in dict.fromkeys(rec['requests']) if re.search(r'\.(jpg|webp)', r)][:14]):   # what the page shows
+            try:
+                r = page.request.get(img, timeout=30000)
+                if r.ok: open(f"{OUT}/tour{k}_img{n:02d}_" + re.sub(r'\W+', '_', img.split('/')[-1].split('?')[0])[:40] + '.jpg', 'wb').write(r.body())
+            except Exception as e: print('img failed', img, str(e)[:80], flush=True)
     except Exception as e: rec['error'] = str(e)[:300]
     page.close(); return rec
 
 with sync_playwright() as p:
     b = p.chromium.launch(executable_path=os.environ.get('CHROME') or None, args=['--use-angle=swiftshader', '--enable-unsafe-swiftshader', '--ignore-gpu-blocklist', '--enable-webgl'])
-    ctx = b.new_context(viewport={'width': 1440, 'height': 900}, locale='en-US')
+    ctx = b.new_context(viewport={'width': 1100, 'height': 700}, locale='en-US')
     for i, u in enumerate(urls):
         if u.startswith('tour '):                                                           # a tour page: walk around inside it
             log[f'tour{i}'] = visit_tour(ctx, u[5:].strip(), i); print('TOUR', i, json.dumps(log[f'tour{i}'])[:3000], flush=True); continue
