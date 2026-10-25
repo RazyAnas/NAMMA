@@ -1,7 +1,7 @@
 {
- "updated": "2026-10-25 21:50 IST",
+ "updated": "2026-10-26 00:30 IST",
  "goal": "Phone video -> photoreal, walkable 3D of the REAL room. Real pixels first, 3D model for in-between views, generation only for holes (flagged). Free GPUs.",
- "now": "namma-v3 (new final pipeline, standard tools): frames -> hloc cameras -> gsplat simple_trainer (MCMC, bilateral grid, depth loss) -> QA sheet + metrics + levelled .splat. First test: a DL3DV handheld indoor scene. Waiting for the owner: HF \"Agree\" on DL3DV-Benchmark + HF_TOKEN Kaggle secret.",
+ "now": "namma-v3 works: DL3DV hotel room (handheld phone, 411 frames) -> 29.5 dB held-out (exposure-fair), SSIM 0.945, photoreal held-out and off-path views. Next: owner re-films their room, same command. Hand-off: docs/HANDOFF_V3.md",
  "phases": [
   {
    "name": "NOW: namma-v3 (final pipeline)",
@@ -19,12 +19,12 @@
      "v3 code: frames.py, sfm_hloc COLMAP export + camera report, v3/run.py (one command), v3_qa.py (QA sheet, pass/fail), tested on CPU with a synthetic room"
     ],
     [
-     "todo",
-     "Owner (3 min): HF Agree on DL3DV/DL3DV-Benchmark, write token, Kaggle secret HF_TOKEN on namma-v3"
+     "done",
+     "Owner: HF Agree + GitHub secrets (KAGGLE_TOKEN, HUGGINGFACE_WRITE_TOKEN); Kaggle now driven from GitHub Actions"
     ],
     [
-     "todo",
-     "Run namma-v3 on a DL3DV indoor handheld scene: preview (7k) + full (30k) on 2 T4s; pass = held-out >= 28 dB, no needles, levelled"
+     "done",
+     "namma-v3 on DL3DV hotel room: cameras 411/411, full model 29.5 dB / SSIM 0.945 held-out, photoreal (QA tool fixed after)"
     ],
     [
      "todo",

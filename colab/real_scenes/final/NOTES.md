@@ -152,3 +152,10 @@ not match the video. Earlier notes calling its contents "real" were reported, ne
   -> "No module named 'datasets.colmap'". Fixed (touch __init__.py; the job now imports the trainer once and installs whatever
   is missing before training). Kaggle is driven from GitHub Actions now (.github/workflows/namma-v3.yml): this container
   cannot reach kaggle.com.
+- **v3 run 2 (25-26 Oct, DL3DV hotel room, 411 handheld phone frames): first genuinely photoreal model.** Cameras 411/411,
+  1.15 px. Full model (gsplat simple_trainer MCMC, bilateral grid, depth loss, 30k steps, 68 min on a T4, 1.5M splats):
+  **held-out 29.50 dB exposure-fair (25.71 raw), SSIM 0.945, LPIPS 0.120** on 52 held-out frames; preview (7k, 10 min) 26.76 dB.
+  Checked by eye: held-out renders near-identical to the real frames, views 50 cm off the walk clean. QA-tool faults found and
+  fixed (not yet re-run): needle metric counted flat discs (76%); outside/top-down shots looked into the shell of big splats that
+  models the view through the window -> dollhouse crop now. Results: HF dataset anasrazy/namma-v3-out/20261025-1835.
+  Conclusion: with a good handheld capture the standard stack works; the owner's own re-filmed room is next.
