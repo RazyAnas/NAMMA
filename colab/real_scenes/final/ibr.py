@@ -87,6 +87,8 @@ if __name__ == '__main__':
         c = d['c2w'][i].copy(); c[:3, 3] += 0.30 * c[:3, 0]
         img, m, _, _ = synth(d, files, K, has, H, W, K[i], c, exclude=set(), k=a.k); img[~m] = [1, 0, 1]   # magenta = never filmed from here
         offs.append(img); res.append(dict(offpath_frame=int(fid[i]), offpath_coverage=float(m.mean())))
+        Image.fromarray((img * 255).astype(np.uint8)).save(f'{a.out}/offpath_{int(fid[i]):04d}.png')            # for the Difix demo (P3)
+        Image.fromarray((image(files, int(fid[i]), W, H) * 255).astype(np.uint8)).save(f'{a.out}/offpath_{int(fid[i]):04d}_reference_real.jpg', quality=95)
     Image.fromarray((np.concatenate(offs, 0) * 255).astype(np.uint8)).resize((W // 2, len(offs) * H // 2)).save(f'{a.out}/ibr_offpath30cm.jpg', quality=90)
     hd = [r for r in res if 'psnr_full' in r]; op = [r['offpath_coverage'] for r in res if 'offpath_coverage' in r]
     summary = dict(views=len(hd), psnr_full=float(np.mean([r['psnr_full'] for r in hd])), psnr_covered=float(np.mean([r['psnr_covered'] for r in hd])),
@@ -94,3 +96,5 @@ if __name__ == '__main__':
                    offpath30_coverage=float(np.mean(op)), seconds=round(time.time() - t0))
     json.dump(dict(summary=summary, views=res), open(f'{a.out}/ibr_report.json', 'w'), indent=1)
     print('IBR SUMMARY', json.dumps(summary), flush=True)
+    import shutil; os.makedirs(f'{a.out}/proof_frames', exist_ok=True)                 # 32 evenly spaced real frames for the Tencent demo (P2)
+    for g in np.linspace(0, len(files) - 1, 32).astype(int): shutil.copy(files[g], f'{a.out}/proof_frames/')
