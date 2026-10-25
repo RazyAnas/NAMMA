@@ -2,7 +2,7 @@
 # Stage 1 sharpest frames -> 2 Depth Anything 3 (poses+depth+gaussians, feed-forward, ~1 min) -> 3 fuse + floor plan + A* (tested on CPU)
 # -> 4 package for the viewer. Matrix-3D gap filling stays a separate job (colab/real_scenes/matrix3d/kaggle) and is fed pano_raw from here.
 # Every stage logs and continues, so a failed stage never loses the earlier outputs in /kaggle/working.
-import glob, json, os, subprocess, sys, time, traceback
+import glob, json, os, shutil, subprocess, sys, time, traceback
 T0 = time.time(); O = '/kaggle/working'; W = '/kaggle/temp/final'; os.makedirs(W, exist_ok=True)
 def sh(c, check=False):
     print(f'\n[{time.time()-T0:5.0f}s] $ {c[:160]}', flush=True); r = subprocess.call(c, shell=True, executable='/bin/bash')
@@ -17,40 +17,102 @@ sh('ls -R /kaggle/input | head -40')
 _v = sorted(glob.glob('/kaggle/input/**/*.mp4', recursive=True) + glob.glob('/kaggle/input/**/*.mov', recursive=True))
 assert _v, 'no video under /kaggle/input: attach dataset anasrazy/namma-room-2026-10-22 (see ls above)'
 VIDEO = _v[0]; print('VIDEO', VIDEO)
-NFRAMES = int(os.environ.get('NFRAMES', 60))
+NFRAMES = int(os.environ.get('NFRAMES', 200))
+sh(f'git clone -q --depth 1 -b claude/wonderful-cori-i3fn41 https://github.com/RazyAnas/NAMMA {W}/repo', check=True)
+sys.path.insert(0, f'{W}/repo/colab/real_scenes/final')
 
 @stage('1 frames')
 def _():
-    sh('apt-get install -y -q ffmpeg >/dev/null 2>&1; pip -q install opencv-python-headless trimesh scipy matplotlib open3d', check=True)
+    sh('pip -q install opencv-python-headless', check=True)
     import cv2, numpy as np
-    cap = cv2.VideoCapture(VIDEO); n = int(cap.get(cv2.CAP_PROP_FRAME_COUNT)); win = n // NFRAMES; os.makedirs(f'{W}/frames', exist_ok=True)
-    for k in range(NFRAMES):                                   # sharpest frame (variance of Laplacian) per window
-        best, bs = None, -1
-        for i in range(k * win, (k + 1) * win, 3):
-            cap.set(cv2.CAP_PROP_POS_FRAMES, i); ok, f = cap.read()
-            if not ok: continue
-            s = cv2.Laplacian(cv2.cvtColor(f, cv2.COLOR_BGR2GRAY), cv2.CV_64F).var()
-            if s > bs: best, bs = f, s
-        if best is not None:
-            h, w = best.shape[:2]; sc = 756 / max(h, w); cv2.imwrite(f'{W}/frames/{k:04d}.jpg', cv2.resize(best, (int(w * sc), int(h * sc))))
-    print(len(os.listdir(f'{W}/frames')), 'frames')
+    cap = cv2.VideoCapture(VIDEO); n = int(cap.get(cv2.CAP_PROP_FRAME_COUNT)); win = max(1, n // NFRAMES); os.makedirs(f'{W}/frames', exist_ok=True)
+    best, bs, k = None, -1, 0                                   # sequential decode (seeking in 4K H.264 is what took 16 min)
+    for i in range(n):
+        if not cap.grab(): break
+        if i % 3 == 0:
+            ok, f = cap.retrieve()
+            if ok:
+                g = cv2.cvtColor(cv2.resize(f, (f.shape[1] // 4, f.shape[0] // 4)), cv2.COLOR_BGR2GRAY)
+                sc = cv2.Laplacian(g, cv2.CV_64F).var()         # sharpness = variance of Laplacian
+                if sc > bs: best, bs = f, sc
+        if (i + 1) % win == 0 and best is not None and k < NFRAMES:
+            h, w = best.shape[:2]; s = 1008 / max(h, w); cv2.imwrite(f'{W}/frames/{k:04d}.jpg', cv2.resize(best, (int(w * s), int(h * s)))); k += 1; best, bs = None, -1
+    print(k, 'frames')
 
 @stage('2 depth anything 3')
 def _():
-    sh('pip -q install xformers --index-url https://download.pytorch.org/whl/cu121 2>&1 | tail -1; '
-       'pip -q install "git+https://github.com/ByteDance-Seed/Depth-Anything-3.git" 2>&1 | tail -2', check=True)
-    import numpy as np, torch, cv2
-    from depth_anything_3.api import DepthAnything3
+    # Kaggle runs Python 3.13.15, DA3's metadata says <=3.13 -> ignore it; no xformers (DA3 falls back to torch attention).
+    sh('pip -q install --no-deps --ignore-requires-python "git+https://github.com/ByteDance-Seed/Depth-Anything-3.git" 2>&1 | tail -3', check=True)
+    sh('pip -q install einops omegaconf huggingface_hub safetensors pillow imageio plyfile trimesh scipy addict moviepy 2>&1 | tail -2')
+    import numpy as np, torch, importlib
+    for _ in range(25):                                         # self-heal: install whatever DA3 turns out to import
+        try: from depth_anything_3.api import DepthAnything3; break
+        except ModuleNotFoundError as e:
+            pkg = {'cv2': 'opencv-python-headless', 'PIL': 'pillow', 'yaml': 'pyyaml', 'sklearn': 'scikit-learn'}.get(e.name.split('.')[0], e.name.split('.')[0])
+            print('missing', e.name, '-> pip', pkg); sh(f'pip -q install {pkg} 2>&1 | tail -1')
     model = DepthAnything3.from_pretrained('depth-anything/DA3NESTED-GIANT-LARGE').to('cuda').eval()
     files = sorted(glob.glob(f'{W}/frames/*.jpg'))
-    pred = model.inference(files)                             # depth (N,H,W), extrinsics (N,3,4) w2c, intrinsics (N,3,3)
-    ext = np.concatenate([pred.extrinsics, np.tile([[[0, 0, 0, 1.]]], (len(files), 1, 1))], 1)
-    np.savez(f'{W}/da3.npz', depth=pred.depth, K=pred.intrinsics, c2w=np.linalg.inv(ext), rgb=pred.processed_images)
-    print('depth', pred.depth.shape, 'median depth', float(np.median(pred.depth)), '(DA3 nested = metric)')
+    import gc, chunk_align as CA
+    CH, STEP = int(os.environ.get('CHUNK', 8)), int(os.environ.get('STEP', 5))   # 8 views fit a T4; 30 and 15 ran out of memory
+    chunks = []
+    for a in range(0, max(1, len(files) - CH + STEP), STEP):
+        idx = list(range(a, min(a + CH, len(files))))
+        if len(idx) < 3: break
+        pred = None
+        for attempt in range(2):
+            try:
+                with torch.no_grad(): pred = model.inference([files[i] for i in idx]); break
+            except (torch.OutOfMemoryError, RuntimeError) as e:
+                if 'out of memory' not in str(e).lower() and 'cudnn' not in str(e).lower(): raise
+            gc.collect(); torch.cuda.empty_cache()        # free OUTSIDE the except block (the traceback pins the tensors there)
+        if pred is None: print('chunk', a, 'skipped (OOM)'); continue
+        ext = np.concatenate([pred.extrinsics, np.tile([[[0, 0, 0, 1.]]], (len(idx), 1, 1))], 1)
+        chunks.append(dict(idx=idx, depth=np.asarray(pred.depth), K=np.asarray(pred.intrinsics), c2w=np.linalg.inv(ext), rgb=np.asarray(pred.processed_images)))
+        print('chunk', a, 'ok', len(chunks), flush=True); gc.collect(); torch.cuda.empty_cache()
+    D, Ks, C, have = CA.merge(chunks)                       # each chunk is in its own frame; fit a similarity on the shared frames
+    rgb = np.zeros(D.shape + (3,), np.uint8)
+    for c in chunks:
+        for j, g in enumerate(c['idx']): rgb[g] = c['rgb'][j]
+    k = np.where(have)[0]; np.savez(f'{W}/da3.npz', depth=D[k], K=Ks[k], c2w=C[k], rgb=rgb[k], idx=k)
+    print('merged', len(k), 'of', len(files), 'frames; median depth', float(np.median(D[k][D[k] > 0])), '(metric)')
+
+@stage('2b SfM cameras (hloc SuperPoint+LightGlue, proven on this video: 574/578)')
+def _():
+    # DA3's cameras come from 40 chained chunks and drift (training had to move them 7.6 cm / 2.6 deg on average). SfM gives one
+    # globally consistent set; DA3 then only supplies metric scale and dense depth (sfm_align.py). Python 3.10 venv: the combo
+    # (torch 2.1.2 cu118 + hloc + LightGlue) that solved this video before.
+    E = f'{W}/sfmenv/bin/python'; P = f'--python {E}'
+    sh(f'pip -q install uv 2>&1 | tail -1; unset UV_SYSTEM_PYTHON UV_PYTHON PIP_TARGET; uv venv -q -p 3.10 {W}/sfmenv && '
+       f'uv pip install -q {P} torch==2.1.2 torchvision==0.16.2 --index-url https://download.pytorch.org/whl/cu118 > {W}/sfm_pip.log 2>&1; '
+       f'git clone -q --recursive https://github.com/cvg/Hierarchical-Localization {W}/hloc && '
+       f'uv pip install -q {P} "numpy<2" -e {W}/hloc "lightglue @ git+https://github.com/cvg/LightGlue" >> {W}/sfm_pip.log 2>&1; tail -3 {W}/sfm_pip.log')
+    sh(f'{E} -c "import hloc, lightglue, pycolmap; print(\'hloc ok, pycolmap\', pycolmap.__version__)"', check=True)
+    sh(f'cd {W} && {E} {W}/repo/colab/real_scenes/final/sfm_hloc.py {W}/frames {W}/sfm 2>&1 | grep -v "it/s" | grep -v "s/it" | tail -25')
+    import sfm_align; sfm_align.align(f'{W}/sfm/sfm.npz', f'{W}/da3.npz', f'{W}/da3_sfm.npz')
 
 @stage('3 fuse + floor plan + path')
 def _():
-    sh(f'git clone -q --depth 1 -b claude/wonderful-cori-i3fn41 https://github.com/RazyAnas/NAMMA {W}/repo', check=True)
-    sys.path.insert(0, f'{W}/repo/colab/real_scenes/final'); import fuse_nav as F
-    F.fuse(f'{W}/da3.npz', f'{O}/model'); print(json.dumps({k: v for k, v in F.navigate(f'{O}/model/cloud.npz', f'{O}/model').items() if k != 'demo_path_cells'}))
+    sh('pip -q install open3d trimesh scipy matplotlib 2>&1 | tail -1')
+    import fuse_nav as F
+    src = f'{W}/da3_sfm.npz' if os.path.exists(f'{W}/da3_sfm.npz') else f'{W}/da3.npz'; print('geometry from', src)
+    F.fuse(src, f'{O}/model'); print(json.dumps({k: v for k, v in F.navigate(f'{O}/model/cloud.npz', f'{O}/model', up=F.camera_up(src)).items() if k != 'demo_path_cells'}))
+    import build_viewer; print(build_viewer.build(f'{O}/model'), '-> model/viewer.html')
+@stage('4 splat fits: V1 (SfM cameras) and V2 (+ 2M splats + reflections)')
+def _():
+    import torch
+    sh('nvcc --version | tail -1; pip -q install ninja 2>&1 | tail -1')
+    tv = torch.__version__.split('+')[0].split('.'); cu = (torch.version.cuda or '').replace('.', '')
+    if sh(f'pip -q install gsplat --index-url https://docs.gsplat.studio/whl/pt{tv[0]}{tv[1]}cu{cu} 2>&1 | tail -2') != 0 or sh('python -c "import gsplat"') != 0:
+        sh('pip -q install gsplat 2>&1 | tail -2', check=True)
+    import train_splat as T, fuse_nav as F
+    steps = int(os.environ.get('STEPS', 15000)); f, o = f'{W}/frames', f'{O}/model'
+    def run(name, *a, **k):
+        try: T.train(*a, **k)
+        except Exception: print(f'variant {name} FAILED (earlier files are intact)'); traceback.print_exc()
+    s = f'{W}/da3_sfm.npz' if os.path.exists(f'{W}/da3_sfm.npz') else f'{W}/da3.npz'; cs = f'{O}/model/cloud.npz'
+    # Last run: camera refinement let cameras and scene drift together (raw held-out 17 dB even on SfM cameras with 1.07 px error),
+    # so with SfM cameras it is OFF now and the held-out number is direct. V1 vs V2 isolates splat count + reflections.
+    run('V1', s, cs, f, f'{o}/splat.ply', steps=steps, depth_w=0.05)
+    run('V2', s, cs, f, f'{o}/splat_2M_sh3.ply', steps=12000, max_seconds=1500, depth_w=0.05, mcmc_cap=2000000, sh=3)
+
 print('files:', os.listdir(O))

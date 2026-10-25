@@ -58,6 +58,17 @@ snapshot_download("Wan-AI/Wan2.2-TI2V-5B", local_dir="checkpoints/Wan-AI/Wan2.2-
 print("checkpoints ok")
 ''' % W)
 sh(f'{PY} {W}/dl.py 2>&1 | tail -3; du -sh {W}/repo/checkpoints/*')
+# utils3d moved on: Matrix-3D's MoGe code needs utils3d.numpy.icosahedron/image_uv/project_cv/... (gone in master). Walk back through
+# commits until the newest one that still has every function the panorama code calls, and pin that.
+open(f'{W}/pin_utils3d.sh', 'w').write(r'''
+cd %s && rm -rf u3d && git clone -q https://github.com/EasternJournalist/utils3d u3d && cd u3d
+CHECK='import utils3d; n = utils3d.numpy; [getattr(n, f) for f in ("icosahedron","intrinsics_from_fov","extrinsics_look_at","image_uv","unproject_cv","uv_to_pixel","project_cv")]'
+for c in $(git rev-list --before=2025-09-20 HEAD | head -80); do
+  git checkout -q $c && uv pip install -q --reinstall --no-deps --python %s/env/bin/python . >/dev/null 2>&1 && (cd /tmp && %s/env/bin/python -c "$CHECK" 2>/dev/null) && { echo "utils3d pinned at $c"; exit 0; }
+done
+echo "NO usable utils3d commit found"; exit 1
+''' % (W, W, W))
+sh(f'unset UV_SYSTEM_PYTHON UV_PYTHON; bash {W}/pin_utils3d.sh')
 ENV = f'PYOPENGL_PLATFORM=egl PATH={W}/env/bin:$PATH PYTHONPATH={W}/repo/code/DiffSynth-Studio:{W}/repo/code'
 sh(f'cd {W}/repo && {ENV} python -c "import diffsynth, nvdiffrast.torch, xfuser, pyrender, pandas, skimage, matplotlib, omegaconf, click, utils3d, xformers, peft, modelscope, trimesh, imageio, utils_3dscene.nvrender; print(\'imports ok\')"')
 code = sh(f'cd {W}/repo && {ENV} {W}/env/bin/torchrun --nproc_per_node 2 code/panoramic_image_to_video.py --inout_dir={CASE} '

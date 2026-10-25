@@ -22,11 +22,11 @@ def fuse(npz, out, voxel=0.02, max_depth=8.0, stride=2):
     pc = pc.voxel_down_sample(voxel)
     pc.estimate_normals(o3d.geometry.KDTreeSearchParamHybrid(radius=voxel * 4, max_nn=30))
     o3d.io.write_point_cloud(str(out / "cloud.ply"), pc)
-    np.savez(out / "cloud.npz", pts=np.asarray(pc.points), nrm=np.asarray(pc.normals))
+    np.savez(out / "cloud.npz", pts=np.asarray(pc.points), nrm=np.asarray(pc.normals), col=(np.asarray(pc.colors) * 255).astype(np.uint8))
     return pc
 
-def navigate(mesh_path, out, radius=0.25, cell=0.05):
-    out = pathlib.Path(out); R = N.analyse(str(mesh_path), radius, cell)
+def navigate(mesh_path, out, radius=0.25, cell=0.05, up=None):
+    out = pathlib.Path(out); R = N.analyse(str(mesh_path), radius, cell, up=up)
     walk = R["walk"]; W, H, u0, v0, c = R["grid"]
     idx = np.argwhere(walk)
     s = tuple(idx[np.argmin(idx.sum(1))]); g = tuple(idx[np.argmax(idx.sum(1))])
@@ -35,12 +35,18 @@ def navigate(mesh_path, out, radius=0.25, cell=0.05):
                 walkable_m2=float(walk.sum() * c * c), floor_seen_m2=float(R["floor_hit"].sum() * c * c),
                 demo_path_cells=None if path is None else [list(map(int, p)) for p in path])
     json.dump(info, open(out / "nav.json", "w"))
+    np.savez(out / "walk.npz", walk=walk, up=R["up"], grid=np.array([u0, v0, c]), floor=R["floor"])
     import matplotlib; matplotlib.use("Agg"); import matplotlib.pyplot as plt
     img = np.ones((H, W, 3)) * .08; img[R["floor_hit"].T] = [.25, .25, .3]; img[walk.T] = [.2, .55, .35]; img[R["obst"].T] = [.9, .9, .9]
     fig, ax = plt.subplots(figsize=(7, 7 * H / W)); ax.imshow(img, origin="lower"); ax.axis("off")
     if path: ax.plot([p[0] for p in path], [p[1] for p in path], "r-")
     fig.savefig(out / "floorplan.png", dpi=110, bbox_inches="tight")
     return info
+
+def camera_up(npz):
+    """Phone held upright: image 'up' (-y in OpenCV cameras) averaged over all frames is the world up. Far more robust than
+    surface normals when long walls dominate (the SfM run tilted the normal-based estimate by ~25 deg)."""
+    c2w = np.load(npz)['c2w']; u = -c2w[:, :3, 1].mean(0); return u / np.linalg.norm(u)
 
 if __name__ == "__main__":
     npz, out = sys.argv[1], sys.argv[2]
