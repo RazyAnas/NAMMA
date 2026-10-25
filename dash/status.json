@@ -1,5 +1,5 @@
 {
- "updated": "2026-10-25 18:40 IST",
+ "updated": "2026-10-25 18:50 IST",
  "goal": "Phone video -> photoreal, walkable 3D of the REAL room. Real pixels first, 3D model for in-between views, generation only for holes (flagged). Free GPUs.",
  "now": "Pass alignment run 6 (scale fix + group merge, namma-ibr CPU) | P4 hole filling (namma-fill GPU) running.",
  "phases": [
@@ -114,8 +114,8 @@
      "Multi-room, then multi-floor"
     ],
     [
-     "todo",
-     "Techfest R1 (31 Oct): abstract PDF, hosted viewer, 3-5 min video, repo + sample data"
+     "running",
+     "Techfest R1 (31 Oct): draft abstract + video storyboard in docs/TECHFEST_R1.md; filming guide docs/CAPTURE_GUIDE.md"
     ]
    ]
   }
