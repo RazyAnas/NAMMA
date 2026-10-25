@@ -15,14 +15,19 @@ def visit_tour(ctx, url, k):
     page = ctx.new_page(); rec = dict(url=url, requests=[])
     page.on('request', lambda r: rec['requests'].append(r.url) if re.search(r'\.(sog|splat|ply|spz|ksplat|json|webp|jpg)(\?|$)', r.url) else None)
     try:
-        page.goto(url, wait_until='domcontentloaded', timeout=60000); page.wait_for_timeout(35000); shot(page, f'tour{k}_a_loaded')
+        page.goto(url, wait_until='domcontentloaded', timeout=60000); page.wait_for_timeout(45000); shot(page, f'tour{k}_a_loaded')
         W, H = page.viewport_size['width'], page.viewport_size['height']
         page.mouse.move(W / 2, H / 2); page.mouse.down(); page.mouse.move(W / 2 + 300, H / 2, steps=20); page.mouse.up(); page.wait_for_timeout(4000)
         shot(page, f'tour{k}_b_turned')
         for key in ['w'] * 12 + ['ArrowUp'] * 12: page.keyboard.press(key); page.wait_for_timeout(120)
         page.wait_for_timeout(4000); shot(page, f'tour{k}_c_moved')
         page.mouse.click(W / 2, H * 0.7); page.wait_for_timeout(6000); shot(page, f'tour{k}_d_clicked')
-        rec['text'] = page.inner_text('body')[:1500]
+        rec['buttons'] = page.eval_on_selector_all('button, [role=button]', 'els => els.map(e => (e.innerText || e.getAttribute("aria-label") || e.title || "").trim()).filter(t => t)')
+        for n, label in enumerate([b for b in rec['buttons'] if re.search(r'plan|floor|3d|doll|overview|map|room|bed|living|kitchen|bath|hall|salon|cocina', b, re.I)][:6]):
+            try:
+                page.get_by_text(label, exact=True).first.click(timeout=5000); page.wait_for_timeout(9000); shot(page, f'tour{k}_e{n}_' + re.sub(r'\W+', '_', label)[:20])
+            except Exception as e: print('click failed', label, str(e)[:80], flush=True)
+        rec['text'] = page.inner_text('body')[:3000]
     except Exception as e: rec['error'] = str(e)[:300]
     page.close(); return rec
 
@@ -30,13 +35,13 @@ with sync_playwright() as p:
     b = p.chromium.launch(executable_path=os.environ.get('CHROME') or None, args=['--use-angle=swiftshader', '--enable-unsafe-swiftshader', '--ignore-gpu-blocklist', '--enable-webgl'])
     ctx = b.new_context(viewport={'width': 1440, 'height': 900}, locale='en-US')
     for i, u in enumerate(urls):
+        if u.startswith('tour '):                                                           # a tour page: walk around inside it
+            log[f'tour{i}'] = visit_tour(ctx, u[5:].strip(), i); print('TOUR', i, json.dumps(log[f'tour{i}'])[:3000], flush=True); continue
         page = ctx.new_page(); page.goto(u, wait_until='networkidle', timeout=90000); page.wait_for_timeout(5000)
         page.screenshot(path=f'{OUT}/site{i}_full.jpg', type='jpeg', quality=75, full_page=True); shot(page, f'site{i}_top')
         links = sorted({a for a in page.eval_on_selector_all('a[href]', 'els => els.map(e => e.href)')})
-        text = page.inner_text('body'); log[u] = dict(links=links, text=text[:6000])
-        print('LINKS', json.dumps(links, indent=0), '\nTEXT', text[:3000], flush=True)
-        tours = [l for l in links if re.search(r'tour|demo|view|example|sample|showcase', l, re.I) and l.rstrip('/') != u.rstrip('/')][:MAX_TOURS]
-        for k, t in enumerate(tours): log[f'tour{k}'] = visit_tour(ctx, t, k); print('TOUR', k, json.dumps(log[f'tour{k}'])[:1500], flush=True)
+        text = page.inner_text('body'); log[u] = dict(links=links, text=text[:12000])
+        print('PAGE', u, '\nLINKS', json.dumps(links, indent=0), '\nTEXT', text[:8000], flush=True); page.close()
     b.close()
 json.dump(log, open(f'{OUT}/log.json', 'w'), indent=1)
 tok = os.environ.get('HF_TOKEN')
