@@ -20,8 +20,8 @@ def stage(name):
 sh('ls -R /kaggle/input | head -40')
 if MODE not in ('train', 'ffgs'):
     _v = sorted(glob.glob('/kaggle/input/**/*.mp4', recursive=True) + glob.glob('/kaggle/input/**/*.mov', recursive=True))
-    assert _v, 'no video under /kaggle/input: attach dataset anasrazy/namma-room-2026-10-22 (see ls above)'
-    VIDEO = _v[0]; print('VIDEO', VIDEO)
+    assert _v or os.environ.get('VIDEO'), 'no video under /kaggle/input: attach a dataset or set VIDEO (see ls above)'
+    VIDEO = os.environ.get('VIDEO') or _v[0]; print('VIDEO', VIDEO)
 NFRAMES = int(os.environ.get('NFRAMES', 600))      # ~2.7 per second of video: density is the lever (lobby: 6/s -> 26.9 dB)
 DA3_EVERY = int(os.environ.get('DA3_EVERY', 3))    # dense depth for every 3rd frame (200 frames, ~12 min); SfM uses all
 if not os.path.exists(f'{W}/repo'): sh(f'git clone -q --depth 1 -b claude/wonderful-cori-i3fn41 https://github.com/RazyAnas/NAMMA {W}/repo', check=True)

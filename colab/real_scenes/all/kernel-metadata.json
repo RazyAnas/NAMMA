@@ -1,0 +1,2 @@
+{"id": "anasrazy/namma-all", "title": "namma-all", "code_file": "run.py", "language": "python", "kernel_type": "script",
+ "is_private": true, "enable_gpu": true, "enable_internet": true, "machine_shape": "NvidiaTeslaT4", "kernel_sources": [], "dataset_sources": []}
