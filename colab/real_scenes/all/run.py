@@ -22,13 +22,16 @@ if SOURCE == 'arkit':
     base = 'https://docs-assets.developer.apple.com/ml-research/datasets/arkitscenes/v1/raw'
     rows = list(csv.DictReader(io.StringIO(urllib.request.urlopen(f'{base}/metadata.csv', timeout=60).read().decode())))
     print('ARKitScenes raw videos:', len(rows), '| columns:', list(rows[0]), flush=True)
-    cand = [r for r in rows if r.get('fold', '') == 'Validation' and r.get('sky_direction', 'Up') == 'Up']
-    if ARKIT_ID: cand = [r for r in rows if r['video_id'] == ARKIT_ID]
+    fold_key = next((k for k in ('fold', 'split') if k in rows[0]), None); vid_of = lambda r: str(int(float(r['video_id'])))
+    cand = [r for r in rows if (not fold_key or r[fold_key] == 'Validation') and r.get('sky_direction', 'Up') in ('Up', '')]
+    if ARKIT_ID: cand = [r for r in rows if vid_of(r) == ARKIT_ID]
     sized = []
     for r in cand[:40]:                                                              # size of the .mov ~ length of the scan
-        url = f"{base}/{r['fold']}/{r['video_id']}/{r['video_id']}.mov"
-        try: sized.append((int(urllib.request.urlopen(urllib.request.Request(url, method='HEAD'), timeout=30).headers['Content-Length']), url, r['video_id']))
-        except Exception as e: print('no mov for', r['video_id'], e)
+        for fold in ([r[fold_key]] if fold_key else ['Validation', 'Training']):
+            url = f"{base}/{fold}/{vid_of(r)}/{vid_of(r)}.mov"
+            try: sized.append((int(urllib.request.urlopen(urllib.request.Request(url, method='HEAD'), timeout=30).headers['Content-Length']), url, vid_of(r))); break
+            except Exception as e: pass
+    print(f'{len(sized)} candidate videos with a .mov, sizes (MB): {sorted(int(x[0] / 1e6) for x in sized)}', flush=True)
     ok = sorted([s for s in sized if 150e6 <= s[0] <= 900e6] or sized)
     size, url, vid = ok[len(ok) // 2] if not ARKIT_ID else ok[0]
     VIDEO = f'{W}/{vid}.mov'; print(f'chosen ARKitScenes video {vid}: {size/1e6:.0f} MB', flush=True)

@@ -166,7 +166,8 @@ def _():
     C = f'{O}/cache'; os.makedirs(C, exist_ok=True)
     src = f'{W}/da3_sfm.npz' if os.path.exists(f'{W}/da3_sfm.npz') else f'{W}/da3.npz'
     shutil.copy(src, f'{C}/da3_sfm.npz'); shutil.copytree(f'{W}/frames', f'{C}/frames', dirs_exist_ok=True)
-    for x in ('cloud.npz', 'walk.npz'): shutil.copy(f'{O}/model/{x}', f'{C}/{x}')
+    for x in ('cloud.npz', 'walk.npz'):
+        if os.path.exists(f'{O}/model/{x}'): shutil.copy(f'{O}/model/{x}', f'{C}/{x}')   # floor plan may fail: keep the cache usable
     sh(f'tar czf {C}/gsplat_ext.tgz -C ~/.cache torch_extensions && du -sh {C}/* | tail -6')
 
 print('files:', os.listdir(O))
