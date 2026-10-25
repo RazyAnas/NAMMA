@@ -28,8 +28,11 @@ else:
         tok = os.environ.get('HF_TOKEN'); assert tok, 'add the repository secret HF_TOKEN (after clicking Agree on DL3DV/DL3DV-Benchmark)'
         import dl3dv
         from PIL import Image
-        scene, folder = dl3dv.fetch(src[6:], 'dl', tok); info['scene'] = scene
-        slug = f'namma-dl3dv-{scene[:10]}'; DS = f'{KU}/{slug}'                               # one dataset per scene: no version races
+        scene = src[6:]; rc, st = 1, ''
+        if scene != 'auto':                                                                    # already on Kaggle? then no download
+            rc, st = kg('datasets', 'status', f'{KU}/namma-dl3dv-{scene[:10]}', check=False)
+        if rc or 'ready' not in st.lower(): scene, folder = dl3dv.fetch(scene, 'dl', tok)
+        info['scene'] = scene; slug = f'namma-dl3dv-{scene[:10]}'; DS = f'{KU}/{slug}'         # one dataset per scene: no version races
         rc, st = kg('datasets', 'status', DS, check=False)
         if rc or 'ready' not in st.lower():
             files = sorted(glob.glob(f'{folder}/*.png') + glob.glob(f'{folder}/*.jpg')); assert files, f'no frames in {folder}'
@@ -79,7 +82,7 @@ if tok:
     try:
         from huggingface_hub import HfApi
         api = HfApi(token=tok); repo = f"{api.whoami()['name']}/namma-v3-out"; api.create_repo(repo, repo_type='dataset', private=True, exist_ok=True)
-        api.upload_folder(folder_path=OUT, path_in_repo=RUN, repo_id=repo, repo_type='dataset', ignore_patterns=['preview/*.ply'])
+        api.upload_folder(folder_path=OUT, path_in_repo=RUN, repo_id=repo, repo_type='dataset', ignore_patterns=[f'{n}/*.ply' for n in os.listdir(OUT) if n != 'full'])
         say(f'results: https://huggingface.co/datasets/{repo}/tree/main/{RUN}')
         if os.environ.get('GITHUB_STEP_SUMMARY'):
             open(os.environ['GITHUB_STEP_SUMMARY'], 'a').write(f'Results: https://huggingface.co/datasets/{repo}/tree/main/{RUN}\n')

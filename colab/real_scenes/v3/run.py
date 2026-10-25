@@ -19,6 +19,8 @@ SOURCE = os.environ.get('SOURCE', 'dl3dv:auto')
 NFRAMES, LONG = int(os.environ.get('NFRAMES', 300)), int(os.environ.get('LONG', 1280))   # what a T4 trains in ~1 h
 FULL, PREVIEW = int(os.environ.get('STEPS', 30000)), int(os.environ.get('PREVIEW', 7000))
 CAP_FULL, CAP_PREVIEW = 1_500_000, 1_000_000                                               # MCMC splat budget
+# models to train, [name, steps, splat cap]; the first two run at once on the two T4s, the rest after. 'full' is the deliverable.
+VARIANTS = json.loads(os.environ.get('VARIANTS', json.dumps([['preview', PREVIEW, CAP_PREVIEW], ['full', FULL, CAP_FULL]])))
 RUN = time.strftime('%Y%m%d-%H%M')
 D = f'{W}/data'                                                                            # COLMAP layout: images/ + sparse/0
 
@@ -177,19 +179,19 @@ def finish(j):
     if v: shutil.copy(v[-1], f'{out}/walkthrough.mp4')
     push(out, j['name'])
 
-plan = [('preview', PREVIEW, CAP_PREVIEW), ('full', FULL, CAP_FULL)]
-if NGPU >= 2: running = [start(*plan[0], 1), start(*plan[1], 0)]                         # both at once
-else: running = [start(*plan[0], 0)]                                                      # one GPU: preview, then full
+queue = [tuple(v) for v in VARIANTS]; free = list(range(max(1, min(NGPU, 2))))           # GPUs not training right now
+running = [start(*queue.pop(0), free.pop(0)) for _ in range(min(len(queue), len(free)))]
 last = time.time()
 while running:
     time.sleep(30)
     for j in [j for j in running if j['p'].poll() is not None]:
         running.remove(j); finish(j)
-        if NGPU < 2 and j['name'] == 'preview': running.append(start(*plan[1], 0))
+        if queue: running.append(start(*queue.pop(0), j['gpu']))
     if time.time() - last > 300: last = time.time(); [say(j['name'], progress(j)) for j in running]
 
-S = {n: json.load(open(f'{O}/{n}/metrics.json')) for n in ('preview', 'full') if os.path.exists(f'{O}/{n}/metrics.json')}
+S = {n: json.load(open(f'{O}/{n}/metrics.json')) for n in [v[0] for v in VARIANTS] if os.path.exists(f'{O}/{n}/metrics.json')}
 json.dump(dict(source=SOURCE, sfm=rep, models=S, minutes=round((time.time() - T0) / 60)), open(f'{O}/v3_summary.json', 'w'), indent=1)
 push(f'{O}/v3_summary.json', 'v3_summary.json')
+shutil.copytree(f'{D}/sparse', f'{O}/sparse', dirs_exist_ok=True)                        # cameras, so QA can be redone later
 say('V3 DONE', json.dumps(S)); sh(f'ls -la {O} {O}/*/ | head -40')
 if 'full' not in S: raise SystemExit('V3 FAILED: no full model (see the trainer logs above)')
