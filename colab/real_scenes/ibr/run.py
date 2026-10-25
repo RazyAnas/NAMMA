@@ -20,7 +20,7 @@ dn = glob.glob('/kaggle/input/**/dense/da3_sfm.npz', recursive=True); assert dn,
 os.makedirs(S, exist_ok=True); os.symlink(dn[0], f'{S}/da3_sfm.npz'); os.symlink(f'{cache}/frames', f'{S}/frames')
 r = subprocess.call([sys.executable, 'align_passes.py', S, '-', A, '--workers', '4', '--bridge', cache], cwd=F)
 if not r:
-    subprocess.call(f'cp {A}/align_report.json {O}/', shell=True)
+    subprocess.call(f'cp {A}/align_report.json {O}/ && mkdir -p {O}/aligned && cp {A}/da3_sfm.npz {O}/aligned/', shell=True)   # for namma-fill
     subprocess.call([sys.executable, 'ibr_check.py', A, f'{O}/ibr', '--workers', '4', '--cross'], cwd=F)
     r = subprocess.call([sys.executable, 'photo_viewer.py', A, '-', f'{O}/viewer'], cwd=F)
 sys.exit(r)

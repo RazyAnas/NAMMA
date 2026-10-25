@@ -1,5 +1,5 @@
 {
- "updated": "2026-10-25 18:50 IST",
+ "updated": "2026-10-25 19:00 IST",
  "goal": "Phone video -> photoreal, walkable 3D of the REAL room. Real pixels first, 3D model for in-between views, generation only for holes (flagged). Free GPUs.",
  "now": "Pass alignment run 6 (scale fix + group merge, namma-ibr CPU) | P4 hole filling (namma-fill GPU) running.",
  "phases": [
@@ -73,7 +73,7 @@
     ],
     [
      "running",
-     "P4: Wan 2.1 VACE fills only the holes of a 50 cm off-path drone path (pass 453-488), honesty strip scored"
+     "P4 run 2: run 1 invented a door/screen/figure in a big hole (one pass as source). Now: all aligned passes first, model fills small gaps only, big unfilmed areas never invented"
     ]
    ]
   },

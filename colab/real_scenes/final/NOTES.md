@@ -106,3 +106,9 @@ not match the video. Earlier notes calling its contents "real" were reported, ne
   (94 frames, joined by video bridges; 385-438 at 27.9); wrong joins rejected at 13-17 dB. Worst views: the same wall rebuilt
   smaller/farther -> scale differs between passes (bridges are rigid). Run 6: trimmed similarity ICP on every candidate (kept only
   if the whole-group check improves) and whole-group merging. Synthetic: ICP never replaces a better placement (24.3 vs 30.3 kept).
+- PROOF 4 run 1 (Wan 2.1 VACE 1.3B, fp16 T4, 49 frames 832x480, 25 steps = 14 min; one pass 453-488 as source, 50 cm off the
+  path): holes 18% (max 40%); honesty strip (real plain wall hidden) 35.7 dB; but in the big hole behind the pillar Wan invented a
+  glass door, a screen-like object and a small figure (owner: "fake, random stuff"). Rule from now on: real pixels from every
+  aligned pass first; the model fills only small gaps (thin slivers / < 0.6% patches); large unfilmed regions are never invented
+  (shown 'not filmed', flagged blue); the viewer limits how far off the path one can go (sweep measures holes vs offset).
+  Bug fixed: ibr.synth image cache shared across render scales (keyed by size now).

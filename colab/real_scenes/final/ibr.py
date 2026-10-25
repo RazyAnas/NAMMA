@@ -55,9 +55,9 @@ def synth(d, files, K, has, H, W, tgt_K, tgt_c2w, exclude, k=4, cache_imgs={}):
     zbuf = np.full(H * W, np.inf, np.float32); out = np.zeros((H * W, 3), np.float32); wsum = np.zeros(H * W, np.float32)
     w2c = np.linalg.inv(tgt_c2w)
     for rank, j in enumerate(srcs):
-        g = int(d['idx'][j])
-        if g not in cache_imgs: cache_imgs[g] = image(files, g, W, H)
-        warp(cache_imgs[g], d['depth'][j], K[j], d['c2w'][j], tgt_K, w2c, H, W, zbuf, out, wsum, 1.0 / (1 + score[j]))
+        g = int(d['idx'][j]); key = (g, W, H)                                       # keyed by size: one process may render at two scales
+        if key not in cache_imgs: cache_imgs[key] = image(files, g, W, H)
+        warp(cache_imgs[key], d['depth'][j], K[j], d['c2w'][j], tgt_K, w2c, H, W, zbuf, out, wsum, 1.0 / (1 + score[j]))
     filled = wsum > 0; img = np.zeros((H * W, 3), np.float32); img[filled] = out[filled] / wsum[filled, None]
     return img.reshape(H, W, 3), filled.reshape(H, W), srcs, score[srcs]
 

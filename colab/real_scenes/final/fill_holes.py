@@ -6,7 +6,11 @@ inventing? One walk pass whose cameras are already right (no dependence on the c
   4. Wan 2.1 VACE 1.3B (diffusers) fills the hidden pixels of the whole clip at once (consistent across frames);
   5. composite: real pixels everywhere they exist, generated only in holes, every generated pixel flagged.
 Outputs (out dir): holes.mp4 (magenta = never filmed), generated.mp4, composite.mp4, flags.mp4, sheet.jpg, fill_report.json.
-Usage: python fill_holes.py <dir with da3_sfm.npz + frames> <out> [--pass 453 488] [--offset 0.5] [--dry]  (--dry: no model, CPU)"""
+Run 1 (one pass as source, 50 cm off): holes 18% (max 40%); strip 35.7 dB, but the big hole behind the pillar got an invented
+glass door, a screen and a small figure. So now: (a) sources = every pass aligned with this one (real pixels first), (b) the model
+only fills SMALL holes (thin slivers / small patches where a wall or floor continues), (c) large unfilmed regions are never invented:
+shown as 'not filmed' (neutral grey, flagged blue), (d) a sweep measures holes vs distance from the path.
+Usage: python fill_holes.py <dir with da3_sfm.npz + frames> <out> [--pass 453 488] [--offset 0.3] [--dry]  (--dry: no model, CPU)"""
 import argparse, gc, json, os, time, numpy as np
 from PIL import Image
 from scipy.spatial.transform import Rotation, Slerp
@@ -25,6 +29,31 @@ def path(d, sel, n, offset):
     side = offset * np.sin(np.linspace(0, np.pi, n)) ** 2                          # 0 at both ends (exact photos), max mid-way
     out = np.tile(np.eye(4), (n, 1, 1)); out[:, :3, :3] = R; out[:, :3, 3] = p + side[:, None] * R[:, :, 0]
     return out, side
+
+def split_holes(h, max_area=0.006, max_radius=10):
+    """Holes the model may fill: thin slivers (no point farther than max_radius px from the hole's edge) or small patches
+    (< max_area of the frame). Everything else is a region no photo saw: never invented."""
+    from scipy.ndimage import label, distance_transform_edt
+    lab, n = label(h); small = np.zeros_like(h); dt = distance_transform_edt(h)
+    for k in range(1, n + 1):
+        m = lab == k
+        if m.sum() < max_area * h.size or dt[m].max() <= max_radius: small |= m
+    return small, h & ~small
+
+def sweep(src, sel, only, fid, out, offsets=(0.1, 0.2, 0.3, 0.4, 0.5), n=9):
+    """How far from the walked path can a viewer go? Hole % (and 'not filmed' %) vs sideways offset, pass-only vs group sources."""
+    d, files, K, has, Hs, Ws = ibr.load(src, scale=1); pas = np.zeros_like(has); pas[sel] = True; rows = []
+    for o in offsets:
+        poses, _ = path(d, sel, n, o); poses = poses[n // 2 - 2:n // 2 + 3]             # the 5 views nearest full offset
+        for lab, srcs in (('pass', pas), ('group', only)):
+            hs, ls = [], []
+            for c in poses:
+                _, m, _, _ = ibr.synth(d, files, K, srcs, Hs, Ws, K[sel[0]], c, exclude=set(), k=6)
+                hm = to_wan(np.repeat((~m)[..., None].astype(np.float32), 3, 2))[..., 0] > 0.5; sm, lg = split_holes(hm)
+                hs.append(hm.mean()); ls.append(lg.mean())
+            rows.append(dict(offset_m=o, sources=lab, holes_pct=round(100 * float(np.mean(hs)), 1), not_filmed_pct=round(100 * float(np.mean(ls)), 1)))
+            print('SWEEP', json.dumps(rows[-1]), flush=True)
+    json.dump(rows, open(f'{out}/sweep.json', 'w'), indent=1)
 
 def to_wan(img):
     """Render (1008 x 560, aspect 0.556) -> 832 x 480 (0.577): crop height, resize."""
@@ -58,7 +87,7 @@ def wan_fill(video, mask, steps, seed=0):
     except Exception: pass
     vid = [Image.fromarray((v * 255).astype(np.uint8)) for v in video]; msk = [Image.fromarray((m * 255).astype(np.uint8)) for m in mask]
     for dt in (torch.float16, torch.float32):                                       # fp16 is fast on a T4; fp32 only if fp16 overflows
-        pipe.transformer.to('cuda', dt); t0 = time.time()
+        pipe.transformer.to('cuda') if dt == torch.float16 else pipe.transformer.to('cuda', dt); t0 = time.time()   # fp16 load keeps norms in fp32
         out = pipe(video=vid, mask=msk, prompt_embeds=pe.to('cuda', dt), negative_prompt_embeds=npe.to('cuda', dt),
                    height=H, width=W, num_frames=len(vid), num_inference_steps=steps, guidance_scale=5.0,
                    generator=torch.Generator('cuda').manual_seed(seed), output_type='np').frames[0]
@@ -70,33 +99,42 @@ def wan_fill(video, mask, steps, seed=0):
 
 def main():
     ap = argparse.ArgumentParser(); ap.add_argument('src'); ap.add_argument('out'); ap.add_argument('--pass', dest='pas', nargs=2, type=int, default=[453, 488])
-    ap.add_argument('--offset', type=float, default=0.5); ap.add_argument('--frames', type=int, default=49); ap.add_argument('--steps', type=int, default=25)
+    ap.add_argument('--offset', type=float, default=0.3); ap.add_argument('--sources', default='group', choices=['group', 'pass']); ap.add_argument('--frames', type=int, default=49); ap.add_argument('--steps', type=int, default=25)
     ap.add_argument('--dry', action='store_true'); a = ap.parse_args(); os.makedirs(a.out, exist_ok=True); t0 = time.time()
     d, files, K, has, Hr, Wr = ibr.load(a.src, scale=2)
     sel = [j for j in range(len(d['idx'])) if a.pas[0] <= d['idx'][j] <= a.pas[1] and has[j]]; assert len(sel) >= 4, f'pass {a.pas}: {len(sel)} frames'
     only = np.zeros_like(has); only[sel] = True                                       # sources: this pass only (its cameras agree)
+    if a.sources == 'group' and 'group' in d:                                         # + every pass aligned with it (align_passes groups)
+        only = has & (d['group'] == d['group'][sel[0]])
+    print(f'sources: {int(only.sum())} real photos ({a.sources})', flush=True)
+    sweep(a.src, sel, only, d['idx'], a.out)
     poses, side = path(d, sel, a.frames, a.offset); Kt = K[sel[0]]
     real, hole = [], []
     for c in poses:
         img, m, _, _ = ibr.synth(d, files, K, only, Hr, Wr, Kt, c, exclude=set(), k=4)
         real.append(to_wan(img)); hole.append(to_wan(np.repeat((~m)[..., None].astype(np.float32), 3, 2))[..., 0] > 0.5)
     from scipy.ndimage import binary_dilation
+    small, large = zip(*[split_holes(h) for h in hole])
     hole = [binary_dilation(h, iterations=3) for h in hole]                           # soft edges of the warp go to the model too
+    large = [binary_dilation(l, iterations=3) & h for l, h in zip(large, hole)]; small = [h & ~l for h, l in zip(hole, large)]
     strip = np.zeros((H, W), bool); strip[:, int(0.42 * W):int(0.58 * W)] = True     # honesty strip: real pixels hidden from the model
     hide = [h | (strip & ~h) for h in hole]
     video = [np.where(m[..., None], 0.5, r) for r, m in zip(real, hide)]
     print(f'{a.frames} views rendered from {len(sel)} real photos of pass {a.pas} [{time.time()-t0:.0f}s]; holes: '
           f'{100*np.mean([h.mean() for h in hole]):.1f}% of pixels (max {100*max(h.mean() for h in hole):.1f}% at {a.offset} m off the path)', flush=True)
     gen = video if a.dry else wan_fill(video, hide, a.steps)
-    comp = [np.where(h[..., None], g, r) for r, g, h in zip(real, gen, hole)]        # real everywhere it exists, generated only in holes
+    NF = np.array([.42, .44, .48])                                                    # 'not filmed' grey: never invented
+    comp = [np.where(l[..., None], NF, np.where(sm[..., None], g, r)) for r, g, sm, l in zip(real, gen, small, large)]
     sm = [strip & ~h for h in hole]; truth = [ibr.psnr_gain(g, r, m) for g, r, m in zip(gen, real, sm) if m.sum() > 500]
     mag = [np.where(h[..., None], np.array([1, 0, 1.]), r) for r, h in zip(real, hole)]
-    flags = [np.where(h[..., None], np.array([1, .2, .2]), r * 0.35) for r, h in zip(real, hole)]   # red = generated
+    flags = [np.where(l[..., None], np.array([.2, .4, 1]), np.where(sm[..., None], np.array([1, .2, .2]), r * 0.35))
+             for r, sm, l in zip(real, small, large)]                                 # red = generated (small gaps), blue = not filmed
     for name, fr in (('holes', mag), ('generated', gen), ('composite', comp), ('flags', flags)): mp4(fr, f'{a.out}/{name}.mp4')
     pick = np.linspace(0, a.frames - 1, 5).astype(int)
     sheet = np.concatenate([np.concatenate([mag[i], gen[i], comp[i]], 1) for i in pick], 0)
     Image.fromarray((sheet * 255).astype(np.uint8)).resize((3 * W // 2, len(pick) * H // 2)).save(f'{a.out}/sheet.jpg', quality=90)
-    rep = dict(pass_=a.pas, frames=a.frames, offset_m=a.offset, real_photos=len(sel), holes_pct=round(100 * float(np.mean([h.mean() for h in hole])), 2),
+    rep = dict(pass_=a.pas, frames=a.frames, offset_m=a.offset, sources=a.sources, real_photos=int(only.sum()), holes_pct=round(100 * float(np.mean([h.mean() for h in hole])), 2),
+               generated_pct=round(100 * float(np.mean([m.mean() for m in small])), 2), not_filmed_pct=round(100 * float(np.mean([m.mean() for m in large])), 2),
                honesty_strip_psnr=round(float(np.median(truth)), 2) if truth else None, dry=a.dry, seconds=round(time.time() - t0))
     json.dump(rep, open(f'{a.out}/fill_report.json', 'w'), indent=1); print('FILL', json.dumps(rep), flush=True)
 
