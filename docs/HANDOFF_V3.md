@@ -98,8 +98,7 @@ The Claude cloud container **cannot reach kaggle.com** (proxy 403). GitHub's run
   from the SfM points, ceiling cut). Files: `full/model.splat` (48 MB, levelled, SH0), `full/model.ply` (354 MB, SH3),
   `full/walkthrough.mp4`, `full/qa_sheet.jpg`, `full/metrics.json`; same for `preview/` (no .ply on HF).
 - `RUN.json` was reset to `n: 0, collect: false` after collecting (pushing RUN.json always starts the workflow; n = 0 exits at once).
-- A Claude reminder was scheduled for 01:15 IST in the old session (trigger `trig_01PoUkZaB8f2f1sC9NSa3bqL`); a new session cannot
-  rely on it.
+- No reminders or jobs are pending (the old session's check-in was deleted once run 2 was collected).
 
 ## 6. Next steps (in order)
 1. Show the owner run 2 (`full/model.splat` in SuperSplat). Optional: re-run the same scene (RUN.json `n` bump, `collect` false)
