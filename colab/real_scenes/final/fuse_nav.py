@@ -25,8 +25,8 @@ def fuse(npz, out, voxel=0.02, max_depth=8.0, stride=2):
     np.savez(out / "cloud.npz", pts=np.asarray(pc.points), nrm=np.asarray(pc.normals), col=(np.asarray(pc.colors) * 255).astype(np.uint8))
     return pc
 
-def navigate(mesh_path, out, radius=0.25, cell=0.05):
-    out = pathlib.Path(out); R = N.analyse(str(mesh_path), radius, cell)
+def navigate(mesh_path, out, radius=0.25, cell=0.05, up=None):
+    out = pathlib.Path(out); R = N.analyse(str(mesh_path), radius, cell, up=up)
     walk = R["walk"]; W, H, u0, v0, c = R["grid"]
     idx = np.argwhere(walk)
     s = tuple(idx[np.argmin(idx.sum(1))]); g = tuple(idx[np.argmax(idx.sum(1))])
@@ -42,6 +42,11 @@ def navigate(mesh_path, out, radius=0.25, cell=0.05):
     if path: ax.plot([p[0] for p in path], [p[1] for p in path], "r-")
     fig.savefig(out / "floorplan.png", dpi=110, bbox_inches="tight")
     return info
+
+def camera_up(npz):
+    """Phone held upright: image 'up' (-y in OpenCV cameras) averaged over all frames is the world up. Far more robust than
+    surface normals when long walls dominate (the SfM run tilted the normal-based estimate by ~25 deg)."""
+    c2w = np.load(npz)['c2w']; u = -c2w[:, :3, 1].mean(0); return u / np.linalg.norm(u)
 
 if __name__ == "__main__":
     npz, out = sys.argv[1], sys.argv[2]

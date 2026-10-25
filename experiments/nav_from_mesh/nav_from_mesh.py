@@ -25,10 +25,12 @@ def floor_frame(up):
     t = np.cross(up, [1, 0, 0] if abs(up[0]) < .9 else [0, 1, 0]); t /= np.linalg.norm(t)
     return t, np.cross(up, t)
 
-def analyse(path, radius=0.25, cell=0.05, head=1.7, step=0.15):
+def analyse(path, radius=0.25, cell=0.05, head=1.7, step=0.15, up=None):
+    """up: optional known up direction (e.g. from upright phone cameras); otherwise estimated from surface normals."""
     t0 = time.time()
     pts, nrm = load_points(path)
-    up = estimate_up(nrm)
+    hint = up is not None
+    up = estimate_up(nrm) if not hint else np.asarray(up, float) / np.linalg.norm(up)
     horiz = np.abs(nrm @ up) > .85
     def floor_of(sign):
         h = sign * (pts @ up); hh = h[horiz]
@@ -38,7 +40,7 @@ def analyse(path, radius=0.25, cell=0.05, head=1.7, step=0.15):
         k = int(np.argmax(np.where(low, hist, 0)))
         return hist[k], edges[k] + .025
     (c1, f1), (c2, f2) = floor_of(1), floor_of(-1)
-    if c2 > c1: up = -up; floor = f2
+    if c2 > c1 and not hint: up = -up; floor = f2
     else: floor = f1
     h = pts @ up
     t, b = floor_frame(up)

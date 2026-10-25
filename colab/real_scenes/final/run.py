@@ -2,7 +2,7 @@
 # Stage 1 sharpest frames -> 2 Depth Anything 3 (poses+depth+gaussians, feed-forward, ~1 min) -> 3 fuse + floor plan + A* (tested on CPU)
 # -> 4 package for the viewer. Matrix-3D gap filling stays a separate job (colab/real_scenes/matrix3d/kaggle) and is fed pano_raw from here.
 # Every stage logs and continues, so a failed stage never loses the earlier outputs in /kaggle/working.
-import glob, json, os, subprocess, sys, time, traceback
+import glob, json, os, shutil, subprocess, sys, time, traceback
 T0 = time.time(); O = '/kaggle/working'; W = '/kaggle/temp/final'; os.makedirs(W, exist_ok=True)
 def sh(c, check=False):
     print(f'\n[{time.time()-T0:5.0f}s] $ {c[:160]}', flush=True); r = subprocess.call(c, shell=True, executable='/bin/bash')
@@ -95,9 +95,9 @@ def _():
     sh('pip -q install open3d trimesh scipy matplotlib 2>&1 | tail -1')
     import fuse_nav as F
     src = f'{W}/da3_sfm.npz' if os.path.exists(f'{W}/da3_sfm.npz') else f'{W}/da3.npz'; print('geometry from', src)
-    F.fuse(src, f'{O}/model'); print(json.dumps({k: v for k, v in F.navigate(f'{O}/model/cloud.npz', f'{O}/model').items() if k != 'demo_path_cells'}))
+    F.fuse(src, f'{O}/model'); print(json.dumps({k: v for k, v in F.navigate(f'{O}/model/cloud.npz', f'{O}/model', up=F.camera_up(src)).items() if k != 'demo_path_cells'}))
     import build_viewer; print(build_viewer.build(f'{O}/model'), '-> model/viewer.html')
-@stage('4 splat fits: SfM vs DA3 cameras, then SfM + 2M splats + reflections')
+@stage('4 splat fits: V1 (SfM cameras) and V2 (+ 2M splats + reflections)')
 def _():
     import torch
     sh('nvcc --version | tail -1; pip -q install ninja 2>&1 | tail -1')
@@ -109,14 +109,10 @@ def _():
     def run(name, *a, **k):
         try: T.train(*a, **k)
         except Exception: print(f'variant {name} FAILED (earlier files are intact)'); traceback.print_exc()
-    if os.path.exists(f'{W}/da3_sfm.npz'):
-        s, cs = f'{W}/da3_sfm.npz', f'{O}/model/cloud.npz'                  # stage 3 fused this cloud on the SfM cameras
-        run('S1', s, cs, f, f'{o}/splat_sfm.ply', steps=steps, pose_opt=True, depth_w=0.05)            # SfM cameras
-        F.fuse(f'{W}/da3.npz', f'{W}/cloud_da3')                                                      # same training, DA3 cameras
-        run('D', f'{W}/da3.npz', f'{W}/cloud_da3/cloud.npz', f, f'{o}/splat_da3.ply', steps=steps, pose_opt=True, depth_w=0.05)
-        run('S2', s, cs, f, f'{o}/splat_sfm_2M_sh3.ply', steps=10000, max_seconds=1300, pose_opt=True, depth_w=0.05, mcmc_cap=2000000, sh=3)
-    else:
-        print('no SfM cameras: falling back to DA3 cameras')
-        run('C', f'{W}/da3.npz', f'{o}/cloud.npz', f, f'{o}/splat_da3_2M_sh3.ply', steps=10000, max_seconds=1300, pose_opt=True, depth_w=0.05, mcmc_cap=2000000, sh=3)
+    s = f'{W}/da3_sfm.npz' if os.path.exists(f'{W}/da3_sfm.npz') else f'{W}/da3.npz'; cs = f'{O}/model/cloud.npz'
+    # Last run: camera refinement let cameras and scene drift together (raw held-out 17 dB even on SfM cameras with 1.07 px error),
+    # so with SfM cameras it is OFF now and the held-out number is direct. V1 vs V2 isolates splat count + reflections.
+    run('V1', s, cs, f, f'{o}/splat.ply', steps=steps, depth_w=0.05)
+    run('V2', s, cs, f, f'{o}/splat_2M_sh3.ply', steps=12000, max_seconds=1500, depth_w=0.05, mcmc_cap=2000000, sh=3)
 
 print('files:', os.listdir(O))

@@ -38,10 +38,10 @@ def train(da3, cloud, frames_dir, out_ply, steps=15000, max_seconds=600, dev='cu
     sel = np.random.default_rng(0).choice(len(pts), min(len(pts), max_init), replace=False); pts, col = pts[sel], col[sel]
     from scipy.spatial import cKDTree
     dist = cKDTree(pts).query(pts, k=4)[0][:, 1:].mean(1); dist = np.clip(dist, 1e-3, 0.2)
-    scene_scale = float(np.linalg.norm(pts - pts.mean(0), axis=1).max())
+    cc = np.load(da3)['c2w'][:, :3, 3]; scene_scale = 1.1 * float(np.linalg.norm(cc - cc.mean(0), axis=1).max())   # camera extent (gsplat convention); the point extent was ~3x larger and made position steps too big
     params = torch.nn.ParameterDict({
         'means': torch.tensor(pts, dtype=torch.float32), 'scales': torch.log(torch.tensor(dist, dtype=torch.float32))[:, None].repeat(1, 3),
-        'quats': torch.nn.functional.normalize(torch.randn(len(pts), 4), dim=-1), 'opacities': torch.logit(torch.full((len(pts),), 0.5)),
+        'quats': torch.nn.functional.normalize(torch.randn(len(pts), 4), dim=-1), 'opacities': torch.logit(torch.full((len(pts),), 0.1 if mcmc_cap else 0.5)),
         'sh0': ((torch.tensor(col, dtype=torch.float32) - 0.5) / 0.28209479)[:, None, :], 'shN': torch.zeros(len(pts), (sh + 1) ** 2 - 1, 3)}).to(dev)
     lrs = {'means': 1.6e-4 * scene_scale, 'scales': 5e-3, 'quats': 1e-3, 'opacities': 5e-2, 'sh0': 2.5e-3, 'shN': 2.5e-3 / 20}
     opts = {k: torch.optim.Adam([params[k]], lr=lrs[k], eps=1e-15) for k in params}
