@@ -2,6 +2,7 @@
 GitHub's runners can. input -> private Kaggle dataset (DL3DV frames are fetched here, so the HF token stays a GitHub secret)
 -> push the Kaggle job (v3/run.py) -> wait -> download its outputs -> private HF dataset <hf user>/namma-v3-out/<run> + metrics here.
 RUN.json: n         run counter: change it to start a run (0 = do nothing)
+          collect   true: push nothing, just wait for the job already on Kaggle and collect its outputs
           source    dl3dv:auto | dl3dv:<scene hash> | kaggle:<owner>/<dataset> (a video or frames already on Kaggle)
           kaggle_user, env (overrides run.py settings, e.g. {"STEPS": "30000", "PREVIEW": "7000"})
 Secrets: KAGGLE_API_TOKEN (contents of ~/.kaggle/access_token), HF_TOKEN (write; "Agree" clicked on DL3DV/DL3DV-Benchmark)."""
@@ -20,39 +21,41 @@ def kg(*args, check=True):
 if not cfg.get('n'): say('RUN.json n = 0: nothing to do'); sys.exit(0)
 assert os.environ.get('KAGGLE_API_TOKEN'), 'add the repository secret KAGGLE_API_TOKEN (contents of ~/.kaggle/access_token)'
 src = cfg['source']; env = dict(cfg.get('env', {})); info = dict(source=src, github_run=RUN)
+if cfg.get('collect'):                         # only wait for the version already on Kaggle and collect it (e.g. after a cancelled run)
+    say('collect only: no new Kaggle version'); t_push = 0
+else:
+    if src.startswith('dl3dv:'):
+        tok = os.environ.get('HF_TOKEN'); assert tok, 'add the repository secret HF_TOKEN (after clicking Agree on DL3DV/DL3DV-Benchmark)'
+        import dl3dv
+        from PIL import Image
+        scene, folder = dl3dv.fetch(src[6:], 'dl', tok); info['scene'] = scene
+        slug = f'namma-dl3dv-{scene[:10]}'; DS = f'{KU}/{slug}'                               # one dataset per scene: no version races
+        rc, st = kg('datasets', 'status', DS, check=False)
+        if rc or 'ready' not in st.lower():
+            files = sorted(glob.glob(f'{folder}/*.png') + glob.glob(f'{folder}/*.jpg')); assert files, f'no frames in {folder}'
+            os.makedirs('fr', exist_ok=True); os.makedirs('in', exist_ok=True)
+            for f in files: Image.open(f).convert('RGB').save(f'fr/{os.path.splitext(os.path.basename(f))[0]}.jpg', quality=95)
+            shutil.make_archive('in/frames', 'zip', 'fr'); say(len(files), 'frames ->', f"{os.path.getsize('in/frames.zip') / 1e6:.0f} MB zip")
+            json.dump(dict(title=slug, id=DS, licenses=[dict(name='other')]), open('in/dataset-metadata.json', 'w'))
+            say(kg('datasets', 'create', '-p', 'in', '-q')[1][-300:])
+            for _ in range(90):                                                                # wait until Kaggle has processed it
+                time.sleep(20); st = kg('datasets', 'status', DS, check=False)[1]
+                if 'ready' in st.lower() or 'error' in st.lower(): break
+            say('dataset', DS, st[-120:])
+        else: say('dataset', DS, 'already on Kaggle')
+        datasets, env['SOURCE'] = [DS], f'kaggle:{slug}'
+    elif src.startswith('kaggle:'):
+        datasets, env['SOURCE'] = [src[7:]], f'kaggle:{src[7:].split("/")[-1]}'
+    else: sys.exit(f'unknown source {src}')
 
-if src.startswith('dl3dv:'):
-    tok = os.environ.get('HF_TOKEN'); assert tok, 'add the repository secret HF_TOKEN (after clicking Agree on DL3DV/DL3DV-Benchmark)'
-    import dl3dv
-    from PIL import Image
-    scene, folder = dl3dv.fetch(src[6:], 'dl', tok); info['scene'] = scene
-    slug = f'namma-dl3dv-{scene[:10]}'; DS = f'{KU}/{slug}'                               # one dataset per scene: no version races
-    rc, st = kg('datasets', 'status', DS, check=False)
-    if rc or 'ready' not in st.lower():
-        files = sorted(glob.glob(f'{folder}/*.png') + glob.glob(f'{folder}/*.jpg')); assert files, f'no frames in {folder}'
-        os.makedirs('fr', exist_ok=True); os.makedirs('in', exist_ok=True)
-        for f in files: Image.open(f).convert('RGB').save(f'fr/{os.path.splitext(os.path.basename(f))[0]}.jpg', quality=95)
-        shutil.make_archive('in/frames', 'zip', 'fr'); say(len(files), 'frames ->', f"{os.path.getsize('in/frames.zip') / 1e6:.0f} MB zip")
-        json.dump(dict(title=slug, id=DS, licenses=[dict(name='other')]), open('in/dataset-metadata.json', 'w'))
-        say(kg('datasets', 'create', '-p', 'in', '-q')[1][-300:])
-        for _ in range(90):                                                                # wait until Kaggle has processed it
-            time.sleep(20); st = kg('datasets', 'status', DS, check=False)[1]
-            if 'ready' in st.lower() or 'error' in st.lower(): break
-        say('dataset', DS, st[-120:])
-    else: say('dataset', DS, 'already on Kaggle')
-    datasets, env['SOURCE'] = [DS], f'kaggle:{slug}'
-elif src.startswith('kaggle:'):
-    datasets, env['SOURCE'] = [src[7:]], f'kaggle:{src[7:].split("/")[-1]}'
-else: sys.exit(f'unknown source {src}')
-
-# the Kaggle job = v3/run.py with these settings in front, plus the input dataset
-os.makedirs('kern', exist_ok=True)
-meta = json.load(open(f'{V}/kernel-metadata.json')); meta.update(id=KID, dataset_sources=datasets)
-json.dump(meta, open('kern/kernel-metadata.json', 'w'))
-code = open(f'{V}/run.py').read(); first = 'import glob, json, os, shutil, subprocess, sys, time\n'; assert first in code
-code = code.replace(first, first + f'os.environ.update({json.dumps(env)})  # set by gh_run.py\n', 1)
-open('kern/run.py', 'w').write(code); say('job settings', env, 'inputs', datasets)
-say(kg('kernels', 'push', '-p', 'kern')[1][-400:]); t_push = time.time()
+    # the Kaggle job = v3/run.py with these settings in front, plus the input dataset
+    os.makedirs('kern', exist_ok=True)
+    meta = json.load(open(f'{V}/kernel-metadata.json')); meta.update(id=KID, dataset_sources=datasets)
+    json.dump(meta, open('kern/kernel-metadata.json', 'w'))
+    code = open(f'{V}/run.py').read(); first = 'import glob, json, os, shutil, subprocess, sys, time\n'; assert first in code
+    code = code.replace(first, first + f'os.environ.update({json.dumps(env)})  # set by gh_run.py\n', 1)
+    open('kern/run.py', 'w').write(code); say('job settings', env, 'inputs', datasets)
+    say(kg('kernels', 'push', '-p', 'kern')[1][-400:]); t_push = time.time()
 
 seen, last, s = False, '', ''
 while time.time() - T0 < 320 * 60:
