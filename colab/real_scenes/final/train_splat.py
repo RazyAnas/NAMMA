@@ -33,6 +33,7 @@ def train(da3, cloud, frames_dir, out_ply, steps=15000, max_seconds=600, dev='cu
     import torch, torch.nn.functional as F
     from gsplat import rasterization
     from gsplat.strategy import DefaultStrategy, MCMCStrategy
+    from gsplat.strategy.ops import reset_opa
     imgs, Ks, V, DEP, FID = load_views(da3, frames_dir); imgs, Ks, V, DEP = imgs.to(dev), Ks.to(dev), V.to(dev), DEP.to(dev); N, H, W, _ = imgs.shape
     c = np.load(cloud); pts, col = c['pts'], c['col'] / 255.0
     sel = np.random.default_rng(0).choice(len(pts), min(len(pts), max_init), replace=False); pts, col = pts[sel], col[sel]
@@ -76,7 +77,11 @@ def train(da3, cloud, frames_dir, out_ply, steps=15000, max_seconds=600, dev='cu
         for g in opts['means'].param_groups: g['lr'] = lr_m
         for o in opts.values(): o.step(); o.zero_grad(set_to_none=True)   # optimizer first, then densify/prune (gsplat's trainer order)
         if mcmc_cap: strat.step_post_backward(params, opts, st, step, info, lr=lr_m)
-        else: strat.step_post_backward(params, opts, st, step, info, packed=False)
+        else:
+            strat.step_post_backward(params, opts, st, step, info, packed=False)
+            # gsplat 1.5.3 never resets opacities ('step % reset_every == 0 & step > 0' is always False: & binds first), so floaters
+            # in front of cameras are never cleared. Do the standard 3DGS reset ourselves: every 3000 steps while densifying.
+            if 0 < step < strat.refine_stop_iter and step % 3000 == 0: reset_opa(params, opts, st, value=0.01)
         if opt_cam is not None: opt_cam.step(); opt_cam.zero_grad(set_to_none=True)
         if step == 0: t0 = time.time()                               # first step includes the one-off CUDA build
         if step % 500 == 0: print(f'step {step} loss {loss.item():.4f} gaussians {len(params["means"])} {time.time()-t0:.0f}s', flush=True)

@@ -62,6 +62,8 @@ How to read it: step0 looks like the room → geometry right, training makes the
 step0 does not look like the room → bug before training (alignment/intrinsics).
 
 ## 6. Next steps (in order)
+0. Pushed AFTER the running job started (so it is in the NEXT run): our own opacity reset every 3000 steps (gsplat 1.5.3's never
+   fires: precedence bug), 30 min training cap for W1/W2. If fog persists after that, run splatfacto on the same SfM cameras as a check.
 1. Read the run above; fix whatever step0/final/stats point at. Get a plain fit whose held-out renders show the fan/window/door.
 2. Then 1-2M splats (MCMC) + SH3 for reflections; then train at 2016 px (E6).
 3. Drone paths + real-frame re-projection (E4 in the plan), then hole-only video fill (E5), flagged.

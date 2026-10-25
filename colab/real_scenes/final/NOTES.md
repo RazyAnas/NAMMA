@@ -1,5 +1,12 @@
 # Findings that must not be lost (newest first)
 
+## 2026-10-25 (3): gsplat opacity reset never runs (confirmed in gsplat 1.5.3 source; found by the Mac session)
+`DefaultStrategy.step_post_backward`: `if step % self.reset_every == 0 & step > 0:` is always False (`&` binds before `==`), so
+the 3DGS opacity reset that clears floaters never happens. Every gsplat fit so far ran without it: a strong candidate for the
+held-out fog. `train_splat.py` now resets opacities to 0.01 every 3000 steps while densifying. Training cap raised to 30 min for
+the 600-view variants (the only capped run so far was A at step 10028; S1/D/V1 finished 15000 steps in 470-520 s).
+Sanity check still worth one run: Nerfstudio splatfacto on the same SfM cameras (`scripts/ns_env.sh`), lobby gave 25-27 dB.
+
 ## 2026-10-25 (2): V1/V2 run
 - SfM again 195/200, 1.14 px. DA3/SfM per-frame scale spread 47%.
 - V1 (SfM cameras, no refinement): held-out 18.79 dB raw, SSIM 0.780, 841k splats. Owner-visible held-out renders are FOG: fan,

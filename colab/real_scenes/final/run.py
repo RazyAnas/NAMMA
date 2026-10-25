@@ -114,7 +114,7 @@ def _():
     # Last run: held-out renders were fog (fan/window/door gone) although PSNR read 18.8 dB. Two candidate causes, one change each:
     # W1 = 3x denser views (600), same recipe as before; W2 = W1 + a stronger depth anchor that never fades fully (fights floaters).
     # Both write diagnostics: renders at step 0 and at the end (train + held-out views), splat size/opacity stats, held-out depth error.
-    run('W1', s, cs, f, f'{o}/splat.ply', steps=steps, depth_w=0.05)
-    run('W2', s, cs, f, f'{o}/splat_depth.ply', steps=steps, depth_w=0.2, depth_floor=0.25)
+    run('W1', s, cs, f, f'{o}/splat.ply', steps=steps, max_seconds=1800, depth_w=0.05)
+    run('W2', s, cs, f, f'{o}/splat_depth.ply', steps=steps, max_seconds=1800, depth_w=0.2, depth_floor=0.25)
 
 print('files:', os.listdir(O))
