@@ -1,5 +1,5 @@
 {
- "updated": "2026-10-25 16:55 IST",
+ "updated": "2026-10-25 17:30 IST",
  "goal": "Phone video -> photoreal, walkable 3D of the REAL room. Real pixels first, 3D model for in-between views, generation only for holes (flagged). Free GPUs.",
  "now": "Joining walk passes by following the video across the gaps (align_passes --bridge, namma-ibr CPU ~15 min).",
  "phases": [
