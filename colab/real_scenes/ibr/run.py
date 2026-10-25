@@ -7,7 +7,12 @@ subprocess.run(f'git clone -q --depth 1 -b claude/wonderful-cori-i3fn41 https://
 hits = glob.glob('/kaggle/input/**/cache/da3_sfm.npz', recursive=True); assert hits, 'no namma-prep cache attached'
 cache = os.path.dirname(hits[0]); print('cache', cache, flush=True)
 # Run 3 (camera-jump cut + iterative drop): 319/596 frames kept, all >= 20 dB, held-out 30.7 dB / SSIM 0.91 -> final/good_frames.json.
-# Viewer (owner): photos from different parts of the walk land in the wrong places -> the PASSES disagree with each other, which
-# the neighbour check cannot see. Now: rebuild every verified frame only from OTHER walk pieces (ibr_check --cross, CPU ~6 min).
-F = f'{W}/repo/colab/real_scenes/final'
-sys.exit(subprocess.call([sys.executable, 'ibr_check.py', cache, '/kaggle/working/ibr', '--workers', '4', '--keep', 'good_frames.json', '--cross'], cwd=F))
+# Cross-pass check: passes disagree (11-17 dB rebuilt from other passes; door rebuilt as window). Now: re-place each pass as a
+# whole, judged by real pixels (align_passes.py), re-run the cross check on the result, and build the viewer from it (CPU ~15 min).
+F = f'{W}/repo/colab/real_scenes/final'; A = '/kaggle/temp/aligned'; O = '/kaggle/working'
+r = subprocess.call([sys.executable, 'align_passes.py', cache, 'good_frames.json', A, '--workers', '4'], cwd=F)
+if not r:
+    subprocess.call(f'cp {A}/align_report.json {O}/', shell=True)
+    subprocess.call([sys.executable, 'ibr_check.py', A, f'{O}/ibr', '--workers', '4', '--cross'], cwd=F)
+    r = subprocess.call([sys.executable, 'photo_viewer.py', A, '-', f'{O}/viewer'], cwd=F)
+sys.exit(r)

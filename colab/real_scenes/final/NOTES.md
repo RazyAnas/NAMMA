@@ -71,3 +71,9 @@ not match the video. Earlier notes calling its contents "real" were reported, ne
   Camera heights of the kept groups differ by up to ~0.75 m (not plausible for a hand-held walk). New `ibr_check --cross`:
   rebuild each frame only from OTHER walk pieces; synthetic test with one piece shifted 36 cm: 13.6 dB vs ~28 dB for correct pieces.
   Viewer now uses one walk pass at a time by default (M mixes passes).
+- Cross-pass check on the 319 frames: only 52-59 (28 dB) and 453-488 (26 dB) agree with other passes; the rest 11-18 dB.
+  Worst views: the real photo shows the corridor door, the other passes put the window there. The global SfM merged look-alike
+  places (symmetric corridor / repeated grilled windows) = the "doppelganger" problem (Doppelgangers++, CVPR 2025, arXiv 2412.05826).
+- `align_passes.py`: keep each pass rigid, hypotheses from SIFT + aligned depth (RANSAC similarity) plus the current placement,
+  judge each by rebuilding pass A only from pass B's photos, join along best links >= 20 dB. Synthetic: one pass off by 25 deg /
+  60 cm -> back within 0.4 cm, cross-pass 13.2 -> 28.5 dB.
