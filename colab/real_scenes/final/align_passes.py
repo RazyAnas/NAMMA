@@ -12,6 +12,7 @@ import argparse, json, os, time, numpy as np, cv2
 from multiprocessing import Pool
 import ibr
 
+VERIFY_DB = 21.0  # a join must agree with the whole group (wrong placements measured 13-17 dB, right ones 28-37)
 MIN_DB = 23.0   # 20 dB let a wrong placement through (white walls and floor score ~20 when misplaced)
 G = {}
 
@@ -76,9 +77,11 @@ def bridge(ia, ib):
         for k in range(i + 1, min(i + 6, len(chain))):
             rp = rel_pose(*chain[i], chain[k][0])
             if rp is None: continue
+            if not np.all(np.isfinite(rp[1])) or np.linalg.norm(rp[1]) > 0.6: G['why'] = f'implausible step {np.linalg.norm(rp[1]):.2g} m'; continue
             M = np.eye(4); M[:3, :3], M[:3, 3] = rp[0], rp[1]; w2c = M @ w2c; i = k; steps += 1; break
         else: print(f'   bridge stuck at frame {chain[i][0]} (tried {[c[0] for c in chain[i + 1:i + 6]]}; last: {G.get("why")})', flush=True); return None, steps
     Tm = np.linalg.inv(w2c) @ np.linalg.inv(d['c2w'][ib])                            # predicted pose o (next pass pose)^-1
+    if not np.all(np.isfinite(Tm)) or np.linalg.norm(Tm[:3, 3]) > 5: return None, steps   # a 4e13 m 'bridge' was seen: never trust that
     return (1.0, Tm[:3, :3], Tm[:3, 3]), steps
 
 def judge(args):
@@ -93,6 +96,21 @@ def judge(args):
         img, m, _, _ = ibr.synth(d2, G['files'], K2, has2, G['H'], G['W'], K2[q], d2['c2w'][q], exclude={q}, k=3, cache_imgs={})
         if m.mean() > 0.3: out.append(ibr.psnr_gain(img, ibr.image(G['files'], int(d2['idx'][q]), G['W'], G['H']), m))
     return a, b, (float(np.median(out)) if out else 0.0), len(out)
+
+def judge_group(members, X, TX, n_test=8):
+    """Pass X placed by TX, rebuilt only from ALL passes already in the group (each at its pose): a placement must agree with
+    the whole group, not just with the one pass it was matched to (a look-alike agrees with one pass and contradicts another)."""
+    d, blk = G['d'], G['blk']; src = [(j, members[b]) for b in members for j in np.where(blk == b)[0] if G['has'][j]]
+    xs = [j for j in np.where(blk == X)[0] if G['has'][j]]; xs = [xs[i] for i in np.linspace(0, len(xs) - 1, min(n_test, len(xs))).astype(int)]
+    sub = np.array([j for j, _ in src] + xs); n = len(src); d2 = {k: v[sub].copy() for k, v in d.items()}; K2 = G['K'][sub]
+    has2 = G['has'][sub].copy(); has2[n:] = False
+    for q, (_, T) in enumerate(src + [(j, TX) for j in xs]):
+        s, R, t = T; c = d2['c2w'][q].copy(); d2['c2w'][q][:3, :3] = R @ c[:3, :3]; d2['c2w'][q][:3, 3] = s * R @ c[:3, 3] + t; d2['depth'][q] *= s
+    out = []
+    for q in range(n, len(sub)):
+        img, m, _, _ = ibr.synth(d2, G['files'], K2, has2, G['H'], G['W'], K2[q], d2['c2w'][q], exclude=set(range(n, len(sub))), k=3, cache_imgs={})
+        if m.mean() > 0.3: out.append(ibr.psnr_gain(img, ibr.image(G['files'], int(d2['idx'][q]), G['W'], G['H']), m))
+    return (float(np.median(out)) if out else None), len(out)
 
 def main():
     ap = argparse.ArgumentParser(); ap.add_argument('cache'); ap.add_argument('keep'); ap.add_argument('out'); ap.add_argument('--workers', type=int, default=4)
@@ -156,24 +174,43 @@ def main():
     for (A, B, T, _, n), (_, _, s, cnt) in zip(jobs, scores):
         if cnt and ((A, B) not in best or s > best[(A, B)][0]): best[(A, B)] = (s, T, n, cnt)
         if n == 10 ** 6 and not cnt and (A, B) not in best: best[(A, B)] = (MIN_DB, T, n, 0)   # bridge, no overlap to judge: trust the video
-    # Group passes along the best links (maximum spanning forest), either direction: (P, X) carries X into P's frame,
-    # (X, P) carries P into X's, so its inverse carries X into P's. Each group gets its own frame (largest pass = anchor);
-    # passes that link to nothing stay alone. Nothing is dropped; the viewer only mixes photos within one group.
+    # Group passes. Links: (a) video bridges between consecutive passes (cannot be look-alike confusions) first, then (b) the best
+    # appearance links >= MIN_DB. Every join is verified against ALL passes already in the group (judge_group >= VERIFY_DB; a bridge
+    # may also join when nothing in the group overlaps it). Each group has its own frame; passes that fit nowhere stay alone.
     inv = lambda T: (1 / T[0], T[1].T, -T[1].T @ T[2] / T[0])
     comp = lambda P, Q: (P[0] * Q[0], P[1] @ Q[1], P[0] * P[1] @ Q[2] + P[2])         # P o Q
     name = lambda b: f'{int(fid[blk==b][0])}-{int(fid[blk==b][-1])}'
-    pose, group, links, left = {}, {}, [], set(range(nb)); g = 0
+    bjudge = {}
+    for (A, B, T, _, n), (_, _, sc, cnt) in zip(jobs, scores):
+        if n == 10 ** 6: bjudge.setdefault(tuple(sorted((A, B))), []).append(sc if cnt else None)
+    pose, group, links, left, tried = {}, {}, [], set(range(nb)), set(); g = 0
     while left:
         anchor = max(left, key=lambda b: (blk == b).sum()); pose[anchor] = (1.0, np.eye(3), np.zeros(3)); group[anchor] = g; left.discard(anchor)
         while True:
-            cand = [(v[0], P, X, v[1]) for (P, X), v in best.items() if P in group and group[P] == g and X in left and v[0] >= MIN_DB]
-            cand += [(v[0], P, X, inv(v[1])) for (X, P), v in best.items() if P in group and group[P] == g and X in left and v[0] >= MIN_DB]
-            if not cand: break
-            s, P, X, T = max(cand, key=lambda c: c[0]); pose[X] = comp(pose[P], T); group[X] = g; left.discard(X)
-            how = best.get((P, X), best.get((X, P)))
-            links.append(dict(group=g, pass_=name(X), joined_to=name(P), psnr=round(s, 1), moved_m=round(float(np.linalg.norm(T[2])), 2),
-                              by='video bridge' if how and how[2] == 10 ** 6 else 'matches' if how and how[2] else 'already placed', judged=bool(how and how[3])))
-            print('LINK', json.dumps(links[-1]), flush=True)
+            mem = {b: pose[b] for b in pose if group[b] == g}; cand = []
+            for (A, B), (T, _, _) in bridges.items():                                 # A < B consecutive; T: B world -> A world
+                own = [x for x in bjudge.get((A, B), []) if x is not None]
+                if own and max(own) < 20: continue                                    # the bridge itself contradicts the pixels
+                if A in mem and B in left: cand.append((2, 0, A, B, comp(pose[A], T), 'video bridge'))
+                if B in mem and A in left: cand.append((2, 0, B, A, comp(pose[B], inv(T)), 'video bridge'))
+            for (P, X), v in best.items():
+                if v[2] == 10 ** 6 or v[0] < MIN_DB: continue
+                kind = 'matches' if v[2] else 'already placed'
+                if P in mem and X in left: cand.append((1, v[0], P, X, comp(pose[P], v[1]), kind))
+                if X in mem and P in left: cand.append((1, v[0], X, P, comp(pose[X], inv(v[1])), kind))
+            cand.sort(key=lambda c: (-c[0], -c[1])); joined = False
+            for pri, sc, P, X, TX, kind in cand:
+                key = (g, P, X, kind, len(mem))
+                if key in tried: continue
+                tried.add(key); vs, vn = judge_group(mem, X, TX)
+                ok = (vs is not None and vs >= VERIFY_DB) or (vs is None and kind == 'video bridge')
+                print(f'   try {name(X)} via {name(P)} ({kind}): whole-group check ' + (f'{vs:.1f} dB on {vn} frames' if vs is not None else 'no overlap') + (' -> join' if ok else ' -> reject'), flush=True)
+                if ok:
+                    pose[X] = TX; group[X] = g; left.discard(X); joined = True
+                    links.append(dict(group=g, pass_=name(X), joined_to=name(P), by=kind, link_psnr=round(sc, 1) if sc else None,
+                                      group_check=round(vs, 1) if vs is not None else None, moved_m=round(float(np.linalg.norm(TX[2] - pose[P][2])), 2)))
+                    print('LINK', json.dumps(links[-1]), flush=True); break
+            if not joined: break
         g += 1
     out = {k: v.copy() for k, v in d.items()}; out['group'] = np.array([group[b] for b in blk]); out['piece'] = blk
     for b, T in pose.items():

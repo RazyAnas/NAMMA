@@ -95,3 +95,9 @@ not match the video. Earlier notes calling its contents "real" were reported, ne
   (synthetic with that aspect: matches failed with the old code, bridges 7 cm off); (2) PSNR after per-channel gain matching
   for cross-pass comparisons (auto-exposure differs between passes); (3) judge also tests 4 frames spread over the whole pass;
   (4) looser bridge (ratio 0.8, 15 PnP inliers, 5 frames ahead) and it prints why a step fails.
+- align_passes run 4 (aspect fix): bridges 59->94 (0.01 m), 121->125 (1.00 m, judged 38.5 dB), 316->333 (2.14 m), 353->385
+  (0.04 m) worked; 216->234 (2 matches), 267->295 / 521->559 (0 PnP inliers), 488->503 (0 matches) failed; 438->453 blew up
+  (4e13 m). Cross check: 94-121 9 -> 36.8 dB, frames 125-137 at 37-39 dB. But 'already placed' look-alike links still joined
+  passes that disagree with the rest of the group (125-216 vs 385-438 ~16 dB).
+  Run 5: bridge sanity (step <= 0.6 m, total <= 5 m), bridges tried first, every join verified against all passes already in the
+  group (>= 21 dB; a bridge may join with no overlap). Synthetic: a drifted bridge rejected (19.7), the right link taken.
