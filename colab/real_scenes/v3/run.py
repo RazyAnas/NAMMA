@@ -19,7 +19,8 @@ SOURCE = os.environ.get('SOURCE', 'dl3dv:auto')
 NFRAMES, LONG = int(os.environ.get('NFRAMES', 300)), int(os.environ.get('LONG', 1280))   # what a T4 trains in ~1 h
 FULL, PREVIEW = int(os.environ.get('STEPS', 30000)), int(os.environ.get('PREVIEW', 7000))
 CAP_FULL, CAP_PREVIEW = 1_500_000, 1_000_000                                               # MCMC splat budget
-# models to train, [name, steps, splat cap]; the first two run at once on the two T4s, the rest after. 'full' is the deliverable.
+# models to train, [name, steps, splat cap(, '2dgs')]; the first two run at once on the two T4s, the rest after. 'full' is the
+# photoreal deliverable; a '2dgs' model (flat surfels, normal + distortion losses) is the geometry source for the mesh.
 VARIANTS = json.loads(os.environ.get('VARIANTS', json.dumps([['preview', PREVIEW, CAP_PREVIEW], ['full', FULL, CAP_FULL]])))
 RUN = time.strftime('%Y%m%d-%H%M')
 D = f'{W}/data'                                                                            # COLMAP layout: images/ + sparse/0
@@ -38,7 +39,7 @@ EX = f'{W}/gsplat/examples'
 
 # training dependencies install in the background while the cameras are solved (system Python; the SfM venv is separate because
 # simple_trainer needs a pycolmap fork that clashes with the official pycolmap hloc uses)
-PKGS = 'ninja gsplat==1.5.3 viser tyro "torchmetrics[image]" tensorboard tensorly scikit-learn "imageio[ffmpeg]" pyyaml matplotlib splines plyfile'
+PKGS = 'ninja gsplat==1.5.3 viser tyro "torchmetrics[image]" tensorboard tensorly scikit-learn "imageio[ffmpeg]" pyyaml matplotlib splines plyfile scikit-image trimesh'
 deps = (f'git clone -q --depth 1 -b v1.5.3 https://github.com/nerfstudio-project/gsplat {W}/gsplat; '
         # a regular package, else Kaggle's preinstalled Hugging Face `datasets` hides examples/datasets (run 1 died on this)
         f'touch {W}/gsplat/examples/datasets/__init__.py; '
@@ -146,7 +147,7 @@ PP = '' if sh('python -c "import fused_ssim"') == 0 else f'{F}/fused_ssim_shim' 
 if PP: say('using the pure-torch SSIM shim')
 tried = set()
 for _ in range(6):                                                                         # import the trainer once; install what it lacks
-    r = subprocess.run(f'cd {EX} && PYTHONPATH={PP}:$PYTHONPATH python -c "import simple_trainer"', shell=True, capture_output=True, text=True)
+    r = subprocess.run(f'cd {EX} && PYTHONPATH={PP}:$PYTHONPATH python -c "import simple_trainer, simple_trainer_2dgs"', shell=True, capture_output=True, text=True)
     if r.returncode == 0: say('simple_trainer imports ok'); break
     print(r.stderr[-1500:], flush=True); import re; m = re.search(r"No module named '([\w.]+)'", r.stderr)
     if not m: break
@@ -156,12 +157,16 @@ for _ in range(6):                                                              
 import torch
 NGPU = torch.cuda.device_count(); say('GPUs:', NGPU)
 
-def start(name, steps, cap, gpu):
+def start(name, steps, cap, gpu, kind='gs'):
     res = f'{W}/{name}'
-    cmd = (f'cd {EX} && CUDA_VISIBLE_DEVICES={gpu} PYTHONPATH={PP}:$PYTHONPATH python simple_trainer.py mcmc --data-dir {D} --data-factor 1 '
-           f'--result-dir {res} --max-steps {steps} --eval-steps {steps} --save-steps {steps} --ply-steps {steps} --save-ply '
-           f'--disable-viewer --use-bilateral-grid {DEPTH} --strategy.cap-max {cap}')
-    say(cmd); return dict(name=name, gpu=gpu, res=res, t=time.time(),
+    if kind == '2dgs':                                                                    # geometry model: flat surfels
+        cmd = (f'cd {EX} && CUDA_VISIBLE_DEVICES={gpu} PYTHONPATH={PP}:$PYTHONPATH python simple_trainer_2dgs.py --data-dir {D} --data-factor 1 '
+               f'--result-dir {res} --max-steps {steps} --eval-steps {steps} --save-steps {steps} --disable-viewer --normal-loss --dist-loss {DEPTH}')
+    else:
+        cmd = (f'cd {EX} && CUDA_VISIBLE_DEVICES={gpu} PYTHONPATH={PP}:$PYTHONPATH python simple_trainer.py mcmc --data-dir {D} --data-factor 1 '
+               f'--result-dir {res} --max-steps {steps} --eval-steps {steps} --save-steps {steps} --ply-steps {steps} --save-ply '
+               f'--disable-viewer --use-bilateral-grid {DEPTH} --strategy.cap-max {cap}')
+    say(cmd); return dict(name=name, gpu=gpu, res=res, kind=kind, t=time.time(),
                           p=subprocess.Popen(cmd, shell=True, executable='/bin/bash', stdout=open(f'{res}.log', 'w'), stderr=subprocess.STDOUT))
 
 def progress(j):
@@ -174,24 +179,32 @@ def finish(j):
     keep = [x for x in lines if x.strip() and '%|' not in x]                              # drop the progress bar
     open(f'{out}/train.log', 'w').write('\n'.join(keep)); print('\n'.join(keep[-25:]), flush=True)
     say(f"{j['name']} exit {j['p'].returncode} after {(time.time() - j['t']) / 60:.0f} min")
-    sh(f"cd {EX} && CUDA_VISIBLE_DEVICES={j['gpu']} python {F}/v3_qa.py {EX} {D} {j['res']} {out}")
+    if j['kind'] == '2dgs':                                                              # its mesh is made at the end (needs full's level)
+        st = sorted(glob.glob(f"{j['res']}/stats/val_step*.json"))
+        if st: m = json.load(open(st[-1])); json.dump({k: round(v, 3) for k, v in m.items() if isinstance(v, float)}, open(f'{out}/metrics.json', 'w'))
+    else: sh(f"cd {EX} && CUDA_VISIBLE_DEVICES={j['gpu']} python {F}/v3_qa.py {EX} {D} {j['res']} {out}")
     v = sorted(glob.glob(f"{j['res']}/videos/traj_*.mp4"))
     if v: shutil.copy(v[-1], f'{out}/walkthrough.mp4')
     push(out, j['name'])
 
 queue = [tuple(v) for v in VARIANTS]; free = list(range(max(1, min(NGPU, 2))))           # GPUs not training right now
-running = [start(*queue.pop(0), free.pop(0)) for _ in range(min(len(queue), len(free)))]
+running = [start(*v[:3], free.pop(0), *v[3:]) for v in [queue.pop(0) for _ in range(min(len(queue), len(free)))]]
 last = time.time()
 while running:
     time.sleep(30)
     for j in [j for j in running if j['p'].poll() is not None]:
         running.remove(j); finish(j)
-        if queue: running.append(start(*queue.pop(0), j['gpu']))
+        if queue: v = queue.pop(0); running.append(start(*v[:3], j['gpu'], *v[3:]))
     if time.time() - last > 300: last = time.time(); [say(j['name'], progress(j)) for j in running]
 
 S = {n: json.load(open(f'{O}/{n}/metrics.json')) for n in [v[0] for v in VARIANTS] if os.path.exists(f'{O}/{n}/metrics.json')}
+# the mould: a solid mesh in the same coordinates as full/model.splat, from the 2DGS model if one was trained, else the full model
+geo = next(([v[0], '2dgs'] for v in VARIANTS if len(v) > 3 and v[3] == '2dgs'), ['full', '3dgs'])
+if os.path.isdir(f'{W}/{geo[0]}/ckpts'):
+    sh(f"cd {EX} && python {F}/mesh_tsdf.py {EX} {D} {W}/{geo[0]} {O}/mesh {O}/full/level.json {geo[1]} {os.environ.get('MESH_VOXELS', 512)}")
+    if os.path.exists(f'{O}/mesh/mesh.json'): S['mesh'] = json.load(open(f'{O}/mesh/mesh.json'))
+shutil.copytree(f'{D}/sparse', f'{O}/sparse', dirs_exist_ok=True)                        # cameras, so QA can be redone later
 json.dump(dict(source=SOURCE, sfm=rep, models=S, minutes=round((time.time() - T0) / 60)), open(f'{O}/v3_summary.json', 'w'), indent=1)
 push(f'{O}/v3_summary.json', 'v3_summary.json')
-shutil.copytree(f'{D}/sparse', f'{O}/sparse', dirs_exist_ok=True)                        # cameras, so QA can be redone later
 say('V3 DONE', json.dumps(S)); sh(f'ls -la {O} {O}/*/ | head -40')
 if 'full' not in S: raise SystemExit('V3 FAILED: no full model (see the trainer logs above)')

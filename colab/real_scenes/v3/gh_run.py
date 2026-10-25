@@ -82,7 +82,7 @@ if tok:
     try:
         from huggingface_hub import HfApi
         api = HfApi(token=tok); repo = f"{api.whoami()['name']}/namma-v3-out"; api.create_repo(repo, repo_type='dataset', private=True, exist_ok=True)
-        api.upload_folder(folder_path=OUT, path_in_repo=RUN, repo_id=repo, repo_type='dataset', ignore_patterns=[f'{n}/*.ply' for n in os.listdir(OUT) if n != 'full'])
+        api.upload_folder(folder_path=OUT, path_in_repo=RUN, repo_id=repo, repo_type='dataset', ignore_patterns=[f'{n}/model.ply' for n in os.listdir(OUT) if n != 'full'])
         say(f'results: https://huggingface.co/datasets/{repo}/tree/main/{RUN}')
         if os.environ.get('GITHUB_STEP_SUMMARY'):
             open(os.environ['GITHUB_STEP_SUMMARY'], 'a').write(f'Results: https://huggingface.co/datasets/{repo}/tree/main/{RUN}\n')

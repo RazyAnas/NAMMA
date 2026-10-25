@@ -1,7 +1,7 @@
 """3DGS .ply -> .splat (32 bytes per splat: position, scale, RGBA, rotation; SH degree 0 colour), about 8x smaller, opens in SuperSplat.
 Also levels the model: the SfM world is not gravity-aligned (up was 8 deg off), so with nav.json (up, floor) the model is rotated so
 the floor is level at y = 0 and centred. Usage: python to_splat.py in.ply|in.splat out.splat [nav.json]  (a .splat input is only levelled)"""
-import json, sys, numpy as np
+import json, os, sys, numpy as np
 
 REC = [('p', '<f4', 3), ('s', '<f4', 3), ('c', 'u1', 4), ('r', 'u1', 4)]
 
@@ -18,7 +18,9 @@ def level(rec, nav):
     v = np.cross(u, y); c = float(u @ y); K = np.array([[0, -v[2], v[1]], [v[2], 0, -v[0]], [-v[1], v[0], 0]])
     R = np.eye(3) + K + K @ K / (1 + c)                                               # rotation taking u to +y
     p = rec['p'] @ R.T; p[:, 1] -= n['floor']                                        # up . p = floor on the floor (flip keeps the dot product)
-    p[:, [0, 2]] -= np.median(p[:, [0, 2]], 0); rec['p'] = p
+    med = np.median(p[:, [0, 2]], 0); p[:, [0, 2]] -= med; rec['p'] = p
+    M = np.eye(4); M[:3, :3] = R; M[:3, 3] = [-med[0], -n['floor'], -med[1]]                 # p' = R p + t (for the mesh: level.json)
+    json.dump(dict(matrix=M.tolist()), open(os.path.join(os.path.dirname(os.path.abspath(nav)), 'level.json'), 'w'))
     w = np.sqrt(max(1 + R[0, 0] + R[1, 1] + R[2, 2], 1e-9)) / 2
     qr = np.array([w, (R[2, 1] - R[1, 2]) / (4 * w), (R[0, 2] - R[2, 0]) / (4 * w), (R[1, 0] - R[0, 1]) / (4 * w)])
     q = (rec['r'].astype(np.float32) - 128) / 128; q = qmul(np.repeat(qr[None], len(q), 0), q); q /= np.linalg.norm(q, axis=1, keepdims=True)
