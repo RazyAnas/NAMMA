@@ -12,6 +12,33 @@ Two steps (the camera reader needs gsplat's examples + torch, the converter need
 import json, os, shutil, subprocess, sys, numpy as np
 F = np.diag([-1., -1, 1])
 
+# Floor plan minimap (live position dot, clickable spots) + strip of real-photo thumbnails; clicking goes to that spot.
+OVERLAY = """<style>
+  #nm-plan{position:fixed;left:16px;top:16px;width:min(30vw,260px);background:#111c;border:1px solid #fff2;border-radius:10px;padding:6px;z-index:10;font:12px system-ui,sans-serif;color:#ddd}
+  #nm-plan .wrap{position:relative} #nm-plan img{width:100%;display:block;border-radius:6px}
+  #nm-plan .dot{position:absolute;width:12px;height:12px;margin:-6px 0 0 -6px;border-radius:50%;background:#e8a96b;border:2px solid #fff;box-shadow:0 0 6px #000}
+  #nm-plan .spot{position:absolute;width:10px;height:10px;margin:-5px 0 0 -5px;border-radius:50%;background:#fff9;border:1px solid #000;cursor:pointer}
+  #nm-strip{position:fixed;right:16px;top:16px;display:flex;gap:8px;z-index:10;max-width:calc(100vw - 320px);overflow-x:auto}
+  #nm-strip button{border:2px solid #fff3;border-radius:8px;padding:0;background:#000;cursor:pointer;position:relative}
+  #nm-strip img{width:96px;height:64px;object-fit:cover;display:block;border-radius:6px}
+  #nm-strip span{position:absolute;left:4px;bottom:2px;color:#fff;font:11px system-ui,sans-serif;text-shadow:0 0 3px #000}
+  @media (max-width:640px){#nm-plan{width:38vw}#nm-strip{display:none}}
+</style>
+<div id="nm-plan"><div class="wrap"><img src="./floorplan.png" alt="floor plan"><div class="dot" id="nm-dot"></div></div><div>FLOOR PLAN</div></div>
+<div id="nm-strip"></div>
+<script type="module">
+  const o = await (await fetch('./overlay.json')).json(); const f = o.floor; const wrap = document.querySelector('#nm-plan .wrap');
+  const pos = (x, z) => [((x - f.x0) * f.px) / f.w * 100, ((z - f.z0) * f.px) / f.h * 100];
+  const go = (i) => { try { window.viewer.selectAnnotation(i); } catch (e) {} };
+  o.spots.forEach((s, i) => {
+    const d = document.createElement('div'); d.className = 'spot'; d.title = s.title; [d.style.left, d.style.top] = pos(s.x, s.z).map(v => v + '%'); d.onclick = () => go(i); wrap.appendChild(d);
+    const b = document.createElement('button'); b.innerHTML = `<img src="./${s.thumb}" alt=""><span>${s.title}</span>`; b.onclick = () => go(i); document.getElementById('nm-strip').appendChild(b);
+  });
+  const dot = document.getElementById('nm-dot');
+  setInterval(() => { const app = window.app; if (!app) return; let c; app.root.forEach(e => { if (e.camera) c = e.getPosition(); });
+    if (c) { const [l, t] = pos(c.x, c.z); dot.style.left = Math.max(0, Math.min(100, l)) + '%'; dot.style.top = Math.max(0, Math.min(100, t)) + '%'; } }, 200);
+</script>"""
+
 def smooth(x, r):
     """Gaussian moving average along the walk (handheld jitter out), edges kept."""
     k = np.exp(-0.5 * (np.arange(-2 * r, 2 * r + 1) / max(r, 1e-6)) ** 2); k /= k.sum()
@@ -60,6 +87,22 @@ def plan(examples, data, run, tour):
                                             fringing=dict(enabled=False, intensity=0.5)),
                     animTracks=[track], cameras=[dict(initial=pose(start))], annotations=ann, startMode='animTrack')
     json.dump(settings, open(f'{tour}/settings.json', 'w'))
+    # floor plan like splattour's: top-down density of the model's splats between knee and head height (walls light up), real
+    # photos of the spots as thumbnails; both drive the overlay in index.html (minimap with a live "you are here" dot)
+    from PIL import Image
+    v = PlyData.read(f'{run}/full/model.ply')['vertex'].data; Q = L(np.stack([v['x'], v['y'], v['z']], 1).astype(np.float64))
+    a = 1 / (1 + np.exp(-v['opacity'].astype(np.float64))); m = np.all((Q >= lo) & (Q <= hi), 1) & (Q[:, 1] > 0.15 * h) & (Q[:, 1] < 0.85 * h) & (a > 0.3)
+    span = hi[[0, 2]] - lo[[0, 2]]; px = 900 / span.max(); Wp, Hp = (span * px).astype(int) + 1
+    H2, _, _ = np.histogram2d((Q[m, 2] - lo[2]) * px, (Q[m, 0] - lo[0]) * px, bins=(Hp, Wp), range=((0, Hp), (0, Wp)), weights=a[m])
+    g = np.log1p(H2); g = np.clip(g / max(np.percentile(g[g > 0], 99), 1e-6), 0, 1) ** 0.7 if (g > 0).any() else g
+    img = (np.stack([g * 245, g * 232, g * 215], -1) + 8).clip(0, 255).astype(np.uint8)
+    Image.fromarray(img).save(f'{tour}/floorplan.png')
+    os.makedirs(f'{tour}/thumbs', exist_ok=True)
+    for n, i in enumerate(spots):
+        Image.open(p.image_paths[i]).convert('RGB').resize((240, int(240 * Hd / Wd))).save(f'{tour}/thumbs/spot{n + 1}.jpg', quality=82)
+    overlay = dict(floor=dict(x0=float(lo[0]), z0=float(lo[2]), px=float(px), w=int(Wp), h=int(Hp)),
+                   spots=[dict(title=a_['title'], x=float(cs[i][0]), z=float(cs[i][2]), thumb=f'thumbs/spot{n + 1}.jpg') for n, (i, a_) in enumerate(zip(spots, ann))])
+    json.dump(overlay, open(f'{tour}/overlay.json', 'w'))
     info = dict(frames=len(cam), start_frame=start, fov=round(fov, 1), room_box=[lo.round(3).tolist(), hi.round(3).tolist()], walk_seconds=dur, spots=len(ann))
     json.dump(info, open(f'{tour}/tour.json', 'w'), indent=1); print('TOUR PLAN', json.dumps(info), flush=True)
     return info
@@ -75,6 +118,9 @@ def build(run, tour, public, st='npx --no-install splat-transform'):
     for f in ('index.js', 'index.css'): shutil.copy(f'{public}/{f}', tour)
     html = open(f'{public}/index.html').read(); a = html.index('id="sse-bootstrap">') + len('id="sse-bootstrap">'); c = html.index('</script>', a)
     html = (html[:a] + '\n' + json.dumps(boot) + '\n        ' + html[c:]).replace('<title>SuperSplat Viewer</title>', '<title>NAMMA 3D tour</title>')
+    html = html.replace("createViewer({ container: document.body, settings, ...options });",
+                        "window.viewer = await createViewer({ container: document.body, settings, ...options });")
+    if os.path.exists(f'{tour}/overlay.json'): html = html.replace('</body>', OVERLAY + '\n    </body>')
     open(f'{tour}/index.html', 'w').write(html)
     info = json.load(open(f'{tour}/tour.json')); info.update(collision='collisionUrl' in boot, sog_mb=round(os.path.getsize(f'{tour}/scene.sog') / 1e6, 1))
     json.dump(info, open(f'{tour}/tour.json', 'w'), indent=1); print('TOUR', json.dumps(info), flush=True)
