@@ -1,0 +1,31 @@
+{"updated": "2026-10-25 15:30 IST",
+ "goal": "Phone video -> photoreal, walkable 3D of the REAL room. Real pixels first, 3D model for in-between views, generation only for holes (flagged). Free GPUs.",
+ "now": "Re-check with only the 507 verified cameras (Kaggle namma-ibr, CPU, ~10 min). Alarm 15:45 IST.",
+ "phases": [
+  {"name": "A. Capture & cameras", "steps": [
+   ["done", "600 sharp frames from the 4K video"],
+   ["done", "SfM cameras (hloc): 595/600 placed"],
+   ["done", "Metric depth (Depth Anything 3) aligned to cameras"],
+   ["done", "Camera check on every frame: median 34.3 dB, 89 wrong (corridor look-alikes)"],
+   ["done", "Keep-list: 507 verified cameras (good_frames.json)"],
+   ["running", "Re-check with verified cameras only + new held-out/off-path images"]]},
+  {"name": "B. Quick proofs (5-10 min each)", "steps": [
+   ["done", "P1 real-pixel rebuild: 27.0 dB, SSIM 0.86 (splats 18.8) - PASSED"],
+   ["done", "P2 Tencent WorldMirror demo: right room, streaky - shape only"],
+   ["done", "P3 Difix repair: small effect - final polish only"],
+   ["todo", "P4 video model fills holes only, owner checks vs video"]]},
+  {"name": "C. Final build", "steps": [
+   ["todo", "3D model trained on verified cameras (in-between views, collision)"],
+   ["todo", "Floor plan + walkable area from fixed geometry"],
+   ["todo", "Matterport-style viewer: real pixels on the path, 3D between, 'not filmed' toggle"],
+   ["todo", "Difix polish of in-between views"],
+   ["todo", "Hole-only generation, flagged per pixel"]]},
+  {"name": "D. Later", "steps": [
+   ["todo", "Multi-room, then multi-floor"],
+   ["todo", "Techfest R1 (31 Oct): abstract PDF, hosted viewer, 3-5 min video, repo + sample data"]]}
+ ],
+ "results": [
+  ["IBR held-out (real pixels)", "27.0 dB / SSIM 0.86 / 99% coverage"],
+  ["Off-path 30 cm coverage", "95%"],
+  ["Camera check (all 596)", "median 34.3 dB, 67 below 18 dB"],
+  ["Best splat held-out", "18.8 dB (fog) - dropped as main path"]]}

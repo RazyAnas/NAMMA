@@ -1,0 +1,30 @@
+<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>NAMMA Status</title><style>
+:root{--bg:#0f1115;--fg:#e6e6e6;--mut:#8a8f98;--card:#171a21;--done:#3fb950;--run:#d29922;--todo:#555b66;--err:#f85149}
+body{background:var(--bg);color:var(--fg);font:15px/1.45 system-ui,sans-serif;margin:0;padding:16px;max-width:900px;margin:auto}
+h1{font-size:20px;margin:4px 0}.mut{color:var(--mut);font-size:13px}.card{background:var(--card);border-radius:10px;padding:12px 14px;margin:12px 0}
+.now{border-left:4px solid var(--run)}li{list-style:none;margin:4px 0}ul{padding:0;margin:6px 0}
+.b{display:inline-block;width:70px;font-size:12px;font-weight:600}.done{color:var(--done)}.running{color:var(--run)}.todo{color:var(--todo)}
+.bar{height:8px;background:#2a2f3a;border-radius:4px;overflow:hidden}.bar i{display:block;height:100%;background:var(--done)}
+table{width:100%;border-collapse:collapse}td{padding:4px 0;border-bottom:1px solid #2a2f3a;vertical-align:top}
+.k{font-family:ui-monospace,monospace;font-size:13px}.ERROR,.error{color:var(--err)}.RUNNING,.running,.QUEUED{color:var(--run)}.COMPLETE,.complete{color:var(--done)}
+pre{white-space:pre-wrap;font-size:12px;color:var(--mut);max-height:260px;overflow:auto}</style></head><body>
+<h1>NAMMA: video to real 3D room</h1><div class="mut" id="upd"></div>
+<div class="card now"><b>Now:</b> <span id="now"></span></div>
+<div class="card"><div class="bar"><i id="pb"></i></div><div class="mut" id="pt"></div></div>
+<div class="card"><b>Kaggle jobs (live, every 60 s)</b><table id="kg"></table><pre id="log"></pre></div>
+<div id="ph"></div><div class="card"><b>Measured results</b><table id="res"></table></div>
+<script>
+const SRC='https://raw.githubusercontent.com/RazyAnas/NAMMA/claude/wonderful-cori-i3fn41/dash/status.json';
+const E=s=>String(s).replace(/[&<>]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;'}[c]));
+async function plan(){try{const s=await (await fetch(SRC+'?t='+Date.now(),{cache:'no-store'})).json();
+ upd.textContent='Plan updated '+s.updated+' · '+s.goal;now.textContent=s.now;
+ let n=0,d=0;ph.innerHTML=s.phases.map(p=>'<div class="card"><b>'+E(p.name)+'</b><ul>'+p.steps.map(([st,t])=>{n++;if(st=='done')d++;
+ return '<li><span class="b '+st+'">'+({done:'✓ done',running:'● running',todo:'○ todo'}[st]||st)+'</span>'+E(t)+'</li>'}).join('')+'</ul></div>').join('');
+ pb.style.width=(100*d/n)+'%';pt.textContent=d+' of '+n+' steps done';
+ res.innerHTML=s.results.map(([a,b])=>'<tr><td>'+E(a)+'</td><td>'+E(b)+'</td></tr>').join('')}catch(e){upd.textContent='plan fetch failed: '+e}}
+async function jobs(){try{const j=await (await fetch('kaggle.json?t='+Date.now(),{cache:'no-store'})).json();
+ kg.innerHTML='<tr><td class="mut" colspan=2>checked '+E(j.at)+'</td></tr>'+j.jobs.map(x=>'<tr><td class="k">'+E(x.id)+'</td><td class="k '+E(x.status)+'">'+E(x.status)+'</td></tr>').join('');
+ log.textContent=j.log||''}catch(e){kg.innerHTML='<tr><td class="mut">run watch.sh to see live Kaggle status</td></tr>'}}
+plan();jobs();setInterval(plan,120000);setInterval(jobs,60000);
+</script></body></html>
