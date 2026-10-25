@@ -38,6 +38,8 @@ EX = f'{W}/gsplat/examples'
 # simple_trainer needs a pycolmap fork that clashes with the official pycolmap hloc uses)
 PKGS = 'ninja gsplat==1.5.3 viser tyro "torchmetrics[image]" tensorboard tensorly scikit-learn "imageio[ffmpeg]" pyyaml matplotlib splines plyfile'
 deps = (f'git clone -q --depth 1 -b v1.5.3 https://github.com/nerfstudio-project/gsplat {W}/gsplat; '
+        # a regular package, else Kaggle's preinstalled Hugging Face `datasets` hides examples/datasets (run 1 died on this)
+        f'touch {W}/gsplat/examples/datasets/__init__.py; '
         f'echo "torch==$(python -c "import torch; print(torch.__version__)")" > {W}/pin.txt; '
         f'pip install -q -c {W}/pin.txt {PKGS} || pip install -q {PKGS}; '
         'pip install -q --no-deps "git+https://github.com/nerfstudio-project/nerfview@4538024fe0d15fd1a0e4d760f3695fc44ca72787" '
@@ -140,6 +142,15 @@ if tgz:
 sh(f'python {F}/gsplat_warm.py', check=True)                                              # compile once, before two GPUs load it
 PP = '' if sh('python -c "import fused_ssim"') == 0 else f'{F}/fused_ssim_shim'           # pure-torch SSIM if the CUDA one failed
 if PP: say('using the pure-torch SSIM shim')
+tried = set()
+for _ in range(6):                                                                         # import the trainer once; install what it lacks
+    r = subprocess.run(f'cd {EX} && PYTHONPATH={PP}:$PYTHONPATH python -c "import simple_trainer"', shell=True, capture_output=True, text=True)
+    if r.returncode == 0: say('simple_trainer imports ok'); break
+    print(r.stderr[-1500:], flush=True); import re; m = re.search(r"No module named '([\w.]+)'", r.stderr)
+    if not m: break
+    pkg = {'cv2': 'opencv-python-headless', 'sklearn': 'scikit-learn', 'yaml': 'pyyaml', 'PIL': 'pillow'}.get(m.group(1).split('.')[0], m.group(1).split('.')[0])
+    if pkg in tried: break                                                                  # installing it did not help
+    tried.add(pkg); sh(f'pip -q install {pkg} 2>&1 | tail -1')
 import torch
 NGPU = torch.cuda.device_count(); say('GPUs:', NGPU)
 
@@ -181,3 +192,4 @@ S = {n: json.load(open(f'{O}/{n}/metrics.json')) for n in ('preview', 'full') if
 json.dump(dict(source=SOURCE, sfm=rep, models=S, minutes=round((time.time() - T0) / 60)), open(f'{O}/v3_summary.json', 'w'), indent=1)
 push(f'{O}/v3_summary.json', 'v3_summary.json')
 say('V3 DONE', json.dumps(S)); sh(f'ls -la {O} {O}/*/ | head -40')
+if 'full' not in S: raise SystemExit('V3 FAILED: no full model (see the trainer logs above)')

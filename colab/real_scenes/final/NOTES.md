@@ -145,3 +145,10 @@ not match the video. Earlier notes calling its contents "real" were reported, ne
   (pycolmap fork needs np.uint64(-1) patched), Parser reads hloc-style COLMAP binaries incl. SIMPLE_RADIAL undistortion, the
   trainer CLI accepts every flag, depth-loss loader works, QA renders match the real frames (stub renderer), levelled floor y = 0,
   sharpest-frame picker skips blurred frames. Not checkable here: GPU training, fused-ssim build (pure-torch shim as fallback).
+- **v3 run 1 (25 Oct 22:05 IST, from GitHub Actions; DL3DV-Benchmark #44 hotel room, handheld phone, 411 frames 960x540):**
+  cameras **411/411 registered, 1 model, 1.15 px reprojection error** (hloc SuperPoint+LightGlue, SIMPLE_RADIAL k1 = -0.0007),
+  11 min on a T4. gsplat build reused from namma-prep (ready in 1 s), fused-ssim compiled. Training never started: Kaggle's
+  preinstalled Hugging Face `datasets` package hid gsplat's examples/datasets folder (namespace package, no __init__.py)
+  -> "No module named 'datasets.colmap'". Fixed (touch __init__.py; the job now imports the trainer once and installs whatever
+  is missing before training). Kaggle is driven from GitHub Actions now (.github/workflows/namma-v3.yml): this container
+  cannot reach kaggle.com.

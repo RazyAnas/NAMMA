@@ -81,4 +81,5 @@ if tok:
         if os.environ.get('GITHUB_STEP_SUMMARY'):
             open(os.environ['GITHUB_STEP_SUMMARY'], 'a').write(f'Results: https://huggingface.co/datasets/{repo}/tree/main/{RUN}\n')
     except Exception as e: say('HF upload failed:', str(e)[:300])
+if ok and not os.path.exists(f'{OUT}/full/metrics.json'): ok, s = False, 'complete, but no full model (metrics.json missing)'
 sys.exit(0 if ok else f'Kaggle job ended with: {s[-200:]}')
