@@ -1,9 +1,9 @@
 #!/bin/bash
 # Push a Kaggle job, wait for it, download the output, then ring until you press Ctrl-C.
-# Usage: bash run_and_alarm.sh <kernel folder> <kaggle id, e.g. anasrazy/namma-final> <output dir, or - to skip the download>
+# Usage: bash run_and_alarm.sh <kernel folder> <kaggle id, e.g. anasrazy/namma-final> <output dir, or - to skip the download> [file regex]
 # Keeps the Mac awake while waiting (caffeinate). Keep the lid OPEN and the charger in: a closed lid still sleeps the Mac.
 set -u
-FOLDER="$1"; ID="$2"; OUT="$3"
+FOLDER="$1"; ID="$2"; OUT="$3"; PAT="${4:-}"   # PAT: download only matching files (Mac disk is small)
 export KAGGLE_API_TOKEN="$(cat ~/.kaggle/access_token)"
 caffeinate -dims -w $$ &
 kaggle kernels push -p "$FOLDER" 2>&1 | grep -v Warning
@@ -18,7 +18,7 @@ if [ "$OUT" = "-" ]; then          # e.g. namma-prep: its output is a cache for 
   kaggle kernels output "$ID" -p /tmp/kaggle_log_only --file-pattern '.*\.log$' >/dev/null 2>&1 || true
 else
   [ -d "$OUT" ] && mv "$OUT" "${OUT}_prev_$(date +%H%M)"
-  kaggle kernels output "$ID" -p "$OUT" 2>&1 | grep -v Warning | tail -2
+  kaggle kernels output "$ID" -p "$OUT" ${PAT:+--file-pattern "$PAT"} 2>&1 | grep -v Warning | tail -2
 fi
 MIN=$(( ($(date +%s) - START) / 60 ))
 echo "$ID finished: $s  (${MIN} min). Output in $OUT"

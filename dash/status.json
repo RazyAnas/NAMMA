@@ -1,7 +1,7 @@
 {
- "updated": "2026-10-25 16:20 IST",
+ "updated": "2026-10-25 16:45 IST",
  "goal": "Phone video -> photoreal, walkable 3D of the REAL room. Real pixels first, 3D model for in-between views, generation only for holes (flagged). Free GPUs.",
- "now": "Real-photo viewer works on the room (103 photos). Next: depth for all 319 verified frames + put back dropped frames (GPU).",
+ "now": "Depth for all 319 verified frames + viewer with ~3x more photos (Kaggle namma-dense, T4 ~15 min).",
  "phases": [
   {
    "name": "A. Capture & cameras",
@@ -77,8 +77,8 @@
      "Real-photo viewer: 103 real photos, click-to-walk lands on photos, holes visible"
     ],
     [
-     "todo",
-     "Depth for all 319 verified frames (DA3 ran on every 3rd only) -> 3x denser viewer, fewer black areas"
+     "running",
+     "Depth for all 319 verified frames (DA3 ran on every 3rd only) -> 3x denser viewer"
     ],
     [
      "todo",
