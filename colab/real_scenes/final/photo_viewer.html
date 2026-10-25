@@ -6,7 +6,7 @@
 #help{position:fixed;left:10px;bottom:10px;background:var(--panel);padding:6px 10px;border-radius:8px;opacity:.85}
 b{color:#7fd1ff}</style></head><body>
 <div id="hud">loading…</div><canvas id="map" width="220" height="220"></canvas>
-<div id="help">drag: look · WASD / arrows: walk · Q/E: down/up · N/P: next/previous real photo · click map: go there · H: show never-filmed (magenta)</div>
+<div id="help">click: walk there (lands on a real photo) · drag: look · WASD / arrows: free walk · Q/E: down/up · N/P: next/previous real photo · click map: go there · H: show never-filmed (magenta)</div>
 <script src="three.min.js"></script><script>
 'use strict';
 const V=THREE.Vector3;let C,up,e1,e2,cams=[];const cache=new Map();let holes=false;
@@ -31,8 +31,8 @@ function mesh(c){ // photo-textured depth mesh of one real frame; edges between 
     const mat=new THREE.MeshBasicMaterial({map:tex,side:THREE.DoubleSide,stencilWrite:true,stencilRef:1,stencilZPass:THREE.ReplaceStencilOp});
     const o=new THREE.Mesh(g,mat);o.visible=false;S.add(o);return o})}
 function get(c){if(!cache.has(c.g)){const e={o:null,t:performance.now()};cache.set(c.g,e);mesh(c).then(o=>e.o=o)}const e=cache.get(c.g);e.t=performance.now();return e}
-function trim(){if(cache.size<=24)return;const old=[...cache.entries()].filter(x=>x[1].o&&!x[1].o.visible).sort((a,b)=>a[1].t-b[1].t);
-  for(const [g,e] of old.slice(0,cache.size-24)){S.remove(e.o);e.o.geometry.dispose();e.o.material.map.dispose();e.o.material.dispose();cache.delete(g)}}
+function trim(){if(cache.size<=32)return;const old=[...cache.entries()].filter(x=>x[1].o&&!x[1].o.visible).sort((a,b)=>a[1].t-b[1].t);
+  for(const [g,e] of old.slice(0,cache.size-32)){S.remove(e.o);e.o.geometry.dispose();e.o.material.map.dispose();e.o.material.dispose();cache.delete(g)}}
 function ranked(){const f=fwd();return cams.map(c=>{const d=c.p.distanceTo(st.p),a=Math.acos(Math.max(-1,Math.min(1,c.f.dot(f))))*180/Math.PI;return [d+a/30,c,d]}).sort((a,b)=>a[0]-b[0])}
 let last=performance.now();const keys={};
 function frame(t){const dt=Math.min(.05,(t-last)/1000);last=t;
@@ -44,10 +44,10 @@ function frame(t){const dt=Math.min(.05,(t-last)/1000);last=t;
   if(keys.e)st.p.addScaledVector(up,sp);if(keys.q)st.p.addScaledVector(up,-sp);
   const r=rt.clone(),cu=r.clone().cross(f).normalize(),M=new THREE.Matrix4().makeBasis(r,cu,f.clone().negate()).setPosition(st.p);
   cam.matrix.copy(M);cam.matrixWorldNeedsUpdate=true;
-  const top=ranked().slice(0,4);for(const e of cache.values())if(e.o)e.o.visible=false;
+  const top=ranked().slice(0,8);for(const e of cache.values())if(e.o)e.o.visible=false;
   top.forEach(([,c],i)=>{const e=get(c);if(e.o){e.o.visible=true;e.o.renderOrder=i;
     e.o.material.stencilFunc=i?THREE.NotEqualStencilFunc:THREE.AlwaysStencilFunc}});   // nearest photo wins; others only fill its holes
-  for(const [,c] of ranked().slice(4,7))get(c);trim();
+  for(const [,c] of ranked().slice(8,11))get(c);trim();
   S.background.set(holes?0xff00ff:0x1b1d22);R.render(S,cam);
   hud.innerHTML='Real photos only. Nearest real frame: <b>'+top[0][1].g+'</b>, '+(top[0][2]*100).toFixed(0)+' cm away'+
     (top[0][2]<.03?' — <b>this is the photo</b>':'')+'<br>'+cams.length+' verified camera positions';
@@ -69,8 +69,13 @@ function resize(){R.setSize(innerWidth,innerHeight);if(cam){cam.aspect=innerWidt
 addEventListener('keydown',e=>{const k=e.key.toLowerCase();keys[k]=true;if(k==='h')holes=!holes;
   if(k==='n'||k==='p'){const r=ranked(),cur=cams.indexOf(r[0][1]),n=cams[(cur+(k==='n'?3:-3)+cams.length)%cams.length];goTo(n)}});
 addEventListener('keyup',e=>keys[e.key.toLowerCase()]=false);
-let drag=null;R.domElement.addEventListener('pointerdown',e=>drag=[e.clientX,e.clientY]);addEventListener('pointerup',()=>drag=null);
-addEventListener('pointermove',e=>{if(!drag)return;st.yaw-=(e.clientX-drag[0])*.004;st.pitch=Math.max(-1.4,Math.min(1.4,st.pitch-(e.clientY-drag[1])*.004));drag=[e.clientX,e.clientY]});
+let drag=null,moved=0;R.domElement.addEventListener('pointerdown',e=>{drag=[e.clientX,e.clientY];moved=0});
+addEventListener('pointerup',e=>{if(drag&&moved<6&&e.target===R.domElement)clickGo(e);drag=null});
+function clickGo(e){ // Matterport-style: go to the real photo position that lies in the clicked direction (so you always land on a photo)
+  const ray=new V((e.clientX/innerWidth)*2-1,-(e.clientY/innerHeight)*2+1,.5).unproject(cam).sub(st.p).normalize();let best=null,bs=1e9;
+  for(const c of cams){const d=c.p.clone().sub(st.p),L=d.length();if(L<.15)continue;const a=Math.acos(Math.max(-1,Math.min(1,d.dot(ray)/L)))*180/Math.PI;
+    if(a<25){const s=L+a/25+(1-c.f.dot(ray))*.5;if(s<bs){bs=s;best=c}}}if(best)goTo(best)}
+addEventListener('pointermove',e=>{if(!drag)return;moved+=Math.abs(e.clientX-drag[0])+Math.abs(e.clientY-drag[1]);st.yaw-=(e.clientX-drag[0])*.004;st.pitch=Math.max(-1.4,Math.min(1.4,st.pitch-(e.clientY-drag[1])*.004));drag=[e.clientX,e.clientY]});
 addEventListener('wheel',e=>st.p.addScaledVector(fwd(),-e.deltaY*.002));
 map.addEventListener('click',e=>{const b=map.getBoundingClientRect(),x=e.clientX-b.left,y=e.clientY-b.top;let best=null,bd=1e9;
   for(const c of cams){const [cx,cy]=mapT(c.p),d=(cx-x)**2+(cy-y)**2;if(d<bd){bd=d;best=c}}if(best)goTo(best)});
