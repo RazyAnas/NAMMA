@@ -5,7 +5,9 @@ from PIL import Image
 
 def load_views(da3, frames_dir, scale=2):
     import torch
-    d = np.load(da3); files = sorted(glob.glob(f'{frames_dir}/*.jpg')); imgs, Ks, V = [], [], []
+    import os, ibr
+    z = np.load(da3); d = ibr.keep_filter({k: z[k] for k in z.files}, os.environ.get('KEEP_FRAMES'))   # env KEEP_FRAMES=good_frames.json: train only on checked cameras
+    files = sorted(glob.glob(f'{frames_dir}/*.jpg')); imgs, Ks, V = [], [], []
     for j, g in enumerate(d['idx']):
         im = Image.open(files[g]).convert('RGB'); W, H = d['rgb'].shape[2] * scale, d['rgb'].shape[1] * scale
         imgs.append(torch.from_numpy(np.asarray(im.resize((W, H), Image.LANCZOS))).float() / 255)

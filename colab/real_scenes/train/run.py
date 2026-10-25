@@ -9,5 +9,6 @@ VARIANTS = [
 ]
 W = '/kaggle/temp/final'; os.makedirs(W, exist_ok=True)
 subprocess.run(f'git clone -q --depth 1 -b claude/wonderful-cori-i3fn41 https://github.com/RazyAnas/NAMMA {W}/repo', shell=True, check=True)
+os.environ['KEEP_FRAMES'] = f'{W}/repo/colab/real_scenes/final/good_frames.json'   # train only on cameras that passed the real-pixel check
 os.environ['MODE'] = 'train'; os.environ['VARIANTS'] = json.dumps(VARIANTS)
 exec(compile(open(f'{W}/repo/colab/real_scenes/final/run.py').read(), 'final/run.py', 'exec'))

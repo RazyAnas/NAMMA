@@ -45,3 +45,10 @@ not match the video. Earlier notes calling its contents "real" were reported, ne
 - DA3 chunked (8 views, 3 shared, Sim3 merge): all frames placed; 60-frame splat looked better than the point cloud but blurry and broken
   (owner screenshot). Train-view PSNR 25.1 dB (training views, not a quality claim). A/B with 200 frames + camera correction + depth anchor
   is the next measurement (held-out PSNR/SSIM printed by `train_splat.py`).
+
+## 2026-10-25: verified-camera list
+- From the all-frame real-pixel check (median 34.3 dB): keep frames whose rebuild is >= 20 dB -> `good_frames.json`, 507/596.
+  Dropped stretches 60-63, 89-108, 323-330, 444-447, 526-549 (corridor look-alikes linked by NetVLAD).
+- Walk-order-only SfM (`namma-resfm`) was worse: 372/600 registered in 5 models, then OOM in sfm_align (lazy npz reads, fixed).
+  So: keep the original SfM, drop the bad cameras. `ibr.py/ibr_check.py --keep`, training via env `KEEP_FRAMES`.
+- The list is only valid for the current namma-prep cameras; re-run ibr_check if prep is re-run.

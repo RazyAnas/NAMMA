@@ -4,7 +4,7 @@ agree with the SfM geometry. Output has the same layout as da3.npz (depth, K at 
 import numpy as np
 
 def align(sfm_npz, da3_npz, out_npz, min_pts=20):
-    s = np.load(sfm_npz, allow_pickle=True); d = np.load(da3_npz)
+    s = np.load(sfm_npz, allow_pickle=True); z = np.load(da3_npz); d = {k: z[k] for k in z.files}   # materialise: d['depth'][j] on a lazy npz re-reads the whole array (OOM on Kaggle)
     Hd, Wd = d['depth'].shape[1:]; pos = {int(g): j for j, g in enumerate(d['idx'])}
     rows = []
     for n, K, w2c, (w, h), obs in zip(s['names'], s['K'], s['w2c'], s['wh'], s['obs']):

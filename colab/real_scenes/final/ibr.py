@@ -2,12 +2,18 @@
 This is the Matterport / "8K re-projection" principle: real pixels wherever a real frame saw the surface, nothing invented.
 Test: for held-out frames (ids 3, 11, 19, ...) synthesise the frame from its nearest source frames (never itself) and compare
 with the real photo (PSNR / SSIM / coverage). Also synthesise views shifted 30 cm sideways (no ground truth: coverage only).
-CPU only (numpy). Usage: python ibr.py <cache_dir> <out_dir> [--n 12] [--k 4]"""
+CPU only (numpy). Usage: python ibr.py <cache_dir> <out_dir> [--n 12] [--k 4] [--keep good_frames.json]"""
 import argparse, glob, json, os, time, numpy as np
 from PIL import Image
 
-def load(cache, scale=2):
-    z = np.load(f'{cache}/da3_sfm.npz'); d = {k: z[k] for k in z.files}; files = sorted(glob.glob(f'{cache}/frames/*.jpg'))   # in memory: safe to share with worker processes
+def keep_filter(d, keep):
+    """Drop frames whose camera failed the real-pixel check (keep = path to good_frames.json, or None for all frames)."""
+    if not keep: return d
+    ok = np.isin(d['idx'], json.load(open(keep))['keep']); print(f'keep list {keep}: {ok.sum()}/{len(ok)} frames', flush=True)
+    return {k: (v[ok] if len(v) == len(ok) else v) for k, v in d.items()}
+
+def load(cache, scale=2, keep=None):
+    z = np.load(f'{cache}/da3_sfm.npz'); d = keep_filter({k: z[k] for k in z.files}, keep); files = sorted(glob.glob(f'{cache}/frames/*.jpg'))   # in memory: safe to share with worker processes
     Hd, Wd = d['depth'].shape[1:]; H, W = Hd * scale, Wd * scale
     K = d['K'].copy(); K[:, :2] *= scale
     has = d['depth'].reshape(len(d['idx']), -1).max(1) > 0                      # frames with dense depth (sources)
@@ -67,8 +73,8 @@ def ssim(a, b):
 
 if __name__ == '__main__':
     ap = argparse.ArgumentParser(); ap.add_argument('cache'); ap.add_argument('out'); ap.add_argument('--n', type=int, default=12)
-    ap.add_argument('--k', type=int, default=4); a = ap.parse_args(); os.makedirs(a.out, exist_ok=True); t0 = time.time()
-    d, files, K, has, H, W = load(a.cache); fid = d['idx']
+    ap.add_argument('--k', type=int, default=4); ap.add_argument('--keep'); a = ap.parse_args(); os.makedirs(a.out, exist_ok=True); t0 = time.time()
+    d, files, K, has, H, W = load(a.cache, keep=a.keep); fid = d['idx']
     tests = [i for i in range(len(fid)) if fid[i] % 8 == 3][:: max(1, len([1 for x in fid if x % 8 == 3]) // a.n)][:a.n]
     rows, res = [], []
     for i in tests:
