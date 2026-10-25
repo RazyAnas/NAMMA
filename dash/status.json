@@ -1,7 +1,7 @@
 {
- "updated": "2026-10-25 18:30 IST",
+ "updated": "2026-10-25 18:50 IST",
  "goal": "Phone video -> photoreal, walkable 3D of the REAL room. Real pixels first, 3D model for in-between views, generation only for holes (flagged). Free GPUs.",
- "now": "In parallel: (1) pass alignment run 5 (namma-ibr, CPU); (2) PROOF 4 hole filling with Wan 2.1 VACE (namma-fill, GPU ~25 min).",
+ "now": "Pass alignment run 6 (scale fix + group merge, namma-ibr CPU) | P4 hole filling (namma-fill GPU) running.",
  "phases": [
   {
    "name": "A. Capture & cameras",
@@ -47,8 +47,12 @@
      "Pass grouping: 10 passes -> 5 groups that agree (biggest: 4 passes, 198 frames); nothing moved"
     ],
     [
+     "done",
+     "Bridges + whole-group check: cross-pass median 15.7 -> 28.2 dB; 2 groups (162 + 94 frames)"
+    ],
+    [
      "running",
-     "Follow the video across gaps (5/9 bridges work; one pass fixed: 9 -> 36.8 dB) + whole-group check"
+     "Scale fix (ICP with scale) + merge the two groups"
     ]
    ]
   },

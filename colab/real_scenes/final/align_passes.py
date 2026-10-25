@@ -97,6 +97,33 @@ def judge(args):
         if m.mean() > 0.3: out.append(ibr.psnr_gain(img, ibr.image(G['files'], int(d2['idx'][q]), G['W'], G['H']), m))
     return a, b, (float(np.median(out)) if out else 0.0), len(out)
 
+def cloud(passes, step=8, cap=80000, seed=0):
+    """World points of the given passes {pass: pose}: every frame's aligned depth, every `step` px, carried by the pass pose."""
+    d, blk = G['d'], G['blk']; P = []
+    for b, (s, R, t) in passes.items():
+        for j in np.where(blk == b)[0]:
+            if not G['has'][j]: continue
+            z = d['depth'][j][::step, ::step]; v, u = np.mgrid[0:z.shape[0], 0:z.shape[1]] * step; K = d['K'][j]; ok = z > 0
+            X = np.stack([(u - K[0, 2]) / K[0, 0] * z, (v - K[1, 2]) / K[1, 1] * z, z], -1)[ok]
+            X = X @ d['c2w'][j][:3, :3].T + d['c2w'][j][:3, 3]; P.append(s * X @ R.T + t)
+    P = np.concatenate(P) if P else np.zeros((0, 3)); r = np.random.default_rng(seed)
+    return P[r.choice(len(P), cap, replace=False)] if len(P) > cap else P
+
+def icp(X, tree, Y, T, iters=30, radius=0.3, keep=0.6):
+    """Trimmed similarity ICP: X (pass points in its own world) -> Y (group points), start T. Returns refined T and the overlap
+    fraction (points with a group point within radius). Fixes the scale/offset a rigid bridge cannot."""
+    from scipy.spatial import cKDTree
+    s, R, t = T; frac = 0.0
+    for _ in range(iters):
+        Pq = s * X @ R.T + t; dist, idx = tree.query(Pq, distance_upper_bound=radius); ok = np.isfinite(dist); frac = ok.mean()
+        if ok.sum() < 500: return T, frac
+        thr = np.quantile(dist[ok], keep); m = ok & (dist <= thr)
+        s2, R2, t2 = umeyama(X[m], Y[idx[m]])
+        if not 0.8 < s2 < 1.25: return T, frac
+        done = np.linalg.norm(t2 - t) < 1e-3 and abs(s2 - s) < 1e-4; s, R, t = s2, R2, t2
+        if done: break
+    return (s, R, t), frac
+
 def judge_group(members, X, TX, n_test=8):
     """Pass X placed by TX, rebuilt only from ALL passes already in the group (each at its pose): a placement must agree with
     the whole group, not just with the one pass it was matched to (a look-alike agrees with one pass and contradicts another)."""
@@ -203,7 +230,16 @@ def main():
                 key = (g, P, X, kind, len(mem))
                 if key in tried: continue
                 tried.add(key); vs, vn = judge_group(mem, X, TX)
-                ok = (vs is not None and vs >= VERIFY_DB) or (vs is None and kind == 'video bridge')
+                Y = cloud(mem); Xp = cloud({X: (1.0, np.eye(3), np.zeros(3))}, cap=30000)
+                if len(Y) > 1000 and len(Xp) > 1000:
+                    from scipy.spatial import cKDTree
+                    Ti, fr = icp(Xp, cKDTree(Y), Y, TX)
+                    if fr > 0.2 and Ti is not TX:
+                        vi, ni = judge_group(mem, X, Ti)
+                        print(f'   ICP refine {name(X)}: overlap {fr:.0%}, scale x{Ti[0]/TX[0]:.3f}, moved {np.linalg.norm(Ti[2]-TX[2]):.2f} m -> '
+                              f'{vi if vi is None else round(vi, 1)} dB (was {vs if vs is None else round(vs, 1)})', flush=True)
+                        if vi is not None and (vs is None or vi > vs + 0.5): TX, vs, vn, kind = Ti, vi, ni, kind + ' + ICP'
+                ok = (vs is not None and vs >= VERIFY_DB) or (vs is None and kind.startswith('video bridge'))
                 print(f'   try {name(X)} via {name(P)} ({kind}): whole-group check ' + (f'{vs:.1f} dB on {vn} frames' if vs is not None else 'no overlap') + (' -> join' if ok else ' -> reject'), flush=True)
                 if ok:
                     pose[X] = TX; group[X] = g; left.discard(X); joined = True
@@ -212,6 +248,34 @@ def main():
                     print('LINK', json.dumps(links[-1]), flush=True); break
             if not joined: break
         g += 1
+    try:                                                                             # untested on real data: never lose the groups above
+        from scipy.spatial import cKDTree
+        merged = True
+        while merged and len(set(group.values())) > 1:
+            merged = False; gs = sorted(set(group.values()), key=lambda k: -sum((blk == b).sum() for b in group if group[b] == k))
+            for g1 in gs:
+                for g2 in gs:
+                    if g1 == g2 or merged: continue
+                    m1 = {b: pose[b] for b in group if group[b] == g1}; m2 = {b: pose[b] for b in group if group[b] == g2}
+                    if sum((blk == b).sum() for b in m2) > sum((blk == b).sum() for b in m1): continue   # move the smaller group
+                    cands = [comp(m1[P], comp(v[1], inv(m2[X]))) for (P, X), v in best.items() if P in m1 and X in m2 and v[0] >= MIN_DB]
+                    cands += [comp(m1[P], comp(inv(v[1]), inv(m2[X]))) for (X, P), v in best.items() if P in m1 and X in m2 and v[0] >= MIN_DB]
+                    Y = cloud(m1); Xp = cloud(m2, cap=30000); tree = cKDTree(Y); bestm = (None, 0)
+                    for Tg in cands[:6]:
+                        Ti, fr = icp(Xp, tree, Y, Tg)
+                        for lab, Tc in (('as linked', Tg), ('ICP', Ti)):                  # keep whichever agrees better
+                            sc = [judge_group(m1, X, comp(Tc, m2[X]), n_test=4)[0] for X in m2]; sc = [x for x in sc if x is not None]
+                            v = float(np.median(sc)) if sc else 0.0
+                            print(f'   merge group {g2} into {g1} ({lab}, overlap {fr:.0%}): {v:.1f} dB', flush=True)
+                            if v > bestm[1]: bestm = (Tc, v)
+                    if bestm[0] is not None and bestm[1] >= VERIFY_DB:
+                        for X in m2: pose[X] = comp(bestm[0], m2[X]); group[X] = g1
+                        links.append(dict(group=g1, pass_=f'group {g2}: ' + ', '.join(name(X) for X in m2), joined_to=f'group {g1}', by='group merge + ICP',
+                                          group_check=round(bestm[1], 1))); print('LINK', json.dumps(links[-1]), flush=True); merged = True
+    except Exception as e:
+        import traceback; traceback.print_exc(); print('group merge skipped:', e, flush=True)
+    ren = {k: i for i, k in enumerate(sorted(set(group.values()), key=lambda k: -sum((blk == b).sum() for b in group if group[b] == k)))}
+    group = {b: ren[k] for b, k in group.items()}; g = len(ren)
     out = {k: v.copy() for k, v in d.items()}; out['group'] = np.array([group[b] for b in blk]); out['piece'] = blk
     for b, T in pose.items():
         s, R, t = T

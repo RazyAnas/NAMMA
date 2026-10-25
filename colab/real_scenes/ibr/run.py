@@ -7,6 +7,8 @@ subprocess.run(f'git clone -q --depth 1 -b claude/wonderful-cori-i3fn41 https://
 hits = glob.glob('/kaggle/input/**/cache/da3_sfm.npz', recursive=True); assert hits, 'no namma-prep cache attached'
 cache = os.path.dirname(hits[0]); print('cache', cache, flush=True)
 # Run 3 (camera-jump cut + iterative drop): 319/596 frames kept, all >= 20 dB, held-out 30.7 dB / SSIM 0.91 -> final/good_frames.json.
+# Run 5: median cross 15.7 -> 28.2 dB, 2 big groups (162 + 94 frames); remaining errors look like SCALE (same wall smaller).
+# Run 6: ICP with scale on every candidate (kept only if it scores better) + merge whole groups.
 # Run 4 (aspect fix): bridges worked on 5/9 gaps; 94-121 moved 1.0 m -> cross 9 -> 36.8 dB. But look-alike 'already placed'
 # links still joined passes that disagree with the rest (13-17 dB). Run 5: bridges first, every join checked against the WHOLE group.
 # Run 2: 5 groups, but every accepted link was the current placement (nothing moved). Run 3: also follow the video itself across

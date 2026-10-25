@@ -101,3 +101,8 @@ not match the video. Earlier notes calling its contents "real" were reported, ne
   passes that disagree with the rest of the group (125-216 vs 385-438 ~16 dB).
   Run 5: bridge sanity (step <= 0.6 m, total <= 5 m), bridges tried first, every join verified against all passes already in the
   group (>= 21 dB; a bridge may join with no overlap). Synthetic: a drifted bridge rejected (19.7), the right link taken.
+- align_passes run 5 (bridges first + whole-group check): cross-pass median 15.7 -> **28.2 dB**, frames < 18 dB 142 -> 27.
+  Groups: [52-59, 94-121, 125-216, 453-488] (162 frames; 94-121 at 38.4, 125-145 at 34-39) and [295-316, 333-353, 385-438]
+  (94 frames, joined by video bridges; 385-438 at 27.9); wrong joins rejected at 13-17 dB. Worst views: the same wall rebuilt
+  smaller/farther -> scale differs between passes (bridges are rigid). Run 6: trimmed similarity ICP on every candidate (kept only
+  if the whole-group check improves) and whole-group merging. Synthetic: ICP never replaces a better placement (24.3 vs 30.3 kept).
