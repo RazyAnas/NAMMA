@@ -20,20 +20,22 @@ function mesh(c){ // photo-textured depth mesh of one real frame; edges between 
   const s=C.stride,w=Math.ceil(C.Wd/s),h=Math.ceil(C.Hd/s);const [fx,,cx,,fy,cy]=c.K,m=c.c2w;
   return Promise.all([fetch('f/'+String(c.g).padStart(4,'0')+'.bin').then(r=>r.arrayBuffer()),
     new Promise(ok=>new THREE.TextureLoader().load('f/'+String(c.g).padStart(4,'0')+'.jpg',ok))]).then(([buf,tex])=>{
-    const z=new Uint16Array(buf),P=new Float32Array(w*h*3),U=new Float32Array(w*h*2),I=[];
+    const z=new Uint16Array(buf),P=new Float32Array(w*h*3),U=new Float32Array(w*h*2),I=[],J=[];
     for(let v=0;v<h;v++)for(let u=0;u<w;u++){const k=v*w+u,d=z[k]/1000,px=u*s,py=v*s,x=(px-cx)/fx*d,y=(py-cy)/fy*d;
       P[3*k]=m[0]*x+m[1]*y+m[2]*d+m[3];P[3*k+1]=m[4]*x+m[5]*y+m[6]*d+m[7];P[3*k+2]=m[8]*x+m[9]*y+m[10]*d+m[11];
       U[2*k]=(px+.5)/C.Wd;U[2*k+1]=1-(py+.5)/C.Hd}
     const good=(a,b,c2)=>{const A=z[a],B=z[b],D=z[c2];if(!A||!B||!D)return false;return Math.max(A,B,D)<1.08*Math.min(A,B,D)};
-    for(let v=0;v<h-1;v++)for(let u=0;u<w-1;u++){const a=v*w+u,b=a+1,c2=a+w,d=c2+1;if(good(a,c2,b))I.push(a,c2,b);if(good(b,c2,d))I.push(b,c2,d)}
+    for(let v=0;v<h-1;v++)for(let u=0;u<w-1;u++){const a=v*w+u,b=a+1,c2=a+w,d=c2+1;const all=(a,b,c2)=>z[a]&&z[b]&&z[c2];if(good(a,c2,b))I.push(a,c2,b);else if(all(a,c2,b))J.push(a,c2,b);if(good(b,c2,d))I.push(b,c2,d);else if(all(b,c2,d))J.push(b,c2,d)}
     const g=new THREE.BufferGeometry();g.setAttribute('position',new THREE.BufferAttribute(P,3));g.setAttribute('uv',new THREE.BufferAttribute(U,2));g.setIndex(I);
     tex.minFilter=THREE.LinearFilter;tex.generateMipmaps=false;
     const mat=new THREE.MeshBasicMaterial({map:tex,side:THREE.DoubleSide,stencilWrite:true,stencilRef:1,stencilZPass:THREE.ReplaceStencilOp});
-    const o=new THREE.Mesh(g,mat);o.visible=false;S.add(o);return o})}
+    const o=new THREE.Mesh(g,mat);o.visible=false;S.add(o);
+    const g2=new THREE.BufferGeometry();g2.setAttribute('position',g.getAttribute('position'));g2.setAttribute('uv',g.getAttribute('uv'));g2.setIndex(J);
+    const m2=mat.clone();m2.stencilFunc=THREE.NotEqualStencilFunc;const ed=new THREE.Mesh(g2,m2);ed.visible=false;S.add(ed);o.userData.edge=ed;return o})}
 function get(c){if(!cache.has(c.g)){const e={o:null,t:performance.now()};cache.set(c.g,e);mesh(c).then(o=>e.o=o)}const e=cache.get(c.g);e.t=performance.now();return e}
-function trim(){if(cache.size<=32)return;const old=[...cache.entries()].filter(x=>x[1].o&&!x[1].o.visible).sort((a,b)=>a[1].t-b[1].t);
-  for(const [g,e] of old.slice(0,cache.size-32)){S.remove(e.o);e.o.geometry.dispose();e.o.material.map.dispose();e.o.material.dispose();cache.delete(g)}}
-function ranked(){const f=fwd();return cams.map(c=>{const d=c.p.distanceTo(st.p),a=Math.acos(Math.max(-1,Math.min(1,c.f.dot(f))))*180/Math.PI;return [d+a/30,c,d]}).sort((a,b)=>a[0]-b[0])}
+function trim(){if(cache.size<=40)return;const old=[...cache.entries()].filter(x=>x[1].o&&!x[1].o.visible).sort((a,b)=>a[1].t-b[1].t);
+  for(const [g,e] of old.slice(0,cache.size-40)){S.remove(e.o);S.remove(e.o.userData.edge);e.o.userData.edge.geometry.dispose();e.o.userData.edge.material.dispose();e.o.geometry.dispose();e.o.material.map.dispose();e.o.material.dispose();cache.delete(g)}}
+function ranked(){const f=fwd();return cams.map(c=>{const d=c.p.distanceTo(st.p),a=Math.acos(Math.max(-1,Math.min(1,c.f.dot(f))))*180/Math.PI;return a>100?[1e9,c,d]:[d+Math.max(0,a-35)/60,c,d]}).sort((a,b)=>a[0]-b[0])}
 let last=performance.now();const keys={};
 function frame(t){const dt=Math.min(.05,(t-last)/1000);last=t;
   if(st.anim){const a=st.anim,k=Math.min(1,(t-a.t0)/600),e=k*k*(3-2*k);st.p.lerpVectors(a.p0,a.p1,e);
@@ -44,10 +46,11 @@ function frame(t){const dt=Math.min(.05,(t-last)/1000);last=t;
   if(keys.e)st.p.addScaledVector(up,sp);if(keys.q)st.p.addScaledVector(up,-sp);
   const r=rt.clone(),cu=r.clone().cross(f).normalize(),M=new THREE.Matrix4().makeBasis(r,cu,f.clone().negate()).setPosition(st.p);
   cam.matrix.copy(M);cam.matrixWorldNeedsUpdate=true;
-  const top=ranked().slice(0,8);for(const e of cache.values())if(e.o)e.o.visible=false;
+  const top=ranked().slice(0,12);for(const e of cache.values())if(e.o){e.o.visible=false;e.o.userData.edge.visible=false}
   top.forEach(([,c],i)=>{const e=get(c);if(e.o){e.o.visible=true;e.o.renderOrder=i;
-    e.o.material.stencilFunc=i?THREE.NotEqualStencilFunc:THREE.AlwaysStencilFunc}});   // nearest photo wins; others only fill its holes
-  for(const [,c] of ranked().slice(8,11))get(c);trim();
+    e.o.material.stencilFunc=i?THREE.NotEqualStencilFunc:THREE.AlwaysStencilFunc;
+    if(i<2){e.o.userData.edge.visible=true;e.o.userData.edge.renderOrder=100+i}}});   // last resort: the photo's own depth-edge strips (no magenta fringes at a photo)   // nearest photo wins; others only fill its holes
+  for(const [,c] of ranked().slice(12,15))get(c);trim();
   S.background.set(holes?0xff00ff:0x1b1d22);R.render(S,cam);
   hud.innerHTML='Real photos only. Nearest real frame: <b>'+top[0][1].g+'</b>, '+(top[0][2]*100).toFixed(0)+' cm away'+
     (top[0][2]<.03?' — <b>this is the photo</b>':'')+'<br>'+cams.length+' verified camera positions';
