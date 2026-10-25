@@ -8,6 +8,10 @@
    "steps": [
     [
      "todo",
+     "FIRST: run the pipeline on a public, well-captured real room (Mip-NeRF 360 \"room\", no signup) to prove the pipeline"
+    ],
+    [
+     "todo",
      "Owner: re-film the room per docs/CAPTURE_GUIDE.md (landscape, locked exposure, slow turns, one loop), upload to Kaggle"
     ],
     [
