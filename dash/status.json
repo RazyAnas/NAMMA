@@ -1,7 +1,7 @@
 {
- "updated": "2026-10-25 15:40 IST",
+ "updated": "2026-10-25 16:30 IST",
  "goal": "Phone video -> photoreal, walkable 3D of the REAL room. Real pixels first, 3D model for in-between views, generation only for holes (flagged). Free GPUs.",
- "now": "Stricter camera check (cut walk at camera jumps + iterative drop), Kaggle namma-ibr CPU ~15 min.",
+ "now": "Building the real-photo walkthrough viewer from the 319 verified cameras (Kaggle namma-ibr, CPU ~3 min).",
  "phases": [
   {
    "name": "A. Capture & cameras",
@@ -31,8 +31,12 @@
      "Re-check with 507 cameras: held-out 27.0 -> 30.4 dB, SSIM 0.90; but 28 more bad frames surfaced"
     ],
     [
-     "running",
-     "Stricter check: drop misplaced stretches whole, re-score until clean"
+     "done",
+     "Stricter check: 319/596 cameras kept, all >= 20 dB; held-out 30.7 dB / SSIM 0.91; off-path coverage 94%"
+    ],
+    [
+     "todo",
+     "Recover dropped frames (re-place them against the verified cameras) - 46% of frames dropped"
     ]
    ]
   },
@@ -69,8 +73,8 @@
      "Floor plan + walkable area from fixed geometry"
     ],
     [
-     "todo",
-     "Matterport-style viewer: real pixels on the path, 3D between, 'not filmed' toggle"
+     "running",
+     "Real-photo viewer (Matterport principle): nearest real photo first, others fill its holes, holes shown"
     ],
     [
      "todo",
@@ -104,6 +108,10 @@
   [
    "IBR held-out, 507 cameras",
    "30.4 dB / SSIM 0.90 / 98% coverage; off-path coverage 88%"
+  ],
+  [
+   "IBR held-out, 319 verified cameras",
+   "30.7 dB / SSIM 0.91 / 99% coverage; off-path coverage 94%"
   ],
   [
    "Off-path 30 cm coverage",

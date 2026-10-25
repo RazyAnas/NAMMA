@@ -59,3 +59,10 @@ not match the video. Earlier notes calling its contents "real" were reported, ne
   (synthetic test: coverage 0.30 -> 1.0). Real runs were less affected, but off-path renders had speckle from it.
 - New `ibr_check --prune`: cut the walk where the camera jumps (step > 6x median and > 10 cm), drop short pieces whole, then
   drop < 20 dB and re-score the frames that used them, until clean. Synthetic test with 8 planted misplaced frames: drops exactly those 8.
+- Run 3 (`--prune 6` from all 596): walk cut at 36 camera jumps; 319 frames kept, none below 20 dB, median 35.5 dB;
+  held-out **30.7 dB / SSIM 0.91**, off-path 30 cm coverage 94%. Held-out images now show the right door/window everywhere.
+  Cost: 46% of frames dropped (start 0-51, 60-93, 217-233, 268-294, 317-332, 354-384, 439-452, 489-502, 522-558, 570-599).
+  Next: re-place dropped frames against the verified cameras (hloc localisation) instead of losing them.
+- `photo_viewer.py` + `photo_viewer.html`: browser walkthrough from real photos (depth mesh per verified frame, nearest frame
+  drawn first, others fill only its holes via stencil, depth edges cut). Synthetic box room: at a filmed pose the view matches
+  the photo (26.5-26.9 dB on a hard 8-px random texture at 2x upscale); off-pose shows holes as holes.

@@ -1,0 +1,77 @@
+<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Room Walkthrough</title><style>
+:root{--bg:#1b1d22;--fg:#eee;--panel:rgba(0,0,0,.55)}body{margin:0;background:var(--bg);color:var(--fg);font:13px system-ui,sans-serif;overflow:hidden}
+#hud{position:fixed;left:10px;top:10px;background:var(--panel);padding:8px 10px;border-radius:8px;max-width:340px;line-height:1.5}
+#map{position:fixed;right:10px;top:10px;background:var(--panel);border-radius:8px;cursor:pointer}
+#help{position:fixed;left:10px;bottom:10px;background:var(--panel);padding:6px 10px;border-radius:8px;opacity:.85}
+b{color:#7fd1ff}</style></head><body>
+<div id="hud">loading…</div><canvas id="map" width="220" height="220"></canvas>
+<div id="help">drag: look · WASD / arrows: walk · Q/E: down/up · N/P: next/previous real photo · click map: go there · H: show never-filmed (magenta)</div>
+<script src="three.min.js"></script><script>
+'use strict';
+const V=THREE.Vector3;let C,up,e1,e2,cams=[];const cache=new Map();let holes=false;
+const R=new THREE.WebGLRenderer({antialias:true,stencil:true});R.setPixelRatio(Math.min(devicePixelRatio,2));document.body.appendChild(R.domElement);
+R.autoClearStencil=true;const S=new THREE.Scene();let cam;
+const st={p:new V(),yaw:0,pitch:0,anim:null};
+function fwd(){const h=e1.clone().multiplyScalar(Math.cos(st.yaw)).addScaledVector(e2,Math.sin(st.yaw));return h.multiplyScalar(Math.cos(st.pitch)).addScaledVector(up,Math.sin(st.pitch)).normalize()}
+function poseOf(c){const m=c.c2w,f=new V(m[2],m[6],m[10]),p=new V(m[3],m[7],m[11]);const fh=f.clone().addScaledVector(up,-f.dot(up));
+  return {p,yaw:Math.atan2(fh.dot(e2),fh.dot(e1)),pitch:Math.asin(Math.max(-1,Math.min(1,f.dot(up))))}}
+function mesh(c){ // photo-textured depth mesh of one real frame; edges between depth jumps are cut (no rubber sheets)
+  const s=C.stride,w=Math.ceil(C.Wd/s),h=Math.ceil(C.Hd/s);const [fx,,cx,,fy,cy]=c.K,m=c.c2w;
+  return Promise.all([fetch('f/'+String(c.g).padStart(4,'0')+'.bin').then(r=>r.arrayBuffer()),
+    new Promise(ok=>new THREE.TextureLoader().load('f/'+String(c.g).padStart(4,'0')+'.jpg',ok))]).then(([buf,tex])=>{
+    const z=new Uint16Array(buf),P=new Float32Array(w*h*3),U=new Float32Array(w*h*2),I=[];
+    for(let v=0;v<h;v++)for(let u=0;u<w;u++){const k=v*w+u,d=z[k]/1000,px=u*s,py=v*s,x=(px-cx)/fx*d,y=(py-cy)/fy*d;
+      P[3*k]=m[0]*x+m[1]*y+m[2]*d+m[3];P[3*k+1]=m[4]*x+m[5]*y+m[6]*d+m[7];P[3*k+2]=m[8]*x+m[9]*y+m[10]*d+m[11];
+      U[2*k]=(px+.5)/C.Wd;U[2*k+1]=1-(py+.5)/C.Hd}
+    const good=(a,b,c2)=>{const A=z[a],B=z[b],D=z[c2];if(!A||!B||!D)return false;return Math.max(A,B,D)<1.08*Math.min(A,B,D)};
+    for(let v=0;v<h-1;v++)for(let u=0;u<w-1;u++){const a=v*w+u,b=a+1,c2=a+w,d=c2+1;if(good(a,c2,b))I.push(a,c2,b);if(good(b,c2,d))I.push(b,c2,d)}
+    const g=new THREE.BufferGeometry();g.setAttribute('position',new THREE.BufferAttribute(P,3));g.setAttribute('uv',new THREE.BufferAttribute(U,2));g.setIndex(I);
+    tex.minFilter=THREE.LinearFilter;tex.generateMipmaps=false;
+    const mat=new THREE.MeshBasicMaterial({map:tex,side:THREE.DoubleSide,stencilWrite:true,stencilRef:1,stencilZPass:THREE.ReplaceStencilOp});
+    const o=new THREE.Mesh(g,mat);o.visible=false;S.add(o);return o})}
+function get(c){if(!cache.has(c.g)){const e={o:null,t:performance.now()};cache.set(c.g,e);mesh(c).then(o=>e.o=o)}const e=cache.get(c.g);e.t=performance.now();return e}
+function trim(){if(cache.size<=24)return;const old=[...cache.entries()].filter(x=>x[1].o&&!x[1].o.visible).sort((a,b)=>a[1].t-b[1].t);
+  for(const [g,e] of old.slice(0,cache.size-24)){S.remove(e.o);e.o.geometry.dispose();e.o.material.map.dispose();e.o.material.dispose();cache.delete(g)}}
+function ranked(){const f=fwd();return cams.map(c=>{const d=c.p.distanceTo(st.p),a=Math.acos(Math.max(-1,Math.min(1,c.f.dot(f))))*180/Math.PI;return [d+a/30,c,d]}).sort((a,b)=>a[0]-b[0])}
+let last=performance.now();const keys={};
+function frame(t){const dt=Math.min(.05,(t-last)/1000);last=t;
+  if(st.anim){const a=st.anim,k=Math.min(1,(t-a.t0)/600),e=k*k*(3-2*k);st.p.lerpVectors(a.p0,a.p1,e);
+    let dy=a.y1-a.y0;dy=Math.atan2(Math.sin(dy),Math.cos(dy));st.yaw=a.y0+dy*e;st.pitch=a.q0+(a.q1-a.q0)*e;if(k>=1)st.anim=null}
+  const f=fwd(),fh=e1.clone().multiplyScalar(Math.cos(st.yaw)).addScaledVector(e2,Math.sin(st.yaw)),rt=fh.clone().cross(up).normalize(),sp=1.2*dt;
+  if(keys.w||keys.arrowup)st.p.addScaledVector(fh,sp);if(keys.s||keys.arrowdown)st.p.addScaledVector(fh,-sp);
+  if(keys.d)st.p.addScaledVector(rt,sp);if(keys.a)st.p.addScaledVector(rt,-sp);if(keys.arrowleft)st.yaw+=dt*1.2;if(keys.arrowright)st.yaw-=dt*1.2;
+  if(keys.e)st.p.addScaledVector(up,sp);if(keys.q)st.p.addScaledVector(up,-sp);
+  const r=rt.clone(),cu=r.clone().cross(f).normalize(),M=new THREE.Matrix4().makeBasis(r,cu,f.clone().negate()).setPosition(st.p);
+  cam.matrix.copy(M);cam.matrixWorldNeedsUpdate=true;
+  const top=ranked().slice(0,4);for(const e of cache.values())if(e.o)e.o.visible=false;
+  top.forEach(([,c],i)=>{const e=get(c);if(e.o){e.o.visible=true;e.o.renderOrder=i;
+    e.o.material.stencilFunc=i?THREE.NotEqualStencilFunc:THREE.AlwaysStencilFunc}});   // nearest photo wins; others only fill its holes
+  for(const [,c] of ranked().slice(4,7))get(c);trim();
+  S.background.set(holes?0xff00ff:0x1b1d22);R.render(S,cam);
+  hud.innerHTML='Real photos only. Nearest real frame: <b>'+top[0][1].g+'</b>, '+(top[0][2]*100).toFixed(0)+' cm away'+
+    (top[0][2]<.03?' — <b>this is the photo</b>':'')+'<br>'+cams.length+' verified camera positions';
+  drawMap(top[0][1]);requestAnimationFrame(frame)}
+let mapT;function drawMap(near){const g=map.getContext('2d');g.clearRect(0,0,220,220);const T=mapT;
+  g.fillStyle='#8899aa';for(const c of cams){const [x,y]=T(c.p);g.fillRect(x-1,y-1,2,2)}
+  g.fillStyle='#7fd1ff';let [x,y]=T(near.p);g.fillRect(x-2,y-2,4,4);[x,y]=T(st.p);const f=fwd();
+  g.fillStyle='#ffcc33';g.beginPath();g.arc(x,y,4,0,7);g.fill();g.strokeStyle='#ffcc33';g.beginPath();g.moveTo(x,y);g.lineTo(x+14*f.dot(e1),y-14*f.dot(e2));g.stroke()}
+function goTo(c){const q=poseOf(c);st.anim={t0:performance.now(),p0:st.p.clone(),p1:q.p,y0:st.yaw,y1:q.yaw,q0:st.pitch,q1:q.pitch}}
+fetch('cams.json').then(r=>r.json()).then(j=>{C=j;up=new V(...j.up).normalize();
+  const m0=j.cams[0].c2w;let f0=new V(m0[2],m0[6],m0[10]);e1=f0.addScaledVector(up,-f0.dot(up)).normalize();e2=up.clone().cross(e1).normalize();
+  cams=j.cams.map(c=>({...c,p:new V(c.c2w[3],c.c2w[7],c.c2w[11]),f:new V(c.c2w[2],c.c2w[6],c.c2w[10])}));
+  const xs=cams.map(c=>c.p.dot(e1)),ys=cams.map(c=>c.p.dot(e2)),x0=Math.min(...xs),y0=Math.min(...ys),sc=200/Math.max(Math.max(...xs)-x0,Math.max(...ys)-y0,.1);
+  mapT=p=>[10+(p.dot(e1)-x0)*sc,210-(p.dot(e2)-y0)*sc];
+  cam=new THREE.PerspectiveCamera(2*Math.atan(j.Hd/2/j.cams[0].K[4])*180/Math.PI,innerWidth/innerHeight,.02,100);cam.matrixAutoUpdate=false;
+  S.background=new THREE.Color();Object.assign(st,poseOf(cams[0]));resize();requestAnimationFrame(frame)});
+window.viewer={st,poseOf,cams:()=>cams};   // for scripted checks
+function resize(){R.setSize(innerWidth,innerHeight);if(cam){cam.aspect=innerWidth/innerHeight;cam.updateProjectionMatrix()}}addEventListener('resize',resize);
+addEventListener('keydown',e=>{const k=e.key.toLowerCase();keys[k]=true;if(k==='h')holes=!holes;
+  if(k==='n'||k==='p'){const r=ranked(),cur=cams.indexOf(r[0][1]),n=cams[(cur+(k==='n'?3:-3)+cams.length)%cams.length];goTo(n)}});
+addEventListener('keyup',e=>keys[e.key.toLowerCase()]=false);
+let drag=null;R.domElement.addEventListener('pointerdown',e=>drag=[e.clientX,e.clientY]);addEventListener('pointerup',()=>drag=null);
+addEventListener('pointermove',e=>{if(!drag)return;st.yaw-=(e.clientX-drag[0])*.004;st.pitch=Math.max(-1.4,Math.min(1.4,st.pitch-(e.clientY-drag[1])*.004));drag=[e.clientX,e.clientY]});
+addEventListener('wheel',e=>st.p.addScaledVector(fwd(),-e.deltaY*.002));
+map.addEventListener('click',e=>{const b=map.getBoundingClientRect(),x=e.clientX-b.left,y=e.clientY-b.top;let best=null,bd=1e9;
+  for(const c of cams){const [cx,cy]=mapT(c.p),d=(cx-x)**2+(cy-y)**2;if(d<bd){bd=d;best=c}}if(best)goTo(best)});
+</script></body></html>
