@@ -153,9 +153,19 @@ The Claude cloud container **cannot reach kaggle.com** (proxy 403). GitHub's run
 - Status page: `dash/status.json` (+ `dash/index.html`, `dash/watch.sh`).
 
 ## 9. Work since 00:30 IST, 26 Oct (keep this section current)
-- **Run 3 started 00:16 IST** (GitHub Actions run `40222839346`, RUN.json `n: 4`): same hotel room, VARIANTS
-  `full` (1.5M splats) vs `big` (3M) on the two T4s, with the fixed QA (dollhouse views, true needle metric) and `sparse/` saved
-  to the output. Expected ~01:50 IST, results in `hf://datasets/anasrazy/namma-v3-out/<run>/`. Not yet judged.
+- **Run 3 (00:16-02:07 IST, results `hf://datasets/anasrazy/namma-v3-out/20261025-1846/`)**: same hotel room.
+  full 1.5M splats: **29.55 dB exposure-fair (25.70 raw), SSIM 0.946, LPIPS 0.13**, needle fraction (true metric) 15.8%, flat 50%;
+  big 3M splats: 29.39 dB, needles 17.8% -> more splats do not help, keep 1.5M. Fixed QA sheet: held-out and off-path views
+  photoreal; the dollhouse views (room crop) show the whole room recognisably but with spiky smears around the edges (the
+  needles). Fix in the tour: make_tour build drops splats with longest > 8x middle axis AND longest > 1 % of the room before
+  compressing. Next training run could raise MCMC `--scale-reg` (default 0.01) to stop them forming.
+- **Tour publishing**: collect runs (RUN.json `collect: true`, n bump) build the tour for the latest Kaggle output. Kaggle CLI
+  `datasets download` of our private dataset returned 404 on the runner, so for DL3DV sources gh_run fetches the frames straight
+  from HF (dl3dv.fetch). First real tour build: GitHub run `40232064223` (n 6) -> private Space `anasrazy/namma-tour`.
+  SOG compression of 1.5M splats on the runner's CPU is slow (tens of minutes).
+- **SplatTour viewer UI (screenshots in `site_look/20261025-1957/`)**: top toggle Panoramas | Splats | Staging, floor-plan
+  minimap bottom-left (top-down glowing point density), room-thumbnail strip, play/walk buttons. Their splats also smear when the
+  camera goes off the walk (close to a wall). Our tour now has the same minimap (live dot, clickable spots) + photo strip.
 - **run.py / gh_run.py**: `VARIANTS` env = JSON list `[name, steps, cap(, '2dgs')]`, first two run on the two GPUs, the rest
   queue; gh_run skips the DL3DV download when the Kaggle dataset already exists; HF upload skips `model.ply` except `full/`.
 - **Geometry ("mould") branch, built + CPU-tested, not yet run on a GPU**: `final/mesh_tsdf.py` renders median depth from a
