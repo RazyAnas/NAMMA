@@ -7,23 +7,50 @@ from multiprocessing import Pool
 from PIL import Image
 import ibr
 
-G = {}
+G = {'drop': set()}
 def score(i):
     d, files, K, has, H, W = G['data']
-    img, m, srcs, _ = ibr.synth(d, files, K, has, H, W, K[i], d['c2w'][i], exclude={i}, k=3)
+    img, m, srcs, _ = ibr.synth(d, files, K, has, H, W, K[i], d['c2w'][i], exclude={i} | G['drop'], k=3)
     gt = ibr.image(files, int(d['idx'][i]), W, H)
     return i, (ibr.psnr(img, gt, m) if m.mean() > 0.3 else 0.0), float(m.mean()), [int(s) for s in srcs]
 
 if __name__ == '__main__':
-    ap = argparse.ArgumentParser(); ap.add_argument('cache'); ap.add_argument('out'); ap.add_argument('--workers', type=int, default=4); ap.add_argument('--keep')
+    ap = argparse.ArgumentParser(); ap.add_argument('cache'); ap.add_argument('out'); ap.add_argument('--workers', type=int, default=4); ap.add_argument('--keep'); ap.add_argument('--prune', type=int, default=0)
     a = ap.parse_args(); os.makedirs(a.out, exist_ok=True); t0 = time.time()
     G['data'] = ibr.load(a.cache, scale=1, keep=a.keep)                                          # 280 x 504: fast, enough to see a wrong camera
     d = G['data'][0]; n = len(d['idx'])
     with Pool(a.workers) as p: res = sorted(p.map(score, range(n), chunksize=8))
     ps = np.array([r[1] for r in res]); fid = d['idx']
-    loc = np.array([np.median(ps[max(0, i - 6):i + 7]) for i in range(n)])            # local median along the walk
+    # --prune R: a misplaced STRETCH of frames vouches for itself (its frames rebuild each other fine) and pollutes the correct
+    # frames it lands next to. 1) Cut the walk where the camera jumps (step per frame id > 6x the median and > 10 cm): a short
+    # piece between two jumps was placed somewhere else -> drop it whole. 2) Repeat: drop frames < 20 dB, re-score only frames
+    # that used a dropped frame as a source; stop when nothing new is dropped.
+    srcs = {r[0]: r[3] for r in res}; new = set()
+    if a.prune:
+        c = d['c2w'][:, :3, 3]; step = np.linalg.norm(np.diff(c, axis=0), axis=1) / np.maximum(np.diff(fid), 1)
+        cut = [0] + [i + 1 for i in np.where((step > 6 * np.median(step)) & (step > 0.10))[0]] + [n]
+        segs = [(x, y) for x, y in zip(cut, cut[1:]) if y > x]; minseg = max(10, n // 25)
+        for x, y in segs:
+            if y - x < minseg: new |= set(range(x, y))
+        print(f'walk cut at {len(cut)-2} camera jumps into {len(segs)} pieces; short pieces dropped (frame ids): '
+              f'{[(int(fid[x]), int(fid[y-1])) for x, y in segs if y - x < minseg]}', flush=True)
+    for rnd in range(a.prune):
+        if not (rnd == 0 and new): new |= {i for i in range(n) if i not in G['drop'] and ps[i] < 20}   # round 1: jumps only, then re-score
+        if not new: break
+        G['drop'] |= new; new = set(); todo = [i for i in range(n) if i not in G['drop'] and set(srcs[i]) & G['drop']]
+        with Pool(a.workers) as p:
+            for i, v, _, sr in p.map(score, todo, chunksize=4): ps[i] = v; srcs[i] = sr
+        live = [i for i in range(n) if i not in G['drop']]
+        print(f'prune round {rnd+1}: dropped total {len(G["drop"])}, re-scored {len(todo)} | kept {len(live)} | '
+              f'median {np.median(ps[live]):.1f} dB | kept below 20 dB: {int((ps[live] < 20).sum())}', flush=True)
+    if a.prune:
+        keep = [int(fid[i]) for i in range(n) if i not in G['drop']]
+        json.dump(dict(rule=f'short pieces between camera jumps dropped, then real-pixel rebuild >= 20 dB, iterative ({a.prune} rounds max)', keep=keep),
+                  open(f'{a.out}/good_frames.json', 'w'))
+        ps = np.where(np.isin(np.arange(n), sorted(G['drop'])), np.nan, ps)          # plots/stats below: kept frames only
+    loc = np.array([np.nanmedian(ps[max(0, i - 6):i + 7]) for i in range(n)])            # local median along the walk
     bad = [i for i in range(n) if ps[i] < 18 and ps[i] < loc[i] - 5]
-    print(f'{n} frames in {time.time()-t0:.0f}s | median {np.median(ps):.1f} dB | below 18 dB: {(ps < 18).sum()} | flagged (also 5 dB under '
+    print(f'{n} frames in {time.time()-t0:.0f}s | median {np.nanmedian(ps):.1f} dB | below 18 dB: {(ps < 18).sum()} | flagged (also 5 dB under '
           f'their neighbours): {len(bad)} -> frames {[int(fid[i]) for i in bad][:80]}', flush=True)
     runs, cur = [], []                                                                # consecutive flagged frames = a misplaced stretch
     for i in bad:

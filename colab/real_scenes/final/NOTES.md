@@ -52,3 +52,10 @@ not match the video. Earlier notes calling its contents "real" were reported, ne
 - Walk-order-only SfM (`namma-resfm`) was worse: 372/600 registered in 5 models, then OOM in sfm_align (lazy npz reads, fixed).
   So: keep the original SfM, drop the bad cameras. `ibr.py/ibr_check.py --keep`, training via env `KEEP_FRAMES`.
 - The list is only valid for the current namma-prep cameras; re-run ibr_check if prep is re-run.
+- Run 2 (507 kept): held-out real-pixel rebuild 27.0 -> **30.4 dB, SSIM 0.90**; camera-check median 34.9 dB. But 28 kept frames
+  now fail (64-100, 274-294, 318-332, 439-443, 525-552): a misplaced stretch rebuilds itself fine and hides until its worst
+  frames go. Frame 75 still shows a door where the photo has the window.
+- Bug fixed in ibr.warp: np.round (half-to-even) left every other pixel empty when warped positions were near integers
+  (synthetic test: coverage 0.30 -> 1.0). Real runs were less affected, but off-path renders had speckle from it.
+- New `ibr_check --prune`: cut the walk where the camera jumps (step > 6x median and > 10 cm), drop short pieces whole, then
+  drop < 20 dB and re-score the frames that used them, until clean. Synthetic test with 8 planted misplaced frames: drops exactly those 8.

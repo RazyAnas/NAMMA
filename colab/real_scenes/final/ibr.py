@@ -37,7 +37,7 @@ def warp(src_img, src_depth, Ks, c2w_s, Kt, w2c_t, H, W, zbuf, out, wsum, srcw):
     n = int(np.ceil(s)) + 1                                                      # each sample covers ~s x s target pixels
     for dy in range(n):
         for dx in range(n):
-            pu = np.round(ut - s / 2 + dx).astype(int); pv = np.round(vt - s / 2 + dy).astype(int)
+            pu = np.floor(ut - s / 2 + .5).astype(int) + dx; pv = np.floor(vt - s / 2 + .5).astype(int) + dy   # floor, not np.round: round-half-to-even left every other pixel empty at integer positions
             m = (pu >= 0) & (pu < W) & (pv >= 0) & (pv < H)
             idx = pv[m] * W + pu[m]; zz = zt[m]; cc = col[m]
             o = np.argsort(-zz); idx, zz, cc = idx[o], zz[o], cc[o]              # far first: for repeated pixels the nearest is written last
