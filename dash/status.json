@@ -1,8 +1,33 @@
 {
- "updated": "2026-10-25 20:15 IST",
+ "updated": "2026-10-25 21:00 IST",
  "goal": "Phone video -> photoreal, walkable 3D of the REAL room. Real pixels first, 3D model for in-between views, generation only for holes (flagged). Free GPUs.",
- "now": "First trained 3D model of the room: held-out 38.1 dB / SSIM 0.957 (was 18.8 dB). Next: level it, fix needles, drone views.",
+ "now": "Tomorrow (docs/TODO_2026-10-26.md): re-film the room with the capture guide, then ONE job runs the whole pipeline -> model v2 of the full room.",
  "phases": [
+  {
+   "name": "TOMORROW 26 Oct",
+   "steps": [
+    [
+     "todo",
+     "Owner: re-film the room per docs/CAPTURE_GUIDE.md (landscape, locked exposure, slow turns, one loop), upload to Kaggle"
+    ],
+    [
+     "todo",
+     "Claude: one-command job for the whole pipeline (frames -> cameras -> check -> align -> depth -> model -> level -> viewer)"
+    ],
+    [
+     "todo",
+     "Model v2: no needles (anisotropy cap), 30 min, higher resolution, drone views from real pixels, unfilmed pixels masked"
+    ],
+    [
+     "todo",
+     "Claude checks renders (inside, off-path, outside, held-out) before the owner opens anything"
+    ],
+    [
+     "todo",
+     "Viewer: trained model between photo spots; Techfest R1 materials"
+    ]
+   ]
+  },
   {
    "name": "A. Capture & cameras",
    "steps": [
