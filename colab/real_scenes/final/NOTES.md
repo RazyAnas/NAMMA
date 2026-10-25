@@ -77,3 +77,8 @@ not match the video. Earlier notes calling its contents "real" were reported, ne
 - `align_passes.py`: keep each pass rigid, hypotheses from SIFT + aligned depth (RANSAC similarity) plus the current placement,
   judge each by rebuilding pass A only from pass B's photos, join along best links >= 20 dB. Synthetic: one pass off by 25 deg /
   60 cm -> back within 0.4 cm, cross-pass 13.2 -> 28.5 dB.
+- namma-dense: DA3 on the 216 verified frames without depth, 215 scaled from neighbours (1 skipped), viewer 318 photos, 8 min T4.
+- align_passes run 1 (103 depth frames): only 333-353 joined 125-216 (20.7 dB, identity) and its cross rebuild still looks wrong
+  (bin/pillar misplaced) -> 20 dB too permissive. Bugs: links used one direction only (385-438 <- 333-353 at 27.9 dB was ignored).
+  Strong pairs seen: 94-121<-52-59 29.2, 385-438<-333-353 27.9, 52-59<-234-267 27.6, 453-488<-385-438 27.5, 453-488<-125-216 25.7.
+  Fixed: both directions, MIN_DB 23, spanning forest = groups (nothing dropped), viewer mixes only within a group.

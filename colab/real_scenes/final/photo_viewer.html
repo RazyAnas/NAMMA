@@ -35,7 +35,7 @@ function mesh(c){ // photo-textured depth mesh of one real frame; edges between 
 function get(c){if(!cache.has(c.g)){const e={o:null,t:performance.now()};cache.set(c.g,e);mesh(c).then(o=>e.o=o)}const e=cache.get(c.g);e.t=performance.now();return e}
 function trim(){if(cache.size<=40)return;const old=[...cache.entries()].filter(x=>x[1].o&&!x[1].o.visible).sort((a,b)=>a[1].t-b[1].t);
   for(const [g,e] of old.slice(0,cache.size-40)){S.remove(e.o);S.remove(e.o.userData.edge);e.o.userData.edge.geometry.dispose();e.o.userData.edge.material.dispose();e.o.geometry.dispose();e.o.material.map.dispose();e.o.material.dispose();cache.delete(g)}}
-function ranked(){const f=fwd(),all=rankAll(f);if(mix)return all;const b=all[0][1].blk;return all.filter(x=>x[1].blk===b)}  // one pass of the walk only (M: mix passes)
+function ranked(){const f=fwd(),all=rankAll(f);const n=all[0][1];return all.filter(x=>mix?x[1].grp===n.grp:x[1].blk===n.blk)}  // one walk pass (M: all passes that agree with it)
 function rankAll(f){return cams.map(c=>{const d=c.p.distanceTo(st.p),a=Math.acos(Math.max(-1,Math.min(1,c.f.dot(f))))*180/Math.PI;return a>100?[1e9,c,d]:[d+Math.max(0,a-35)/60,c,d]}).sort((a,b)=>a[0]-b[0])}
 let last=performance.now();const keys={};
 function frame(t){const dt=Math.min(.05,(t-last)/1000);last=t;
@@ -54,7 +54,7 @@ function frame(t){const dt=Math.min(.05,(t-last)/1000);last=t;
   for(const [,c] of ranked().slice(12,15))get(c);trim();
   S.background.set(holes?0xff00ff:0x1b1d22);R.render(S,cam);
   hud.innerHTML='Real photos only. Nearest real frame: <b>'+top[0][1].g+'</b>, '+(top[0][2]*100).toFixed(0)+' cm away'+
-    (top[0][2]<.03?' — <b>this is the photo</b>':'')+'<br>'+cams.length+' verified camera positions · '+(mix?'<b>mixing walk passes (M)</b>':'one walk pass only (M to mix)');
+    (top[0][2]<.03?' — <b>this is the photo</b>':'')+'<br>'+cams.length+' verified camera positions · '+(mix?'<b>mixing passes that agree (M)</b>':'one walk pass only (M to mix)');
   drawMap(top[0][1]);requestAnimationFrame(frame)}
 let mapT;function drawMap(near){const g=map.getContext('2d');g.clearRect(0,0,220,220);const T=mapT;
   g.fillStyle='#8899aa';for(const c of cams){const [x,y]=T(c.p);g.fillRect(x-1,y-1,2,2)}

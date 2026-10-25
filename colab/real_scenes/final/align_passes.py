@@ -6,13 +6,13 @@ search a similarity transform per pass:
      current SfM placement (identity);
   2. judge: rebuild frames of pass A ONLY from pass B's photos under each hypothesis (ibr.synth) and keep the best;
      a look-alike match explains the look-alike object but not the rest of the view, so it scores low;
-  3. join passes along the best-scoring links (maximum spanning tree from the largest pass), accept links >= MIN_DB.
-Usage: python align_passes.py <cache> <keep.json> <out_dir> [--workers 4]. CPU only. Writes <out>/da3_sfm.npz + align_report.json."""
+  3. group passes along the best-scoring links (maximum spanning forest, links >= MIN_DB); each group shares one frame.
+Usage: python align_passes.py <cache> <keep.json or -> <out_dir> [--workers 4]. CPU only. Writes <out>/da3_sfm.npz + align_report.json."""
 import argparse, json, os, time, numpy as np, cv2
 from multiprocessing import Pool
 import ibr
 
-MIN_DB = 20.0
+MIN_DB = 23.0   # 20 dB let a wrong placement through (white walls and floor score ~20 when misplaced)
 G = {}
 
 def pieces(fid): return np.cumsum(np.r_[0, np.diff(fid) > 3])
@@ -55,12 +55,12 @@ def judge(args):
 def main():
     ap = argparse.ArgumentParser(); ap.add_argument('cache'); ap.add_argument('keep'); ap.add_argument('out'); ap.add_argument('--workers', type=int, default=4)
     a = ap.parse_args(); os.makedirs(a.out, exist_ok=True); t0 = time.time()
-    d, files, K, has, H, W = ibr.load(a.cache, scale=1, keep=a.keep); G.update(d=d, files=files, K=K, has=has, H=H, W=W)
+    d, files, K, has, H, W = ibr.load(a.cache, scale=1, keep=None if a.keep == '-' else a.keep); G.update(d=d, files=files, K=K, has=has, H=H, W=W)
     fid = d['idx']; blk = pieces(fid); G['blk'] = blk; nb = blk.max() + 1
     # SIFT on up to 10 depth frames per pass (full-resolution photos)
     sift = cv2.SIFT_create(2000); feats = {}; sample = {}
     for b in range(nb):
-        js = [j for j in np.where(blk == b)[0] if has[j]]; sample[b] = [js[i] for i in np.linspace(0, len(js) - 1, min(8, len(js))).astype(int)] if js else []
+        js = [j for j in np.where(blk == b)[0] if has[j]]; sample[b] = [js[i] for i in np.linspace(0, len(js) - 1, min(12, len(js))).astype(int)] if js else []
         for j in sample[b]:
             im = cv2.imread(files[int(fid[j])], cv2.IMREAD_GRAYSCALE); kp, de = sift.detectAndCompute(im, None)
             feats[j] = (np.array([k.pt for k in kp], np.float32), de, im.shape[1] / d['depth'].shape[2])
@@ -100,25 +100,33 @@ def main():
     best = {}
     for (A, B, T, _, n), (_, _, s, cnt) in zip(jobs, scores):
         if cnt and ((A, B) not in best or s > best[(A, B)][0]): best[(A, B)] = (s, T, n, cnt)
-    # maximum spanning tree from the largest pass, links >= MIN_DB; pose of B in the anchor frame = pose_A o T(B->A)
-    anchor = int(np.bincount(blk).argmax()); pose = {anchor: (1.0, np.eye(3), np.zeros(3))}; links = []
-    while True:
-        cand = [(v[0], A, B, v[1]) for (A, B), v in best.items() if A in pose and B not in pose and v[0] >= MIN_DB]
-        if not cand: break
-        s, A, B, T = max(cand, key=lambda c: c[0]); sa, Ra, ta = pose[A]; sb, Rb, tb = T
-        pose[B] = (sa * sb, Ra @ Rb, sa * Ra @ tb + ta); links.append(dict(pass_=f'{int(fid[blk==B][0])}-{int(fid[blk==B][-1])}',
-            joined_to=f'{int(fid[blk==A][0])}-{int(fid[blk==A][-1])}', psnr=round(s, 1), moved_m=round(float(np.linalg.norm(T[2])), 2)))
-        print('LINK', json.dumps(links[-1]), flush=True)
-    keep = np.isin(blk, list(pose)); out = {k: v.copy() for k, v in d.items()}
+    # Group passes along the best links (maximum spanning forest), either direction: (P, X) carries X into P's frame,
+    # (X, P) carries P into X's, so its inverse carries X into P's. Each group gets its own frame (largest pass = anchor);
+    # passes that link to nothing stay alone. Nothing is dropped; the viewer only mixes photos within one group.
+    inv = lambda T: (1 / T[0], T[1].T, -T[1].T @ T[2] / T[0])
+    comp = lambda P, Q: (P[0] * Q[0], P[1] @ Q[1], P[0] * P[1] @ Q[2] + P[2])         # P o Q
+    name = lambda b: f'{int(fid[blk==b][0])}-{int(fid[blk==b][-1])}'
+    pose, group, links, left = {}, {}, [], set(range(nb)); g = 0
+    while left:
+        anchor = max(left, key=lambda b: (blk == b).sum()); pose[anchor] = (1.0, np.eye(3), np.zeros(3)); group[anchor] = g; left.discard(anchor)
+        while True:
+            cand = [(v[0], P, X, v[1]) for (P, X), v in best.items() if P in group and group[P] == g and X in left and v[0] >= MIN_DB]
+            cand += [(v[0], P, X, inv(v[1])) for (X, P), v in best.items() if P in group and group[P] == g and X in left and v[0] >= MIN_DB]
+            if not cand: break
+            s, P, X, T = max(cand, key=lambda c: c[0]); pose[X] = comp(pose[P], T); group[X] = g; left.discard(X)
+            links.append(dict(group=g, pass_=name(X), joined_to=name(P), psnr=round(s, 1), moved_m=round(float(np.linalg.norm(T[2])), 2)))
+            print('LINK', json.dumps(links[-1]), flush=True)
+        g += 1
+    out = {k: v.copy() for k, v in d.items()}; out['group'] = np.array([group[b] for b in blk]); out['piece'] = blk
     for b, T in pose.items():
         s, R, t = T
         for j in np.where(blk == b)[0]:
             c = d['c2w'][j]; out['c2w'][j][:3, :3] = R @ c[:3, :3]; out['c2w'][j][:3, 3] = s * R @ c[:3, 3] + t; out['depth'][j] = d['depth'][j] * s
-    np.savez(f'{a.out}/da3_sfm.npz', **{k: v[keep] for k, v in out.items()})
-    left = [f'{int(fid[blk==b][0])}-{int(fid[blk==b][-1])}' for b in range(nb) if b not in pose]
-    table = {f'{int(fid[blk==A][0])}-{int(fid[blk==A][-1])} <- {int(fid[blk==B][0])}-{int(fid[blk==B][-1])}': round(v[0], 1) for (A, B), v in sorted(best.items())}
-    json.dump(dict(links=links, not_joined=left, best_pair_psnr=table, frames=int(keep.sum())), open(f'{a.out}/align_report.json', 'w'), indent=1)
-    print(f'joined {len(pose)}/{nb} passes ({keep.sum()} frames), not joined: {left} [{time.time()-t0:.0f}s]', flush=True)
+    np.savez(f'{a.out}/da3_sfm.npz', **out)
+    groups = [[name(b) for b in range(nb) if group[b] == k] for k in range(g)]
+    table = {f'{name(A)} <- {name(B)}': round(v[0], 1) for (A, B), v in sorted(best.items())}
+    json.dump(dict(links=links, groups=groups, best_pair_psnr=table), open(f'{a.out}/align_report.json', 'w'), indent=1)
+    print(f'{nb} passes -> {g} groups that agree: {groups} [{time.time()-t0:.0f}s]', flush=True)
     if not os.path.exists(f'{a.out}/frames'): os.symlink(os.path.abspath(f'{a.cache}/frames'), f'{a.out}/frames')
 
 if __name__ == '__main__':

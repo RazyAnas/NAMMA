@@ -1,7 +1,7 @@
 {
- "updated": "2026-10-25 16:30 IST",
+ "updated": "2026-10-25 17:05 IST",
  "goal": "Phone video -> photoreal, walkable 3D of the REAL room. Real pixels first, 3D model for in-between views, generation only for holes (flagged). Free GPUs.",
- "now": "Re-placing whole walk passes judged by real pixels (namma-ibr CPU ~15 min). namma-dense still running.",
+ "now": "Re-placing walk passes (fixed: both link directions, stricter 23 dB, grouped not dropped) on 318 depth frames (namma-ibr CPU ~20 min).",
  "phases": [
   {
    "name": "A. Capture & cameras",
@@ -85,8 +85,8 @@
      "Real-photo viewer: 103 real photos, click-to-walk lands on photos, holes visible"
     ],
     [
-     "running",
-     "Depth for all 319 verified frames (DA3 ran on every 3rd only) -> 3x denser viewer"
+     "done",
+     "Depth for 318/319 verified frames (namma-dense, 8 min)"
     ],
     [
      "todo",

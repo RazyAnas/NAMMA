@@ -7,10 +7,12 @@ subprocess.run(f'git clone -q --depth 1 -b claude/wonderful-cori-i3fn41 https://
 hits = glob.glob('/kaggle/input/**/cache/da3_sfm.npz', recursive=True); assert hits, 'no namma-prep cache attached'
 cache = os.path.dirname(hits[0]); print('cache', cache, flush=True)
 # Run 3 (camera-jump cut + iterative drop): 319/596 frames kept, all >= 20 dB, held-out 30.7 dB / SSIM 0.91 -> final/good_frames.json.
-# Cross-pass check: passes disagree (11-17 dB rebuilt from other passes; door rebuilt as window). Now: re-place each pass as a
-# whole, judged by real pixels (align_passes.py), re-run the cross check on the result, and build the viewer from it (CPU ~15 min).
-F = f'{W}/repo/colab/real_scenes/final'; A = '/kaggle/temp/aligned'; O = '/kaggle/working'
-r = subprocess.call([sys.executable, 'align_passes.py', cache, 'good_frames.json', A, '--workers', '4'], cwd=F)
+# Run 1 of align_passes (103 depth frames): only 2 of 10 passes joined; links were one-directional and 20 dB let a wrong
+# placement through. Now (fixed): both link directions, 23 dB, passes grouped instead of dropped, on namma-dense's 318 depth frames.
+F = f'{W}/repo/colab/real_scenes/final'; A = '/kaggle/temp/aligned'; O = '/kaggle/working'; S = '/kaggle/temp/dsrc'
+dn = glob.glob('/kaggle/input/**/dense/da3_sfm.npz', recursive=True); assert dn, 'no namma-dense output attached'
+os.makedirs(S, exist_ok=True); os.symlink(dn[0], f'{S}/da3_sfm.npz'); os.symlink(f'{cache}/frames', f'{S}/frames')
+r = subprocess.call([sys.executable, 'align_passes.py', S, '-', A, '--workers', '4'], cwd=F)
 if not r:
     subprocess.call(f'cp {A}/align_report.json {O}/', shell=True)
     subprocess.call([sys.executable, 'ibr_check.py', A, f'{O}/ibr', '--workers', '4', '--cross'], cwd=F)

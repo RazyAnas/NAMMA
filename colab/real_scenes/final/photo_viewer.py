@@ -13,7 +13,7 @@ def build(cache, keep, out, stride=2):
     for j in sel:
         g = int(d['idx'][j]); shutil.copy(f'{cache}/frames/{files[g]}', f'{out}/f/{g:04d}.jpg')
         (np.clip(d['depth'][j][::stride, ::stride] * 1000, 0, 65535).astype('<u2')).tofile(f'{out}/f/{g:04d}.bin')   # millimetres
-        cams.append(dict(g=g, K=d['K'][j][:2].ravel().round(3).tolist(), c2w=d['c2w'][j][:3].ravel().round(5).tolist()))
+        cams.append(dict(g=g, grp=int(d['group'][j]) if 'group' in d else 0, K=d['K'][j][:2].ravel().round(3).tolist(), c2w=d['c2w'][j][:3].ravel().round(5).tolist()))
     x = d['c2w'][sel][:, :3, 0]; up = np.linalg.eigh(x.T @ x)[1][:, 0]                 # same as fuse_nav.camera_up (that module needs open3d)
     if up @ (-d['c2w'][sel][:, :3, 1].mean(0)) < 0: up = -up
     json.dump(dict(Hd=int(Hd), Wd=int(Wd), stride=stride, up=up.round(5).tolist(), cams=cams), open(f'{out}/cams.json', 'w'))
