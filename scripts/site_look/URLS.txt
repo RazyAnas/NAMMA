@@ -1,4 +1,2 @@
-# plain lines: screenshot + text; "tour <url>": open it and move around inside (run 2: slow software WebGL)
-tour https://splattour.com/en/t/Terrassa_Apartment
-tour https://splattour.com/en/t/Manresa_Premium
-tour https://splattour.com/en/t/Airbnb_Santa_Teresa
+# plain lines: screenshot + text; "tour <url>": open it and move around inside (slow software WebGL)
+tour https://anasrazy-namma-tour.static.hf.space/20261025-2153/index.html?webgl
