@@ -82,3 +82,10 @@ not match the video. Earlier notes calling its contents "real" were reported, ne
   (bin/pillar misplaced) -> 20 dB too permissive. Bugs: links used one direction only (385-438 <- 333-353 at 27.9 dB was ignored).
   Strong pairs seen: 94-121<-52-59 29.2, 385-438<-333-353 27.9, 52-59<-234-267 27.6, 453-488<-385-438 27.5, 453-488<-125-216 25.7.
   Fixed: both directions, MIN_DB 23, spanning forest = groups (nothing dropped), viewer mixes only within a group.
+- align_passes run 2 (318 depth frames): 5 groups [125-216, 333-353, 385-438, 453-488] [52-59, 94-121, 234-267] + 3 singles;
+  every accepted link was the current placement (moved 0.0 m): matches between passes never produced a better placement.
+  Cross check was also unfair (it mixed groups); now only within a group.
+- `--bridge`: follow the video across each gap between consecutive passes (SIFT + depth + PnP, chained over the dropped frames
+  that have depth). Frames seconds apart cannot be look-alike confusions. Bridges compete with matches in the same judge; a bridge
+  with no visible overlap to judge is trusted (the walk is continuous). Synthetic: 60 cm error found by the bridge; a pass with
+  no overlap joined within 2 cm.

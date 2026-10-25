@@ -13,7 +13,9 @@ def excl(i):
     its whole walk piece (pieces split where frame ids jump by > 3): then a frame can only be rebuilt from ANOTHER pass through
     the room, which tests whether the passes agree with each other."""
     e = {i} | G['drop']
-    if G['cross']: e |= set(np.where(G['blk'] == G['blk'][i])[0].tolist())
+    if G['cross']:
+        e |= set(np.where(G['blk'] == G['blk'][i])[0].tolist())
+        if 'group' in G['data'][0]: e |= set(np.where(G['data'][0]['group'] != G['data'][0]['group'][i])[0].tolist())   # other groups live in other frames
     return e
 def score(i):
     d, files, K, has, H, W = G['data']
@@ -62,7 +64,7 @@ if __name__ == '__main__':
         for b in np.unique(blk):
             m = blk == b; src = [blk[s] for i in np.where(m)[0] for s in srcs.get(i, res[i][3])]
             seen = m & (cov > 0.3); sb = np.bincount(src).argmax() if src else -1
-            rows.append(dict(piece=f'{int(fid[m][0])}-{int(fid[m][-1])}', frames=int(m.sum()), seen_from_other_pass=int(seen.sum()),
+            rows.append(dict(piece=f'{int(fid[m][0])}-{int(fid[m][-1])}', group=int(d['group'][m][0]) if 'group' in d else 0, frames=int(m.sum()), seen_from_other_pass=int(seen.sum()),
                              psnr=float(np.nanmedian(ps[seen])) if seen.any() else None,
                              main_source=f'{int(fid[blk == sb][0])}-{int(fid[blk == sb][-1])}' if sb >= 0 else None))
             print('CROSS', json.dumps(rows[-1]), flush=True)
