@@ -1,5 +1,5 @@
 {
- "updated": "2026-10-25 18:00 IST",
+ "updated": "2026-10-25 17:50 IST",
  "goal": "Phone video -> photoreal, walkable 3D of the REAL room. Real pixels first, 3D model for in-between views, generation only for holes (flagged). Free GPUs.",
  "now": "Pass alignment fixes: image/depth aspect bug, exposure-fair scores, looser video bridge with diagnostics (namma-ibr CPU ~15 min).",
  "phases": [
