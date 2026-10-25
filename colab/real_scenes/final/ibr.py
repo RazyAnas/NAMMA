@@ -65,6 +65,11 @@ def psnr(a, b, m=None):
     e = (a - b) ** 2; e = e[m] if m is not None else e
     return float(-10 * np.log10(e.mean() + 1e-12))
 
+def psnr_gain(a, b, m):
+    """PSNR after matching a's per-channel brightness to b on the covered pixels: photos from different passes differ in
+    auto-exposure, which is not a placement error."""
+    g = b[m].mean(0) / np.maximum(a[m].mean(0), 1e-3); return psnr(np.clip(a * g, 0, 1), b, m)
+
 def ssim(a, b):
     from scipy.ndimage import uniform_filter
     a, b = a.mean(2), b.mean(2); f = lambda x: uniform_filter(x, 7)

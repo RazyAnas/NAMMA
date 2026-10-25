@@ -18,9 +18,11 @@ G = {}
 def pieces(fid): return np.cumsum(np.r_[0, np.diff(fid) > 3])
 
 def lift(j, kp, scale):
-    """Keypoints (full image px) of frame j -> world points through its aligned depth; NaN where no depth."""
-    d = G['d']; z = d['depth'][j]; Hd, Wd = z.shape; u = np.clip((kp[:, 0] / scale).astype(int), 0, Wd - 1); v = np.clip((kp[:, 1] / scale).astype(int), 0, Hd - 1)
-    zz = z[v, u]; K = d['K'][j]; P = np.stack([(u - K[0, 2]) / K[0, 0] * zz, (v - K[1, 2]) / K[1, 1] * zz, zz], 1)
+    """Keypoints (full image px) of frame j -> world points through its aligned depth; NaN where no depth.
+    scale = (sx, sy): image px per depth px. NOT one number: frames are 567x1008, depth 280x504 (different aspect)."""
+    d = G['d']; z = d['depth'][j]; Hd, Wd = z.shape; x, y = kp[:, 0] / scale[0], kp[:, 1] / scale[1]
+    u = np.clip(x.astype(int), 0, Wd - 1); v = np.clip(y.astype(int), 0, Hd - 1)
+    zz = z[v, u]; K = d['K'][j]; P = np.stack([(x - K[0, 2]) / K[0, 0] * zz, (y - K[1, 2]) / K[1, 1] * zz, zz], 1)
     W = P @ d['c2w'][j][:3, :3].T + d['c2w'][j][:3, 3]; W[zz <= 0] = np.nan; return W
 
 def umeyama(X, Y):
@@ -43,23 +45,24 @@ def feat(g):
     """SIFT of frame id g (full resolution), cached."""
     if g not in G['fe']:
         im = cv2.imread(G['files'][g], cv2.IMREAD_GRAYSCALE); kp, de = G['sift'].detectAndCompute(im, None)
-        G['fe'][g] = (np.array([k.pt for k in kp], np.float32), de, im.shape[1])
+        G['fe'][g] = (np.array([k.pt for k in kp], np.float32), de, (im.shape[1], im.shape[0]))
     return G['fe'][g]
 
 def rel_pose(gi, zi, Ki, gj):
     """Camera of frame gj relative to gi (X_j = R X_i + t): gi's keypoints lifted with its depth zi (DA3 grid, intrinsics Ki),
     found again in gj, PnP + RANSAC. Frames seconds apart in the video: no look-alike confusion possible."""
     (ki, di, wi), (kj, dj, wj) = feat(gi), feat(gj)
-    if di is None or dj is None or len(di) < 10 or len(dj) < 10: return None
-    mm = [m for m, n in cv2.BFMatcher().knnMatch(di, dj, k=2) if m.distance < 0.75 * n.distance]
-    if len(mm) < 40: return None
-    sc = wi / zi.shape[1]; pi = ki[[m.queryIdx for m in mm]]; pj = kj[[m.trainIdx for m in mm]].astype(np.float64)
-    u = np.clip((pi[:, 0] / sc).astype(int), 0, zi.shape[1] - 1); v = np.clip((pi[:, 1] / sc).astype(int), 0, zi.shape[0] - 1); z = zi[v, u]; ok = z > 0
-    if ok.sum() < 30: return None
-    P = np.stack([(pi[:, 0] / sc - Ki[0, 2]) / Ki[0, 0] * z, (pi[:, 1] / sc - Ki[1, 2]) / Ki[1, 1] * z, z], 1)[ok].astype(np.float64)
-    Kf = Ki.astype(np.float64).copy(); Kf[:2] *= sc
+    if di is None or dj is None or len(di) < 10 or len(dj) < 10: G['why'] = 'no features'; return None
+    mm = [m for m, n in cv2.BFMatcher().knnMatch(di, dj, k=2) if m.distance < 0.8 * n.distance]
+    if len(mm) < 20: G['why'] = f'{len(mm)} matches'; return None
+    sx, sy = wi[0] / zi.shape[1], wi[1] / zi.shape[0]                                 # per axis: image and depth aspect differ
+    pi = ki[[m.queryIdx for m in mm]]; pj = kj[[m.trainIdx for m in mm]].astype(np.float64); x, y = pi[:, 0] / sx, pi[:, 1] / sy
+    u = np.clip(x.astype(int), 0, zi.shape[1] - 1); v = np.clip(y.astype(int), 0, zi.shape[0] - 1); z = zi[v, u]; ok = z > 0
+    if ok.sum() < 20: G['why'] = f'{len(mm)} matches, {ok.sum()} with depth'; return None
+    P = np.stack([(x - Ki[0, 2]) / Ki[0, 0] * z, (y - Ki[1, 2]) / Ki[1, 1] * z, z], 1)[ok].astype(np.float64)
+    Kf = Ki.astype(np.float64).copy(); Kf[0] *= sx; Kf[1] *= sy
     r, rv, tv, inl = cv2.solvePnPRansac(P, pj[ok], Kf, None, iterationsCount=500, reprojectionError=4.0, confidence=0.999, flags=cv2.SOLVEPNP_EPNP)
-    if not r or inl is None or len(inl) < 30: return None
+    if not r or inl is None or len(inl) < 15: G['why'] = f'{len(mm)} matches, {ok.sum()} with depth, {0 if inl is None else len(inl)} PnP inliers'; return None
     rv, tv = cv2.solvePnPRefineLM(P[inl[:, 0]], pj[ok][inl[:, 0]], Kf, None, rv, tv)
     return cv2.Rodrigues(rv)[0], tv[:, 0], len(inl)
 
@@ -70,11 +73,11 @@ def bridge(ia, ib):
     chain = [(ga, d['depth'][ia], d['K'][ia])] + [(int(g), F['depth'][k], F['K'][k]) for k, g in enumerate(F['idx']) if ga < g < gb and F['has'][k]]
     chain.append((gb, None, None)); w2c = np.linalg.inv(d['c2w'][ia]); i = 0; steps = 0
     while i < len(chain) - 1:                                                        # step to the nearest of the next 3 frames that works
-        for k in range(i + 1, min(i + 4, len(chain))):
+        for k in range(i + 1, min(i + 6, len(chain))):
             rp = rel_pose(*chain[i], chain[k][0])
             if rp is None: continue
             M = np.eye(4); M[:3, :3], M[:3, 3] = rp[0], rp[1]; w2c = M @ w2c; i = k; steps += 1; break
-        else: return None, steps
+        else: print(f'   bridge stuck at frame {chain[i][0]} (tried {[c[0] for c in chain[i + 1:i + 6]]}; last: {G.get("why")})', flush=True); return None, steps
     Tm = np.linalg.inv(w2c) @ np.linalg.inv(d['c2w'][ib])                            # predicted pose o (next pass pose)^-1
     return (1.0, Tm[:3, :3], Tm[:3, 3]), steps
 
@@ -88,7 +91,7 @@ def judge(args):
     out = []
     for q in range(nB, len(sub)):
         img, m, _, _ = ibr.synth(d2, G['files'], K2, has2, G['H'], G['W'], K2[q], d2['c2w'][q], exclude={q}, k=3, cache_imgs={})
-        if m.mean() > 0.3: out.append(ibr.psnr(img, ibr.image(G['files'], int(d2['idx'][q]), G['W'], G['H']), m))
+        if m.mean() > 0.3: out.append(ibr.psnr_gain(img, ibr.image(G['files'], int(d2['idx'][q]), G['W'], G['H']), m))
     return a, b, (float(np.median(out)) if out else 0.0), len(out)
 
 def main():
@@ -112,7 +115,7 @@ def main():
         js = [j for j in np.where(blk == b)[0] if has[j]]; sample[b] = [js[i] for i in np.linspace(0, len(js) - 1, min(12, len(js))).astype(int)] if js else []
         for j in sample[b]:
             im = cv2.imread(files[int(fid[j])], cv2.IMREAD_GRAYSCALE); kp, de = sift.detectAndCompute(im, None)
-            feats[j] = (np.array([k.pt for k in kp], np.float32), de, im.shape[1] / d['depth'].shape[2])
+            feats[j] = (np.array([k.pt for k in kp], np.float32), de, (im.shape[1] / d['depth'].shape[2], im.shape[0] / d['depth'].shape[1]))
     print(f'{nb} passes, SIFT on {len(feats)} frames [{time.time()-t0:.0f}s]', flush=True)
     bf = cv2.BFMatcher(); jobs = []; raw = {}
     for A in range(nb):                                                              # match each pair of passes once; (B, A) = inverse
@@ -145,7 +148,8 @@ def main():
             Aidx = np.where(blk == A)[0]
             for n, T, jas in kept + [[0, (1.0, np.eye(3), np.zeros(3)), list(sample[A])]]:
                 near = sorted({int(np.clip(np.searchsorted(Aidx, j) + o, 0, len(Aidx) - 1)) for j in jas[:2] for o in (-6, 6)})
-                jobs.append((A, B, T, [Aidx[i] for i in near][:4], n))
+                spread = np.linspace(0, len(Aidx) - 1, 4).astype(int).tolist()           # + 4 frames over the whole pass: agreement must hold everywhere
+                jobs.append((A, B, T, sorted({Aidx[i] for i in near[:4] + spread}), n))
     print(f'{len(jobs)} hypotheses to judge [{time.time()-t0:.0f}s]', flush=True)
     with Pool(a.workers) as p: scores = p.map(judge, [j[:4] for j in jobs], chunksize=2)
     best = {}

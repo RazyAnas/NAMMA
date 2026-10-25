@@ -21,7 +21,8 @@ def score(i):
     d, files, K, has, H, W = G['data']
     img, m, srcs, _ = ibr.synth(d, files, K, has, H, W, K[i], d['c2w'][i], exclude=excl(i), k=3)
     gt = ibr.image(files, int(d['idx'][i]), W, H)
-    return i, (ibr.psnr(img, gt, m) if m.mean() > 0.3 else 0.0), float(m.mean()), [int(s) for s in srcs]
+    f = ibr.psnr_gain if G['cross'] else ibr.psnr                                  # other passes: different auto-exposure
+    return i, (f(img, gt, m) if m.mean() > 0.3 else 0.0), float(m.mean()), [int(s) for s in srcs]
 
 if __name__ == '__main__':
     ap = argparse.ArgumentParser(); ap.add_argument('cache'); ap.add_argument('out'); ap.add_argument('--workers', type=int, default=4); ap.add_argument('--keep'); ap.add_argument('--prune', type=int, default=0); ap.add_argument('--cross', action='store_true')

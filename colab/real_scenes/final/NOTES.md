@@ -89,3 +89,9 @@ not match the video. Earlier notes calling its contents "real" were reported, ne
   that have depth). Frames seconds apart cannot be look-alike confusions. Bridges compete with matches in the same judge; a bridge
   with no visible overlap to judge is trusted (the walk is continuous). Synthetic: 60 cm error found by the bridge; a pass with
   no overlap joined within 2 cm.
+- align_passes run 3: all 9 video bridges failed at their first step; groups unchanged; within-group cross check only 15 dB
+  for 125-216 / 385-438 (the judge's 4 test frames near matches said 25-28: too local).
+  Fixes: (1) frames are 567x1008 but depth 280x504 (different aspect): lift/PnP used one scale for both axes -> per-axis now
+  (synthetic with that aspect: matches failed with the old code, bridges 7 cm off); (2) PSNR after per-channel gain matching
+  for cross-pass comparisons (auto-exposure differs between passes); (3) judge also tests 4 frames spread over the whole pass;
+  (4) looser bridge (ratio 0.8, 15 PnP inliers, 5 frames ahead) and it prints why a step fails.
