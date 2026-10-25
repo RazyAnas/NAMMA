@@ -9,7 +9,7 @@ def sh(c, check=False):
     if check and r: raise RuntimeError(f'failed: {c[:80]}')
     return r
 MODE = os.environ.get('MODE', 'full')   # full: everything | prep: data + gsplat build -> /kaggle/working/cache | train: cache -> splats
-RUN = {'full': {'1', '2', '2b', '3', '4'}, 'prep': {'1', '2', '2b', '3', 'cache'}, 'train': {'load', '4'}}[MODE]
+RUN = {'full': {'1', '2', '2b', '3', '4'}, 'prep': {'1', '2', '2b', '3', 'cache'}, 'train': {'load', '4'}, 'ffgs': {'load', 'ffgs'}}[MODE]
 print('MODE', MODE, flush=True)
 def stage(name):
     def deco(f):
@@ -18,7 +18,7 @@ def stage(name):
         except Exception: print(f'== {name}: FAILED'); traceback.print_exc()
     return deco
 sh('ls -R /kaggle/input | head -40')
-if MODE != 'train':
+if MODE not in ('train', 'ffgs'):
     _v = sorted(glob.glob('/kaggle/input/**/*.mp4', recursive=True) + glob.glob('/kaggle/input/**/*.mov', recursive=True))
     assert _v, 'no video under /kaggle/input: attach dataset anasrazy/namma-room-2026-10-22 (see ls above)'
     VIDEO = _v[0]; print('VIDEO', VIDEO)
@@ -144,6 +144,17 @@ def _():
         return
     run('W1', s, cs, f, f'{o}/splat.ply', steps=steps, max_seconds=1800, depth_w=0.05)
     run('W2', s, cs, f, f'{o}/splat_depth.ply', steps=steps, max_seconds=1800, depth_w=0.2, depth_floor=0.25)
+
+@stage('ffgs: feed-forward Gaussians from DA3 on the real frames + SfM cameras (no training)')
+def _():
+    sh('pip -q install --no-deps --ignore-requires-python "git+https://github.com/ByteDance-Seed/Depth-Anything-3.git" 2>&1 | tail -3', check=True)
+    sh('pip -q install einops omegaconf huggingface_hub safetensors pillow imageio plyfile trimesh scipy addict moviepy pycolmap evo e3nn 2>&1 | tail -2')
+    for _ in range(25):
+        try: from depth_anything_3.api import DepthAnything3; break
+        except ModuleNotFoundError as e:
+            pkg = {'cv2': 'opencv-python-headless', 'PIL': 'pillow', 'yaml': 'pyyaml', 'sklearn': 'scikit-learn'}.get(e.name.split('.')[0], e.name.split('.')[0])
+            print('missing', e.name, '-> pip', pkg); sh(f'pip -q install {pkg} 2>&1 | tail -1')
+    import ffgs; ffgs.run(CACHE, f'{O}/model/world.ply', every=int(os.environ.get('FFGS_EVERY', 6)))
 
 @stage('cache (build gsplat once, save everything the training jobs need)')
 def _():
