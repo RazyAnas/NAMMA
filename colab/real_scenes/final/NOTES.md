@@ -117,3 +117,9 @@ not match the video. Earlier notes calling its contents "real" were reported, ne
   group 0 only at 13-20 dB (merges rejected). Frames 172-199 of 125-216 still ~17 dB (inside one pass).
 - namma-model: splats trained ONLY on group 0 (cameras that agree), dense depth with real colours, fused init cloud, floor plan,
   photo viewer (mixes all photos by default when there is one group), .splat export (to_splat.py, 32 B/splat).
+- 25 Oct evening, owner's viewer data debugged here (namma_debug.zip from align6): group 0 = 162 photos, own-pass rebuild 38.3 dB,
+  other-pass rebuild 31.2 dB on 146 photos; only 198-201 marginal (19-22 dB). Group 1 (385-438) disagrees inside (16.4 dB): the
+  1.19 m jump at 401/403 (pieces() now also splits at camera jumps). The 'random popping' was coverage, not cameras: neighbouring
+  photos drawn as floating cut-out cards with dark gaps. Fix: fused 3D points of the group (viewer_to_splat --viewer,
+  cloud_<g>.bin) drawn behind the photos where no photo drew (stencil): views 30-60 cm off the path and turned 40 deg now show the
+  whole room continuously. Instant splat (no training) of group 0: 1.79M splats, 57 MB, owner opened it in SuperSplat.

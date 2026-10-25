@@ -20,6 +20,7 @@ def build(cache, keep, out, stride=2):
     if not os.path.exists(f'{out}/three.min.js'):
         urllib.request.urlretrieve('https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js', f'{out}/three.min.js')
     shutil.copy(os.path.join(os.path.dirname(os.path.abspath(__file__)), 'photo_viewer.html'), f'{out}/index.html')
+    import viewer_to_splat; viewer_to_splat.viewer_clouds(out)                    # fused 3D fill drawn behind the photos (no floating cards)
     print(f'photo viewer: {len(cams)} real frames with depth ({len(sel)} of {len(d["idx"])} cameras) -> {out}', flush=True)
 
 if __name__ == '__main__':
