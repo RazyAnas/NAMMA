@@ -1,6 +1,6 @@
 #!/bin/bash
 # Push a Kaggle job, wait for it, download the output, then ring until you press Ctrl-C.
-# Usage: bash run_and_alarm.sh <kernel folder> <kaggle id, e.g. anasrazy/namma-final> <output dir>
+# Usage: bash run_and_alarm.sh <kernel folder> <kaggle id, e.g. anasrazy/namma-final> <output dir, or - to skip the download>
 # Keeps the Mac awake while waiting (caffeinate). Keep the lid OPEN and the charger in: a closed lid still sleeps the Mac.
 set -u
 FOLDER="$1"; ID="$2"; OUT="$3"
@@ -14,11 +14,15 @@ while true; do
   echo "$s" | grep -qiE "complete|error|cancel" && break
   sleep 60
 done
-[ -d "$OUT" ] && mv "$OUT" "${OUT}_prev_$(date +%H%M)"
-kaggle kernels output "$ID" -p "$OUT" 2>&1 | grep -v Warning | tail -2
+if [ "$OUT" = "-" ]; then          # e.g. namma-prep: its output is a cache for other Kaggle jobs, nothing to download
+  kaggle kernels output "$ID" -p /tmp/kaggle_log_only --file-pattern '.*\.log$' >/dev/null 2>&1 || true
+else
+  [ -d "$OUT" ] && mv "$OUT" "${OUT}_prev_$(date +%H%M)"
+  kaggle kernels output "$ID" -p "$OUT" 2>&1 | grep -v Warning | tail -2
+fi
 MIN=$(( ($(date +%s) - START) / 60 ))
 echo "$ID finished: $s  (${MIN} min). Output in $OUT"
-open "$OUT" 2>/dev/null
+[ "$OUT" = "-" ] || open "$OUT" 2>/dev/null
 osascript -e "set volume output volume 100" -e "display notification \"$ID done ($s)\" with title \"NAMMA job finished\"" 2>/dev/null
 echo "Ringing. Press Ctrl-C to stop."
 while true; do afplay /System/Library/Sounds/Glass.aiff; say "Kaggle job finished"; sleep 1; done

@@ -8,18 +8,24 @@ def sh(c, check=False):
     print(f'\n[{time.time()-T0:5.0f}s] $ {c[:160]}', flush=True); r = subprocess.call(c, shell=True, executable='/bin/bash')
     if check and r: raise RuntimeError(f'failed: {c[:80]}')
     return r
+MODE = os.environ.get('MODE', 'full')   # full: everything | prep: data + gsplat build -> /kaggle/working/cache | train: cache -> splats
+RUN = {'full': {'1', '2', '2b', '3', '4'}, 'prep': {'1', '2', '2b', '3', 'cache'}, 'train': {'load', '4'}}[MODE]
+print('MODE', MODE, flush=True)
 def stage(name):
     def deco(f):
+        if name.split()[0] not in RUN: return
         try: f(); print(f'== {name}: ok [{time.time()-T0:.0f}s]', flush=True)
         except Exception: print(f'== {name}: FAILED'); traceback.print_exc()
     return deco
 sh('ls -R /kaggle/input | head -40')
-_v = sorted(glob.glob('/kaggle/input/**/*.mp4', recursive=True) + glob.glob('/kaggle/input/**/*.mov', recursive=True))
-assert _v, 'no video under /kaggle/input: attach dataset anasrazy/namma-room-2026-10-22 (see ls above)'
-VIDEO = _v[0]; print('VIDEO', VIDEO)
+if MODE != 'train':
+    _v = sorted(glob.glob('/kaggle/input/**/*.mp4', recursive=True) + glob.glob('/kaggle/input/**/*.mov', recursive=True))
+    assert _v, 'no video under /kaggle/input: attach dataset anasrazy/namma-room-2026-10-22 (see ls above)'
+    VIDEO = _v[0]; print('VIDEO', VIDEO)
 NFRAMES = int(os.environ.get('NFRAMES', 600))      # ~2.7 per second of video: density is the lever (lobby: 6/s -> 26.9 dB)
 DA3_EVERY = int(os.environ.get('DA3_EVERY', 3))    # dense depth for every 3rd frame (200 frames, ~12 min); SfM uses all
-sh(f'git clone -q --depth 1 -b claude/wonderful-cori-i3fn41 https://github.com/RazyAnas/NAMMA {W}/repo', check=True)
+if not os.path.exists(f'{W}/repo'): sh(f'git clone -q --depth 1 -b claude/wonderful-cori-i3fn41 https://github.com/RazyAnas/NAMMA {W}/repo', check=True)
+GSPLAT = 'gsplat==1.5.3'   # pinned: the cached CUDA build must match the installed sources
 sys.path.insert(0, f'{W}/repo/colab/real_scenes/final')
 
 @stage('1 frames')
@@ -98,13 +104,23 @@ def _():
     src = f'{W}/da3_sfm.npz' if os.path.exists(f'{W}/da3_sfm.npz') else f'{W}/da3.npz'; print('geometry from', src)
     F.fuse(src, f'{O}/model'); print(json.dumps({k: v for k, v in F.navigate(f'{O}/model/cloud.npz', f'{O}/model', up=F.camera_up(src)).items() if k != 'demo_path_cells'}))
     import build_viewer; print(build_viewer.build(f'{O}/model'), '-> model/viewer.html')
+@stage('load cache from namma-prep (frames, cameras + depth, cloud, compiled gsplat)')
+def _():
+    global CACHE
+    hits = glob.glob('/kaggle/input/**/cache/da3_sfm.npz', recursive=True); assert hits, 'no cache: run namma-prep first'
+    CACHE = os.path.dirname(hits[0]); print('cache', CACHE, len(os.listdir(f'{CACHE}/frames')), 'frames')
+    sh(f'pip -q install ninja "{GSPLAT}" 2>&1 | tail -1', check=True)
+    # restore the build, then make it newer than the freshly installed sources so ninja does not rebuild (~5 min saved)
+    sh(f'mkdir -p ~/.cache && tar xzf {CACHE}/gsplat_ext.tgz -C ~/.cache && find ~/.cache/torch_extensions -type f -exec touch {{}} +')
+    sh(f'python {W}/repo/colab/real_scenes/final/gsplat_warm.py', check=True)   # once, before two GPUs load it at the same time
+    os.makedirs(f'{O}/model', exist_ok=True)
+    for x in ('cloud.npz', 'walk.npz'): shutil.copy(f'{CACHE}/{x}', f'{O}/model/{x}')
+
 @stage('4 splat fits: W1 (600 views) and W2 (+ strong depth anchor), with diagnostics')
 def _():
     import torch
-    sh('nvcc --version | tail -1; pip -q install ninja 2>&1 | tail -1')
-    tv = torch.__version__.split('+')[0].split('.'); cu = (torch.version.cuda or '').replace('.', '')
-    if sh(f'pip -q install gsplat --index-url https://docs.gsplat.studio/whl/pt{tv[0]}{tv[1]}cu{cu} 2>&1 | tail -2') != 0 or sh('python -c "import gsplat"') != 0:
-        sh('pip -q install gsplat 2>&1 | tail -2', check=True)
+    if MODE != 'train':
+        sh(f'nvcc --version | tail -1; pip -q install ninja "{GSPLAT}" 2>&1 | tail -1', check=True)
     import train_splat as T, fuse_nav as F
     steps = int(os.environ.get('STEPS', 15000)); f, o = f'{W}/frames', f'{O}/model'
     def run(name, *a, **k):
@@ -114,7 +130,29 @@ def _():
     # Last run: held-out renders were fog (fan/window/door gone) although PSNR read 18.8 dB. Two candidate causes, one change each:
     # W1 = 3x denser views (600), same recipe as before; W2 = W1 + a stronger depth anchor that never fades fully (fights floaters).
     # Both write diagnostics: renders at step 0 and at the end (train + held-out views), splat size/opacity stats, held-out depth error.
+    if MODE == 'train':
+        s, cs, f = f'{CACHE}/da3_sfm.npz', f'{CACHE}/cloud.npz', f'{CACHE}/frames'
+        variants = json.loads(os.environ['VARIANTS'])                     # [{"name":..., "out":..., "kw":{...}}], one per GPU
+        procs = []
+        for gpu, v in enumerate(variants):
+            job = json.dumps(dict(args=[s, cs, f, f'{o}/{v["out"]}'], kw=v['kw']))
+            log = open(f'{o}/train_{v["name"]}.log', 'w')
+            procs.append((v['name'], log.name, subprocess.Popen([sys.executable, f'{W}/repo/colab/real_scenes/final/train_worker.py', job],
+                          env={**os.environ, 'CUDA_VISIBLE_DEVICES': str(gpu % 2)}, stdout=log, stderr=subprocess.STDOUT)))
+        for name, lg, p in procs:
+            p.wait(); print(f'---- variant {name} (exit {p.returncode}) ----'); print(''.join(l for l in open(lg) if 'step ' not in l or ' 0 loss' in l or '000 loss' in l), flush=True)
+        return
     run('W1', s, cs, f, f'{o}/splat.ply', steps=steps, max_seconds=1800, depth_w=0.05)
     run('W2', s, cs, f, f'{o}/splat_depth.ply', steps=steps, max_seconds=1800, depth_w=0.2, depth_floor=0.25)
+
+@stage('cache (build gsplat once, save everything the training jobs need)')
+def _():
+    sh(f'nvcc --version | tail -1; pip -q install ninja "{GSPLAT}" 2>&1 | tail -1', check=True)
+    sh(f'python {W}/repo/colab/real_scenes/final/gsplat_warm.py', check=True)
+    C = f'{O}/cache'; os.makedirs(C, exist_ok=True)
+    src = f'{W}/da3_sfm.npz' if os.path.exists(f'{W}/da3_sfm.npz') else f'{W}/da3.npz'
+    shutil.copy(src, f'{C}/da3_sfm.npz'); shutil.copytree(f'{W}/frames', f'{C}/frames', dirs_exist_ok=True)
+    for x in ('cloud.npz', 'walk.npz'): shutil.copy(f'{O}/model/{x}', f'{C}/{x}')
+    sh(f'tar czf {C}/gsplat_ext.tgz -C ~/.cache torch_extensions && du -sh {C}/* | tail -6')
 
 print('files:', os.listdir(O))
