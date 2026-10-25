@@ -16,7 +16,14 @@ VERIFY_DB = 21.0  # a join must agree with the whole group (wrong placements mea
 MIN_DB = 23.0   # 20 dB let a wrong placement through (white walls and floor score ~20 when misplaced)
 G = {}
 
-def pieces(fid): return np.cumsum(np.r_[0, np.diff(fid) > 3])
+def pieces(fid, c2w=None):
+    """Walk passes: split at gaps in frame ids AND at camera jumps inside the walk (a 1.19 m jump between frames 401 and 403
+    and 0.26-0.35 m jumps at 171/172 and 207/210 were inside one 'pass' before: half of such a pass was placed wrongly)."""
+    cut = np.r_[False, np.diff(fid) > 3]
+    if c2w is not None:
+        st = np.linalg.norm(np.diff(c2w[:, :3, 3], axis=0), axis=1) / np.maximum(np.diff(fid), 1)
+        cut |= np.r_[False, (st > 0.2) & (st > 5 * np.median(st))]
+    return np.cumsum(cut)
 
 def lift(j, kp, scale):
     """Keypoints (full image px) of frame j -> world points through its aligned depth; NaN where no depth.
@@ -144,7 +151,7 @@ def main():
     ap.add_argument('--bridge', help='prep cache (all frames, depth every 3rd): follow the video across the gaps between passes')
     a = ap.parse_args(); os.makedirs(a.out, exist_ok=True); t0 = time.time()
     d, files, K, has, H, W = ibr.load(a.cache, scale=1, keep=None if a.keep == '-' else a.keep); G.update(d=d, files=files, K=K, has=has, H=H, W=W)
-    fid = d['idx']; blk = pieces(fid); G['blk'] = blk; nb = blk.max() + 1
+    fid = d['idx']; blk = pieces(fid, d['c2w']); G['blk'] = blk; nb = blk.max() + 1
     G['sift'] = cv2.SIFT_create(2000); G['fe'] = {}; bridges = {}
     if a.bridge:
         z = np.load(f'{a.bridge}/da3_sfm.npz'); F = {k: z[k] for k in z.files}; F['has'] = F['depth'].reshape(len(F['idx']), -1).max(1) > 0; G['full'] = F
