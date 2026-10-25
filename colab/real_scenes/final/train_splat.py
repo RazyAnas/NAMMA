@@ -27,7 +27,7 @@ def delta_pose(c):
     R = torch.eye(3, device=c.device) + torch.sin(th) * Kx + (1 - torch.cos(th)) * (Kx @ Kx)
     top = torch.cat([R, t[:, None]], 1); return torch.cat([top, torch.tensor([[0., 0., 0., 1.]], device=c.device)], 0)
 
-def train(da3, cloud, frames_dir, out_ply, steps=15000, max_seconds=600, dev='cuda', pose_opt=False, depth_w=0.0, max_init=500000, mcmc_cap=0, sh=0):
+def train(da3, cloud, frames_dir, out_ply, steps=15000, max_seconds=600, dev='cuda', pose_opt=False, depth_w=0.0, max_init=500000, mcmc_cap=0, sh=0, depth_floor=0.0):
     """pose_opt: learn a small per-view camera correction (the cameras come from chained feed-forward chunks, so they drift).
     depth_w: weight of an L1 loss against the feed-forward depth, fading to 0 at 60% of training (anchors geometry early)."""
     import torch, torch.nn.functional as F
@@ -52,6 +52,14 @@ def train(da3, cloud, frames_dir, out_ply, steps=15000, max_seconds=600, dev='cu
     def view(i, refined=True): return (delta_pose(cam[i]) @ V[i])[None] if (pose_opt and refined) else V[i:i + 1]
     test = [i for i in range(N) if FID[i] % 8 == 3]; train_ids = [i for i in range(N) if FID[i] % 8 != 3]   # frames 3, 11, 19, ... held out (neighbours are close: mild test)
     t0 = time.time(); gen = np.random.default_rng(1)
+    diag = train_ids[::max(1, len(train_ids) // 2)][:2] + test[:2]                       # same views before and after training
+    def snap(tag):
+        with torch.no_grad():
+            row = [torch.cat([imgs[i], rasterization(params['means'], F.normalize(params['quats'], dim=-1), torch.exp(params['scales']),
+                   torch.sigmoid(params['opacities']), torch.cat([params['sh0'], params['shN']], 1), V[i:i + 1], Ks[i:i + 1], W, H,
+                   sh_degree=0)[0][0].clamp(0, 1)], 1) for i in diag]
+            Image.fromarray((torch.cat(row, 0).cpu().numpy() * 255).astype(np.uint8)).resize((2 * W // 2, len(diag) * H // 2)).save(out_ply.replace('.ply', f'_{tag}.jpg'))
+    snap('step0')                                                                         # init cloud seen from the cameras: geometry/camera check
     for step in range(steps):
         i = train_ids[int(gen.integers(len(train_ids)))]
         out, a, info = rasterization(params['means'], F.normalize(params['quats'], dim=-1), torch.exp(params['scales']), torch.sigmoid(params['opacities']),
@@ -59,22 +67,35 @@ def train(da3, cloud, frames_dir, out_ply, steps=15000, max_seconds=600, dev='cu
         r, ed = out[0, ..., :3], out[0, ..., 3]
         if not mcmc_cap: strat.step_pre_backward(params, opts, st, step, info)
         loss = 0.8 * (r - imgs[i]).abs().mean() + 0.2 * (1 - ssim(r, imgs[i]))
-        if depth_w > 0 and step < 0.6 * steps:
+        if depth_w > 0 and (step < 0.6 * steps or depth_floor > 0):
             gt = F.interpolate(DEP[i][None, None], size=(H, W), mode='bilinear', align_corners=False)[0, 0]; m = (gt > 0) & (a[0, ..., 0] > 0.5)
-            if m.any(): loss = loss + depth_w * (1 - step / (0.6 * steps)) * ((ed - gt).abs() / (gt + 0.2))[m].mean()
+            if m.any(): loss = loss + depth_w * max(depth_floor, 1 - step / (0.6 * steps)) * ((ed - gt).abs() / (gt + 0.2))[m].mean()
         if mcmc_cap: loss = loss + 0.01 * torch.sigmoid(params['opacities']).mean() + 0.01 * torch.exp(params['scales']).mean()   # keeps splats from all staying big/opaque
         loss.backward()
-        if mcmc_cap:
-            lr_m = lrs['means'] * 0.01 ** (step / steps)         # exponential decay of the position lr; MCMC also uses it to scale its noise
-            for g in opts['means'].param_groups: g['lr'] = lr_m
-            strat.step_post_backward(params, opts, st, step, info, lr=lr_m)
+        lr_m = lrs['means'] * 0.01 ** (step / steps)             # exponential decay of the position lr (gsplat default schedule)
+        for g in opts['means'].param_groups: g['lr'] = lr_m
+        for o in opts.values(): o.step(); o.zero_grad(set_to_none=True)   # optimizer first, then densify/prune (gsplat's trainer order)
+        if mcmc_cap: strat.step_post_backward(params, opts, st, step, info, lr=lr_m)
         else: strat.step_post_backward(params, opts, st, step, info, packed=False)
-        for o in opts.values(): o.step(); o.zero_grad(set_to_none=True)
         if opt_cam is not None: opt_cam.step(); opt_cam.zero_grad(set_to_none=True)
         if step == 0: t0 = time.time()                               # first step includes the one-off CUDA build
         if step % 500 == 0: print(f'step {step} loss {loss.item():.4f} gaussians {len(params["means"])} {time.time()-t0:.0f}s', flush=True)
         if time.time() - t0 > max_seconds: print('time cap at step', step); break
     for p in params.values(): p.requires_grad_(False)
+    snap('final')
+    with torch.no_grad():
+        sz = torch.exp(params['scales']).max(1).values; op = torch.sigmoid(params['opacities'])
+        q = torch.quantile(sz[torch.randperm(len(sz), device=dev)[:200000]], torch.tensor([.5, .9, .99], device=dev)).tolist()
+        derr = []
+        for i in test:
+            gt = F.interpolate(DEP[i][None, None], size=(H, W), mode='bilinear', align_corners=False)[0, 0]
+            if (gt > 0).sum() < 100: continue
+            o_, a_, _ = rasterization(params['means'], F.normalize(params['quats'], dim=-1), torch.exp(params['scales']), op,
+                                      torch.cat([params['sh0'], params['shN']], 1), V[i:i + 1], Ks[i:i + 1], W, H, sh_degree=0, render_mode='ED')
+            mk = gt > 0; derr.append(((o_[0, ..., 0] - gt).abs() / gt)[mk].median().item())
+        print(f'splat size (largest axis) median {q[0]*100:.1f} cm, 90% {q[1]*100:.1f} cm, 99% {q[2]*100:.1f} cm | splats > 20 cm: '
+              f'{(sz > 0.2).float().mean().item()*100:.1f}% | mean opacity {op.mean().item():.2f} | held-out depth error vs prior '
+              f'(median rel.) {np.median(derr)*100 if derr else float("nan"):.1f}% over {len(derr)} views', flush=True)
     def render(i, refined=True):
         r, _, _ = rasterization(params['means'], F.normalize(params['quats'], dim=-1), torch.exp(params['scales']), torch.sigmoid(params['opacities']),
                                 torch.cat([params['sh0'], params['shN']], 1), view(i, refined), Ks[i:i + 1], W, H, sh_degree=sh)

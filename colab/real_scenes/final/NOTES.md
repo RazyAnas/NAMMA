@@ -1,5 +1,15 @@
 # Findings that must not be lost (newest first)
 
+## 2026-10-25 (2): V1/V2 run
+- SfM again 195/200, 1.14 px. DA3/SfM per-frame scale spread 47%.
+- V1 (SfM cameras, no refinement): held-out 18.79 dB raw, SSIM 0.780, 841k splats. Owner-visible held-out renders are FOG: fan,
+  window, door gone. PSNR on white-wall rooms hides this; always look at the held-out images.
+- V2 (2M MCMC + SH3, fixed lr/opacity): 12.55 dB, train 16.0. Still broken. Found: we ran densify/relocate BEFORE the optimizer
+  step; gsplat's trainer does it after. Fixed. MCMC paused until a plain fit is right.
+- Floor up from mean image-up: biased by camera pitch when walking mostly one way (synthetic: 25 deg). Now from the camera x axes
+  (always horizontal for a phone without roll): 0.4 deg in the same test.
+- Next: 600 frames (SfM on all, DA3 on every 3rd), W1 vs W2 (stronger depth anchor), step-0 and final renders + splat stats.
+
 ## 2026-10-25: SfM cameras run (200 frames, Kaggle T4, 69 min)
 - hloc SuperPoint+LightGlue (sequential 10 + NetVLAD 15 pairs): **195/200 registered, 8425 points, reprojection error 1.07 px**.
 - Chunked DA3 depth scale wandered **32.8% between frames** (std of log DA3/SfM ratio): DA3 alone cannot give consistent geometry

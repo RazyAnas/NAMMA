@@ -17,7 +17,8 @@ sh('ls -R /kaggle/input | head -40')
 _v = sorted(glob.glob('/kaggle/input/**/*.mp4', recursive=True) + glob.glob('/kaggle/input/**/*.mov', recursive=True))
 assert _v, 'no video under /kaggle/input: attach dataset anasrazy/namma-room-2026-10-22 (see ls above)'
 VIDEO = _v[0]; print('VIDEO', VIDEO)
-NFRAMES = int(os.environ.get('NFRAMES', 200))
+NFRAMES = int(os.environ.get('NFRAMES', 600))      # ~2.7 per second of video: density is the lever (lobby: 6/s -> 26.9 dB)
+DA3_EVERY = int(os.environ.get('DA3_EVERY', 3))    # dense depth for every 3rd frame (200 frames, ~12 min); SfM uses all
 sh(f'git clone -q --depth 1 -b claude/wonderful-cori-i3fn41 https://github.com/RazyAnas/NAMMA {W}/repo', check=True)
 sys.path.insert(0, f'{W}/repo/colab/real_scenes/final')
 
@@ -51,7 +52,7 @@ def _():
             pkg = {'cv2': 'opencv-python-headless', 'PIL': 'pillow', 'yaml': 'pyyaml', 'sklearn': 'scikit-learn'}.get(e.name.split('.')[0], e.name.split('.')[0])
             print('missing', e.name, '-> pip', pkg); sh(f'pip -q install {pkg} 2>&1 | tail -1')
     model = DepthAnything3.from_pretrained('depth-anything/DA3NESTED-GIANT-LARGE').to('cuda').eval()
-    files = sorted(glob.glob(f'{W}/frames/*.jpg'))
+    files = sorted(glob.glob(f'{W}/frames/*.jpg'))[::DA3_EVERY]; fid = np.array([int(os.path.basename(p)[:4]) for p in files])
     import gc, chunk_align as CA
     CH, STEP = int(os.environ.get('CHUNK', 8)), int(os.environ.get('STEP', 5))   # 8 views fit a T4; 30 and 15 ran out of memory
     chunks = []
@@ -73,7 +74,7 @@ def _():
     rgb = np.zeros(D.shape + (3,), np.uint8)
     for c in chunks:
         for j, g in enumerate(c['idx']): rgb[g] = c['rgb'][j]
-    k = np.where(have)[0]; np.savez(f'{W}/da3.npz', depth=D[k], K=Ks[k], c2w=C[k], rgb=rgb[k], idx=k)
+    k = np.where(have)[0]; np.savez(f'{W}/da3.npz', depth=D[k], K=Ks[k], c2w=C[k], rgb=rgb[k], idx=fid[k])
     print('merged', len(k), 'of', len(files), 'frames; median depth', float(np.median(D[k][D[k] > 0])), '(metric)')
 
 @stage('2b SfM cameras (hloc SuperPoint+LightGlue, proven on this video: 574/578)')
@@ -97,7 +98,7 @@ def _():
     src = f'{W}/da3_sfm.npz' if os.path.exists(f'{W}/da3_sfm.npz') else f'{W}/da3.npz'; print('geometry from', src)
     F.fuse(src, f'{O}/model'); print(json.dumps({k: v for k, v in F.navigate(f'{O}/model/cloud.npz', f'{O}/model', up=F.camera_up(src)).items() if k != 'demo_path_cells'}))
     import build_viewer; print(build_viewer.build(f'{O}/model'), '-> model/viewer.html')
-@stage('4 splat fits: V1 (SfM cameras) and V2 (+ 2M splats + reflections)')
+@stage('4 splat fits: W1 (600 views) and W2 (+ strong depth anchor), with diagnostics')
 def _():
     import torch
     sh('nvcc --version | tail -1; pip -q install ninja 2>&1 | tail -1')
@@ -110,9 +111,10 @@ def _():
         try: T.train(*a, **k)
         except Exception: print(f'variant {name} FAILED (earlier files are intact)'); traceback.print_exc()
     s = f'{W}/da3_sfm.npz' if os.path.exists(f'{W}/da3_sfm.npz') else f'{W}/da3.npz'; cs = f'{O}/model/cloud.npz'
-    # Last run: camera refinement let cameras and scene drift together (raw held-out 17 dB even on SfM cameras with 1.07 px error),
-    # so with SfM cameras it is OFF now and the held-out number is direct. V1 vs V2 isolates splat count + reflections.
-    run('V1', s, cs, f, f'{o}/splat.ply', steps=steps, depth_w=0.05)
-    run('V2', s, cs, f, f'{o}/splat_2M_sh3.ply', steps=12000, max_seconds=1500, depth_w=0.05, mcmc_cap=2000000, sh=3)
+    # Last run: held-out renders were fog (fan/window/door gone) although PSNR read 18.8 dB. Two candidate causes, one change each:
+    # W1 = 3x denser views (600), same recipe as before; W2 = W1 + a stronger depth anchor that never fades fully (fights floaters).
+    # Both write diagnostics: renders at step 0 and at the end (train + held-out views), splat size/opacity stats, held-out depth error.
+    run('W1', s, cs, f, f'{o}/splat.ply', steps=steps, depth_w=0.05)
+    run('W2', s, cs, f, f'{o}/splat_depth.ply', steps=steps, depth_w=0.2, depth_floor=0.25)
 
 print('files:', os.listdir(O))

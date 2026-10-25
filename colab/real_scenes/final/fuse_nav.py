@@ -44,9 +44,11 @@ def navigate(mesh_path, out, radius=0.25, cell=0.05, up=None):
     return info
 
 def camera_up(npz):
-    """Phone held upright: image 'up' (-y in OpenCV cameras) averaged over all frames is the world up. Far more robust than
-    surface normals when long walls dominate (the SfM run tilted the normal-based estimate by ~25 deg)."""
-    c2w = np.load(npz)['c2w']; u = -c2w[:, :3, 1].mean(0); return u / np.linalg.norm(u)
+    """World up from the phone cameras. A phone filming a room has (almost) no roll, so every camera's image-right axis (x) is
+    horizontal whatever the pitch: up = the direction most perpendicular to all x axes. Sign: same side as the image-up axes.
+    (Averaging image-up alone was biased by the camera pitch; surface normals picked a wall, 25-88 deg off.)"""
+    c2w = np.load(npz)['c2w']; x = c2w[:, :3, 0]; w, v = np.linalg.eigh(x.T @ x); u = v[:, 0]
+    return u if u @ (-c2w[:, :3, 1].mean(0)) > 0 else -u
 
 if __name__ == "__main__":
     npz, out = sys.argv[1], sys.argv[2]
