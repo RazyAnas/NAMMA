@@ -1,7 +1,7 @@
 {
- "updated": "2026-10-25 19:00 IST",
+ "updated": "2026-10-25 19:10 IST",
  "goal": "Phone video -> photoreal, walkable 3D of the REAL room. Real pixels first, 3D model for in-between views, generation only for holes (flagged). Free GPUs.",
- "now": "Pass alignment run 6 (scale fix + group merge, namma-ibr CPU) | P4 hole filling (namma-fill GPU) running.",
+ "now": "FINAL push (owner has 4-5 h): namma-model = 3D model on the 162 cameras that agree (group 0, 30.8 dB) + floor plan + viewer; namma-fill run 2 in parallel.",
  "phases": [
   {
    "name": "A. Capture & cameras",
@@ -51,8 +51,8 @@
      "Bridges + whole-group check: cross-pass median 15.7 -> 28.2 dB; 2 groups (162 + 94 frames)"
     ],
     [
-     "running",
-     "Scale fix (ICP with scale) + merge the two groups"
+     "done",
+     "Run 6: group 0 = 4 passes, 162 frames, cross-pass median 30.8 dB (453-488: 28.2 -> 30.8 with ICP); other passes stay apart (13-20 dB)"
     ]
    ]
   },
@@ -81,12 +81,12 @@
    "name": "C. Final build",
    "steps": [
     [
-     "todo",
-     "3D model trained on verified cameras (in-between views, collision)"
+     "running",
+     "3D model (gsplat, SH3; default + MCMC 1.5M) trained ONLY on cameras that agree (group 0)"
     ],
     [
-     "todo",
-     "Floor plan + walkable area from fixed geometry"
+     "running",
+     "Floor plan + walkable grid from group-0 geometry"
     ],
     [
      "done",
@@ -121,6 +121,10 @@
   }
  ],
  "results": [
+  [
+   "Cross-pass agreement (group 0, 162 frames)",
+   "30.8 dB median (was 15.7 before the pass fix)"
+  ],
   [
    "IBR held-out (real pixels)",
    "27.0 dB / SSIM 0.86 / 99% coverage"

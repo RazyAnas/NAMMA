@@ -67,6 +67,7 @@ fetch('cams.json').then(r=>r.json()).then(j=>{C=j;up=new V(...j.up).normalize();
   const xs=cams.map(c=>c.p.dot(e1)),ys=cams.map(c=>c.p.dot(e2)),x0=Math.min(...xs),y0=Math.min(...ys),sc=200/Math.max(Math.max(...xs)-x0,Math.max(...ys)-y0,.1);
   mapT=p=>[10+(p.dot(e1)-x0)*sc,210-(p.dot(e2)-y0)*sc];
   cam=new THREE.PerspectiveCamera(2*Math.atan(j.Hd/2/j.cams[0].K[4])*180/Math.PI,innerWidth/innerHeight,.02,100);cam.matrixAutoUpdate=false;
+  mix=new Set(cams.map(c=>c.grp)).size===1;   // one aligned group: all photos agree, mix them by default
   S.background=new THREE.Color();Object.assign(st,poseOf(cams[0]));resize();requestAnimationFrame(frame)});
 window.viewer={st,poseOf,cams:()=>cams};   // for scripted checks
 function resize(){R.setSize(innerWidth,innerHeight);if(cam){cam.aspect=innerWidth/innerHeight;cam.updateProjectionMatrix()}}addEventListener('resize',resize);

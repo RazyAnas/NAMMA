@@ -112,3 +112,8 @@ not match the video. Earlier notes calling its contents "real" were reported, ne
   aligned pass first; the model fills only small gaps (thin slivers / < 0.6% patches); large unfilmed regions are never invented
   (shown 'not filmed', flagged blue); the viewer limits how far off the path one can go (sweep measures holes vs offset).
   Bug fixed: ibr.synth image cache shared across render scales (keyed by size now).
+- align run 6 (ICP + group merge): group 0 = 52-59, 94-121, 125-216, 453-488 (162 frames), cross-pass median **30.8 dB**
+  (453-488 28.2 -> 30.8 with ICP, scale x0.996, 20 cm); ICP made 94-121 worse (39.2 -> 32.9, not used). Other passes agree with
+  group 0 only at 13-20 dB (merges rejected). Frames 172-199 of 125-216 still ~17 dB (inside one pass).
+- namma-model: splats trained ONLY on group 0 (cameras that agree), dense depth with real colours, fused init cloud, floor plan,
+  photo viewer (mixes all photos by default when there is one group), .splat export (to_splat.py, 32 B/splat).
