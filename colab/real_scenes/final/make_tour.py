@@ -110,9 +110,15 @@ def plan(examples, data, run, tour):
 def build(run, tour, public, st='npx --no-install splat-transform'):
     """plan.json + settings.json (from plan) + the model -> a static tour folder."""
     pl = json.load(open(f'{tour}/plan.json')); E, t, b = pl['rotate'], pl['translate'], pl['box']
-    cmd = (f'{st} -w -g cpu {run}/full/model.ply -r {E[0]:.6f},{E[1]:.6f},{E[2]:.6f} -t {t[0]:.6f},{t[1]:.6f},{t[2]:.6f} '
+    # smears out: splats long in ONE direction (longest > 8x middle axis) that are also big (> 1 % of the room) are the spiky
+    # streaks seen off the walk (run 3: 16 % needles); thin flat discs on surfaces stay
+    from plyfile import PlyData, PlyElement
+    v = PlyData.read(f'{run}/full/model.ply')['vertex'].data; sc = np.sort(np.exp(np.stack([v['scale_0'], v['scale_1'], v['scale_2']], 1)), 1)
+    room = float(np.linalg.norm(np.array(b[3:]) - np.array(b[:3]))); bad = (sc[:, 2] > 8 * sc[:, 1]) & (sc[:, 2] > 0.01 * room)
+    PlyData([PlyElement.describe(v[~bad], 'vertex')]).write(f'{tour}/clean.ply'); print(f'smears removed: {bad.sum()} of {len(v)}', flush=True)
+    cmd = (f'{st} -w -g cpu {tour}/clean.ply -r {E[0]:.6f},{E[1]:.6f},{E[2]:.6f} -t {t[0]:.6f},{t[1]:.6f},{t[2]:.6f} '
            f'-B {",".join(f"{x:.4f}" for x in b)} -N {tour}/scene.sog')
-    print(cmd, flush=True); subprocess.run(cmd, shell=True, check=True)
+    print(cmd, flush=True); subprocess.run(cmd, shell=True, check=True); os.remove(f'{tour}/clean.ply')
     boot = dict(contentUrl='./scene.sog', settingsUrl='./settings.json')
     if os.path.exists(f'{run}/mesh/mesh.glb'): shutil.copy(f'{run}/mesh/mesh.glb', f'{tour}/collision.glb'); boot['collisionUrl'] = './collision.glb'
     for f in ('index.js', 'index.css'): shutil.copy(f'{public}/{f}', tour)
@@ -122,7 +128,7 @@ def build(run, tour, public, st='npx --no-install splat-transform'):
                         "window.viewer = await createViewer({ container: document.body, settings, ...options });")
     if os.path.exists(f'{tour}/overlay.json'): html = html.replace('</body>', OVERLAY + '\n    </body>')
     open(f'{tour}/index.html', 'w').write(html)
-    info = json.load(open(f'{tour}/tour.json')); info.update(collision='collisionUrl' in boot, sog_mb=round(os.path.getsize(f'{tour}/scene.sog') / 1e6, 1))
+    info = json.load(open(f'{tour}/tour.json')); info.update(smears_removed=int(bad.sum()), collision='collisionUrl' in boot, sog_mb=round(os.path.getsize(f'{tour}/scene.sog') / 1e6, 1))
     json.dump(info, open(f'{tour}/tour.json', 'w'), indent=1); print('TOUR', json.dumps(info), flush=True)
     return info
 

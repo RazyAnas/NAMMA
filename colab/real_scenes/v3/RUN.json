@@ -1,6 +1,6 @@
 {
- "n": 4,
- "collect": false,
+ "n": 5,
+ "collect": true,
  "source": "dl3dv:389a460ca1995e0658e85fe8e6b520b4e88b370cd6710dfe728b1564bba31aee",
  "kaggle_user": "anasrazy",
  "env": {
@@ -10,5 +10,5 @@
  },
  "scene": "DL3DV-Benchmark #44, Hotels-Motels: hotel room filmed handheld on a phone, 411 frames 960x540",
  "how": "change n (and source) and push to start a run: .github/workflows/namma-v3.yml -> gh_run.py",
- "note": "run 3: same hotel room, fixed QA (dollhouse, needle), full (1.5M) vs big (3M splats) on the two T4s"
+ "note": "collect run 3 (hotel room, full 29.55 dB) and build + publish its tour"
 }
