@@ -1,5 +1,5 @@
 {
- "updated": "2026-10-25 17:05 IST",
+ "updated": "2026-10-25 16:40 IST",
  "goal": "Phone video -> photoreal, walkable 3D of the REAL room. Real pixels first, 3D model for in-between views, generation only for holes (flagged). Free GPUs.",
  "now": "Re-placing walk passes (fixed: both link directions, stricter 23 dB, grouped not dropped) on 318 depth frames (namma-ibr CPU ~20 min).",
  "phases": [
