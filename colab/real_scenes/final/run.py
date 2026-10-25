@@ -13,7 +13,7 @@ RUN = {'full': {'1', '2', '2b', '3', '4'}, 'prep': {'1', '2', '2b', '3', 'cache'
 print('MODE', MODE, flush=True)
 def stage(name):
     def deco(f):
-        if name.split()[0] not in RUN: return
+        if name.split()[0].rstrip(':') not in RUN: return             # 'ffgs: ...' -> 'ffgs'
         try: f(); print(f'== {name}: ok [{time.time()-T0:.0f}s]', flush=True)
         except Exception: print(f'== {name}: FAILED'); traceback.print_exc()
     return deco
@@ -110,8 +110,11 @@ def _():
     hits = glob.glob('/kaggle/input/**/cache/da3_sfm.npz', recursive=True); assert hits, 'no cache: run namma-prep first'
     CACHE = os.path.dirname(hits[0]); print('cache', CACHE, len(os.listdir(f'{CACHE}/frames')), 'frames')
     sh(f'pip -q install ninja "{GSPLAT}" 2>&1 | tail -1', check=True)
-    # restore the build, then make it newer than the freshly installed sources so ninja does not rebuild (~5 min saved)
-    sh(f'mkdir -p ~/.cache && tar xzf {CACHE}/gsplat_ext.tgz -C ~/.cache && find ~/.cache/torch_extensions -type f -exec touch {{}} +')
+    # restore the build from namma-prep (~5 min saved when it is reused)
+    sh(f'mkdir -p ~/.cache && tar xzf {CACHE}/gsplat_ext.tgz -C ~/.cache')
+    # ninja rebuilds when a source is newer than its outputs, and also when an output's time differs from its own log, so leave the
+    # restored build untouched and instead backdate the freshly installed gsplat sources
+    sh('find $(python -c "import importlib.util, os; print(os.path.dirname(importlib.util.find_spec(\'gsplat\').origin))") -exec touch -d "2000-01-01" {} +')
     sh(f'python {W}/repo/colab/real_scenes/final/gsplat_warm.py', check=True)   # once, before two GPUs load it at the same time
     os.makedirs(f'{O}/model', exist_ok=True)
     for x in ('cloud.npz', 'walk.npz'): shutil.copy(f'{CACHE}/{x}', f'{O}/model/{x}')
