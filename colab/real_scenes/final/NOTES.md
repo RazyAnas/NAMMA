@@ -128,3 +128,9 @@ not match the video. Earlier notes calling its contents "real" were reported, ne
   B (MCMC 1.5M, aniso 0.1): 34.2 dB / 0.946, needles 0.1%, only 7.6k steps in 15 min, mean opacity 0.02. Earlier splats on
   disagreeing cameras: 18.8 dB (fog). The camera fix was the missing piece. Floor 21.6 m2 seen, 5.6 m2 walkable.
   Model was tilted 7.9 deg (SfM world not gravity-aligned): to_splat.py now levels with nav.json (floor at y = 0).
+- PROOF 4 run 2 (all aligned passes, small gaps only): holes 10.3% at 30 cm, generated 0.8% (slivers), 9.5% shown 'not filmed'
+  (nothing invented in the composite), honesty strip 37.8 dB; Wan 49 frames = 19.5 min on a T4. BUG found: sweep gave identical
+  holes for one pass vs all 162 photos (2.9/7.8/13/18.5/24.1%): ibr.synth only used the 6 nearest photos, always the same pass.
+  Fix (kmax): keep adding photos (any aligned pass) while they still fill holes. Reproduced on the owner's data here: holes at
+  30 cm 13.1 -> 7.0%, at 50 cm 24.3 -> 13.7% (real pixels; checked visually: the dark doorway behind the pillar, not misplaced).
+  Verdict: video-model filling is honest now but adds little (0.8% of pixels for 20 GPU-minutes); real coverage matters more.

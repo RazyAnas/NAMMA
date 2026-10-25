@@ -48,7 +48,7 @@ def sweep(src, sel, only, fid, out, offsets=(0.1, 0.2, 0.3, 0.4, 0.5), n=9):
         for lab, srcs in (('pass', pas), ('group', only)):
             hs, ls = [], []
             for c in poses:
-                _, m, _, _ = ibr.synth(d, files, K, srcs, Hs, Ws, K[sel[0]], c, exclude=set(), k=6)
+                _, m, _, _ = ibr.synth(d, files, K, srcs, Hs, Ws, K[sel[0]], c, exclude=set(), k=6, kmax=40)
                 hm = to_wan(np.repeat((~m)[..., None].astype(np.float32), 3, 2))[..., 0] > 0.5; sm, lg = split_holes(hm)
                 hs.append(hm.mean()); ls.append(lg.mean())
             rows.append(dict(offset_m=o, sources=lab, holes_pct=round(100 * float(np.mean(hs)), 1), not_filmed_pct=round(100 * float(np.mean(ls)), 1)))
@@ -111,7 +111,7 @@ def main():
     poses, side = path(d, sel, a.frames, a.offset); Kt = K[sel[0]]
     real, hole = [], []
     for c in poses:
-        img, m, _, _ = ibr.synth(d, files, K, only, Hr, Wr, Kt, c, exclude=set(), k=4)
+        img, m, _, _ = ibr.synth(d, files, K, only, Hr, Wr, Kt, c, exclude=set(), k=4, kmax=40)
         real.append(to_wan(img)); hole.append(to_wan(np.repeat((~m)[..., None].astype(np.float32), 3, 2))[..., 0] > 0.5)
     from scipy.ndimage import binary_dilation
     small, large = zip(*[split_holes(h) for h in hole])

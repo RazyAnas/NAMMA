@@ -45,7 +45,7 @@ def warp(src_img, src_depth, Ks, c2w_s, Kt, w2c_t, H, W, zbuf, out, wsum, srcw):
             zbuf[idx[nearer]] = zz[nearer]; out[idx[nearer]] = cc[nearer] * srcw; wsum[idx[nearer]] = srcw
             np.add.at(out, idx[same], cc[same] * srcw); np.add.at(wsum, idx[same], srcw)
 
-def synth(d, files, K, has, H, W, tgt_K, tgt_c2w, exclude, k=4, cache_imgs={}):
+def synth(d, files, K, has, H, W, tgt_K, tgt_c2w, exclude, k=4, cache_imgs={}, kmax=0):
     centers = d['c2w'][:, :3, 3]; fwd = d['c2w'][:, :3, 2]
     tc, tf = tgt_c2w[:3, 3], tgt_c2w[:3, 2]
     dist = np.linalg.norm(centers - tc, axis=1); ang = np.degrees(np.arccos(np.clip(fwd @ tf, -1, 1)))
@@ -54,10 +54,19 @@ def synth(d, files, K, has, H, W, tgt_K, tgt_c2w, exclude, k=4, cache_imgs={}):
     srcs = np.argsort(score)[:k]
     zbuf = np.full(H * W, np.inf, np.float32); out = np.zeros((H * W, 3), np.float32); wsum = np.zeros(H * W, np.float32)
     w2c = np.linalg.inv(tgt_c2w)
-    for rank, j in enumerate(srcs):
+    def add(j):
         g = int(d['idx'][j]); key = (g, W, H)                                       # keyed by size: one process may render at two scales
         if key not in cache_imgs: cache_imgs[key] = image(files, g, W, H)
         warp(cache_imgs[key], d['depth'][j], K[j], d['c2w'][j], tgt_K, w2c, H, W, zbuf, out, wsum, 1.0 / (1 + score[j]))
+    for j in srcs: add(j)
+    if kmax > k:                                                                  # holes left: try further photos (other passes too) while they still fill
+        used, idle = list(srcs), 0
+        for j in np.argsort(score)[k:kmax]:
+            if not np.isfinite(score[j]) or (wsum == 0).mean() < 0.002 or idle >= 6: break
+            before = (wsum > 0).sum(); add(j)
+            if (wsum > 0).sum() - before > 0.001 * H * W: used.append(j); idle = 0
+            else: idle += 1
+        srcs = np.array(used)
     filled = wsum > 0; img = np.zeros((H * W, 3), np.float32); img[filled] = out[filled] / wsum[filled, None]
     return img.reshape(H, W, 3), filled.reshape(H, W), srcs, score[srcs]
 
