@@ -116,7 +116,9 @@ def build(run, tour, public, st='npx --no-install splat-transform'):
     v = PlyData.read(f'{run}/full/model.ply')['vertex'].data; sc = np.sort(np.exp(np.stack([v['scale_0'], v['scale_1'], v['scale_2']], 1)), 1)
     room = float(np.linalg.norm(np.array(b[3:]) - np.array(b[:3]))); bad = (sc[:, 2] > 8 * sc[:, 1]) & (sc[:, 2] > 0.01 * room)
     PlyData([PlyElement.describe(v[~bad], 'vertex')]).write(f'{tour}/clean.ply'); print(f'smears removed: {bad.sum()} of {len(v)}', flush=True)
-    cmd = (f'{st} -w -g cpu {tour}/clean.ply -r {E[0]:.6f},{E[1]:.6f},{E[2]:.6f} -t {t[0]:.6f},{t[1]:.6f},{t[2]:.6f} '
+    # -H 0: SOG's spherical-harmonics clustering takes hours on a CPU (150k splats: SH1 208 s, SH3 > 300 s; SH0 2 s), so the
+    # web tour keeps the base colour only; model.ply keeps all bands
+    cmd = (f'{st} -w -g cpu {tour}/clean.ply -H {os.environ.get("TOUR_SH", 0)} -r {E[0]:.6f},{E[1]:.6f},{E[2]:.6f} -t {t[0]:.6f},{t[1]:.6f},{t[2]:.6f} '
            f'-B {",".join(f"{x:.4f}" for x in b)} -N {tour}/scene.sog')
     print(cmd, flush=True); subprocess.run(cmd, shell=True, check=True); os.remove(f'{tour}/clean.ply')
     boot = dict(contentUrl='./scene.sog', settingsUrl='./settings.json')
