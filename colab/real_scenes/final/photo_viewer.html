@@ -9,7 +9,7 @@ b{color:#7fd1ff}</style></head><body>
 <div id="help">click: walk there (lands on a real photo) · drag: look · WASD / arrows: free walk · Q/E: down/up · N/P: next/previous real photo · click map: go there · H: show never-filmed (magenta) · M: mix photos from other passes</div>
 <script src="three.min.js"></script><script>
 'use strict';
-const V=THREE.Vector3;let C,up,e1,e2,cams=[];const cache=new Map();let holes=false,mix=false;
+const V=THREE.Vector3;let C,up,e1,e2,cams=[];const cache=new Map();let holes=false,mix=true;   // mixing stays inside one group of passes that agree (align_passes)
 const R=new THREE.WebGLRenderer({antialias:true,stencil:true});R.setPixelRatio(Math.min(devicePixelRatio,2));document.body.appendChild(R.domElement);
 R.autoClearStencil=true;const S=new THREE.Scene();let cam;
 const st={p:new V(),yaw:0,pitch:0,anim:null};
@@ -54,7 +54,7 @@ function frame(t){const dt=Math.min(.05,(t-last)/1000);last=t;
   for(const [,c] of ranked().slice(12,15))get(c);trim();
   S.background.set(holes?0xff00ff:0x1b1d22);R.render(S,cam);
   hud.innerHTML='Real photos only. Nearest real frame: <b>'+top[0][1].g+'</b>, '+(top[0][2]*100).toFixed(0)+' cm away'+
-    (top[0][2]<.03?' — <b>this is the photo</b>':'')+'<br>'+cams.length+' verified camera positions · '+(mix?'<b>mixing passes that agree (M)</b>':'one walk pass only (M to mix)');
+    (top[0][2]<.03?' — <b>this is the photo</b>':'')+'<br>'+cams.length+' verified camera positions · '+(mix?'<b>mixing passes that agree (M)</b>':'one walk pass only (M: mix passes that agree)');
   drawMap(top[0][1]);requestAnimationFrame(frame)}
 let mapT;function drawMap(near){const g=map.getContext('2d');g.clearRect(0,0,220,220);const T=mapT;
   g.fillStyle='#8899aa';for(const c of cams){const [x,y]=T(c.p);g.fillRect(x-1,y-1,2,2)}
@@ -67,7 +67,6 @@ fetch('cams.json').then(r=>r.json()).then(j=>{C=j;up=new V(...j.up).normalize();
   const xs=cams.map(c=>c.p.dot(e1)),ys=cams.map(c=>c.p.dot(e2)),x0=Math.min(...xs),y0=Math.min(...ys),sc=200/Math.max(Math.max(...xs)-x0,Math.max(...ys)-y0,.1);
   mapT=p=>[10+(p.dot(e1)-x0)*sc,210-(p.dot(e2)-y0)*sc];
   cam=new THREE.PerspectiveCamera(2*Math.atan(j.Hd/2/j.cams[0].K[4])*180/Math.PI,innerWidth/innerHeight,.02,100);cam.matrixAutoUpdate=false;
-  mix=new Set(cams.map(c=>c.grp)).size===1;   // one aligned group: all photos agree, mix them by default
   S.background=new THREE.Color();Object.assign(st,poseOf(cams[0]));resize();requestAnimationFrame(frame)});
 window.viewer={st,poseOf,cams:()=>cams};   // for scripted checks
 function resize(){R.setSize(innerWidth,innerHeight);if(cam){cam.aspect=innerWidth/innerHeight;cam.updateProjectionMatrix()}}addEventListener('resize',resize);
