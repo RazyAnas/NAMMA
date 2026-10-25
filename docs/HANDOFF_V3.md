@@ -176,12 +176,25 @@ The Claude cloud container **cannot reach kaggle.com** (proxy 403). GitHub's run
   `scripts/site_look/URLS.txt`; lines `tour <url>` are walked through). Screenshots land in
   `hf://datasets/anasrazy/namma-v3-out/site_look/<time>/` (view with hf_fs `attach`). WebGL on the runner is software-rendered:
   screenshots of 3D viewers need long timeouts (fixed: 240 s, 1100x700 viewport).
-- **Tour viewer plan (in progress)**: use the official **SuperSplat Viewer** (`@playcanvas/supersplat-viewer@1.37.0`, static
-  site in `public/`, settings.json schema v2: start camera, `animTracks` (guided fly-through along the real camera path),
-  `annotations` (hotspots), walk mode with a collision `.glb` = our mesh) and **`@playcanvas/splat-transform@3.10.1`**
-  (rotate/translate to level, `--filter-box` room crop, `--filter-floaters`, `.sog` output, even `.html` viewer output with
-  `--viewer-settings`). Engine `playcanvas@2.23.2`. Build on the GitHub runner after collecting a run, publish to a private
-  HF static Space only the owner can open, screenshot it with the site-look tool (token header) before handing over.
+- **Tour (built, tested locally, not yet run on a real model)**: `final/make_tour.py` on the official **SuperSplat Viewer**
+  (`@playcanvas/supersplat-viewer@1.37.0`, its static `public/` site) + **`@playcanvas/splat-transform@3.10.1`** (SOG works on
+  CPU with `-g cpu`; `--filter-floaters` needs a GPU, not used). `plan` (needs gsplat examples Parser + torch + the frames):
+  cameras in room coordinates (level matrix, floor y = 0), room box from SfM points (3-97 %, +12 %), start view = camera nearest
+  the room middle, `animTracks` = 120-key guided walk along the smoothed real camera path (startMode `animTrack`; keyframe times
+  are FRAME NUMBERS, ints), 6 hotspots; settings pass the viewer's `validateSettings(..., {limits: true})`. `build`:
+  splat-transform `-r E -t t -B box -N` -> `scene.sog`, `collision.glb` = mesh if present, index.html bootstrap JSON.
+  **Coordinates (measured)**: the viewer rotates every splat file 180 deg about z (F = diag(-1,-1,1)); splat-transform applies
+  -r/-t in that flipped space (file' = F E F p + F t, Euler 'xyz' extrinsic). So file = F (R p + t) with E = R F, t as is, and
+  settings/box are plain room coordinates. Orbit mode auto-rotates (start view drifts); the guided walk and fly/walk modes don't.
+  `window.app` (PlayCanvas app) is exposed in the standalone page for probing. Local test: tour view at a real camera matches
+  the photo (orientation, not mirrored).
+  **gh_run.py** builds the tour after every run (CPU torch + pycolmap fork + gsplat examples + npm packages on the runner; frames
+  from the run's `images/` (run.py saves them since run 4) or rebuilt from the scene's Kaggle dataset) and publishes it to the
+  **private static HF Space `anasrazy/namma-tour`** (folder per GitHub run + index page; owner opens
+  https://huggingface.co/spaces/anasrazy/namma-tour). The site-look tool sends the HF token only to `*.hf.space`, so it can
+  screenshot the private tour for checking. For run 3 (started before this existed): after it finishes, push RUN.json with
+  `collect: true` (n bump) -> collect run builds + publishes the tour.
 - Network facts for the cloud container: kaggle.com, huggingface.co, splattour.com, unpkg/jsdelivr and Azure blob (workflow
   artifacts) are blocked; github.com, raw.githubusercontent.com, api.github.com (public JSON) and registry.npmjs.org work.
-- **Capture guide**: update `docs/CAPTURE_GUIDE.md` to SplatTour's method (upright, ultra-wide, 3 passes per room).
+- **Capture guide rewritten** (`docs/CAPTURE_GUIDE.md`): SplatTour's method (upright, 0.5x ultra-wide, 3 passes per room, one
+  uncut video per floor, floor out of frame) + our 22 Oct lessons; upload as a private Kaggle dataset, source `kaggle:anasrazy/<name>`.
