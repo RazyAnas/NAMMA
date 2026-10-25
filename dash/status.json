@@ -1,14 +1,14 @@
 {
- "updated": "2026-10-25 21:00 IST",
+ "updated": "2026-10-25 20:40 IST",
  "goal": "Phone video -> photoreal, walkable 3D of the REAL room. Real pixels first, 3D model for in-between views, generation only for holes (flagged). Free GPUs.",
- "now": "Tomorrow (docs/TODO_2026-10-26.md): re-film the room with the capture guide, then ONE job runs the whole pipeline -> model v2 of the full room.",
+ "now": "namma-all: a real handheld room video (Apple ARKitScenes) -> frames -> depth -> cameras -> check -> align -> model v2 (no needles) -> levelled .splat + viewer. ~75 min, one command.",
  "phases": [
   {
    "name": "TOMORROW 26 Oct",
    "steps": [
     [
-     "todo",
-     "FIRST: run the pipeline on a public, well-captured real room (Mip-NeRF 360 \"room\", no signup) to prove the pipeline"
+     "running",
+     "Pipeline on a properly captured real handheld room video (ARKitScenes, free) - namma-all, one command"
     ],
     [
      "todo",
