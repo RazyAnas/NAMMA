@@ -1,5 +1,17 @@
 # Findings that must not be lost (newest first)
 
+## 2026-10-25: SfM cameras run (200 frames, Kaggle T4, 69 min)
+- hloc SuperPoint+LightGlue (sequential 10 + NetVLAD 15 pairs): **195/200 registered, 8425 points, reprojection error 1.07 px**.
+- Chunked DA3 depth scale wandered **32.8% between frames** (std of log DA3/SfM ratio): DA3 alone cannot give consistent geometry
+  for a long walk; use it only for dense depth after per-frame alignment to SfM (`sfm_align.py`).
+- Held-out (frames 3,11,19,..., 25 views) with camera refinement on, after aligning held-out cameras:
+  SfM cameras 22.12 dB / SSIM 0.841 (722k splats); DA3 cameras 22.42 / 0.836 (645k). Raw cameras: 17.1 dB for both.
+  -> camera refinement co-drifts with the scene (moved even SfM cameras ~10 cm / 2.8 deg). Turned off for SfM cameras.
+- 2M MCMC + SH3 variant: 15.3 dB (train 16.3), clearly broken training, NOT evidence against more splats. Suspected cause: means
+  learning rate scaled by point-cloud extent (~3x the camera extent) + init opacity 0.5. Fixed (camera extent, opacity 0.1).
+- Floor "up" from surface normals was 25 deg off (SfM run) and 88 deg off on a synthetic room (it picked a wall): walkable area
+  collapsed to 0.1-0.5 m2. Now taken from the upright phone cameras; synthetic walkable 4.5 -> 14.0 m2, robust to a 25 deg tilt.
+
 ## 2026-10-24: the SDXL-filled panorama invents the room (owner-verified)
 `matrix3d/kaggle/run.py` builds `pano_img.jpg` from 22 Depth Anything 3 frames; ~55% of the sphere is unseen and SDXL inpaints it.
 The owner (who was in the room) says the result shows a **yellow door that does not exist** and a **vent that is really a fan**; it does
