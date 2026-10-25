@@ -1,5 +1,5 @@
 {
- "updated": "2026-10-25 16:30 IST",
+ "updated": "2026-10-25 16:00 IST",
  "goal": "Phone video -> photoreal, walkable 3D of the REAL room. Real pixels first, 3D model for in-between views, generation only for holes (flagged). Free GPUs.",
  "now": "Building the real-photo walkthrough viewer from the 319 verified cameras (Kaggle namma-ibr, CPU ~3 min).",
  "phases": [
