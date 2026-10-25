@@ -39,6 +39,15 @@ Rule for every step: a proof that runs in 5-10 minutes before any long job.
 | **P3** | Does generative repair make off-path views photoreal without inventing? | Browser: HF Space `georgeniu/difix`, feed P1's off-path images | edges/holes cleaned, nothing new |
 | P4 | Can a video model fill the holes consistently? | Only after P1-P3; holes from P1's off-path coverage | owner check against the video |
 
+## 4b. Proof results (2026-10-25)
+- **P1 PASSED**: 16 held-out real frames rebuilt only from neighbours: **27.0 dB, SSIM 0.86, 99% coverage** (splats: 18.8 dB);
+  many views 32-42 dB (photographic). 30 cm off the path real pixels still cover 95%.
+  **4/16 views failed (12-15 dB): the rebuild shows a window where the photo shows a door, with a source 2-7 cm away ->
+  those SfM cameras are wrong** (repetitive corridor). Every splat so far trained on these wrong cameras.
+- P2 (WorldMirror 1.0 demo, 4.5M splats): clearly the room, but streaky; not photoreal. Shape only.
+- P3 (Difix demo): small effect on our images. Final polish only.
+- Next: `ibr_check.py` scores every frame to list the wrong cameras (synthetic test: finds exactly the 3 planted ones).
+
 ## 5. Final pipeline (built from what passes)
 prep (exists: frames, SfM, depth) → base 3D (WorldMirror 2.0 or DA3 Gaussians, per room) → Difix3D+ clean-up → hole fill (P4) →
 viewer with real-frame mode + collision + floor plan. Long jobs only at this last step.

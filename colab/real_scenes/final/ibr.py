@@ -7,7 +7,7 @@ import argparse, glob, json, os, time, numpy as np
 from PIL import Image
 
 def load(cache, scale=2):
-    d = np.load(f'{cache}/da3_sfm.npz'); files = sorted(glob.glob(f'{cache}/frames/*.jpg'))
+    z = np.load(f'{cache}/da3_sfm.npz'); d = {k: z[k] for k in z.files}; files = sorted(glob.glob(f'{cache}/frames/*.jpg'))   # in memory: safe to share with worker processes
     Hd, Wd = d['depth'].shape[1:]; H, W = Hd * scale, Wd * scale
     K = d['K'].copy(); K[:, :2] *= scale
     has = d['depth'].reshape(len(d['idx']), -1).max(1) > 0                      # frames with dense depth (sources)
