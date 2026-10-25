@@ -91,10 +91,12 @@ def tour_step():
     data = f'{T}/data'; os.makedirs(data, exist_ok=True); shutil.copytree(f'{OUT}/sparse', f'{data}/sparse', dirs_exist_ok=True)
     if os.path.isdir(f'{OUT}/images'): os.symlink(f'{OUT}/images', f'{data}/images')
     else:                                                                                  # same frames as the job made (frames.py)
-        DS = f"{KU}/namma-dl3dv-{src[6:16]}" if src.startswith('dl3dv:') else src[7:]
-        rc, o = kg('datasets', 'download', DS, '-p', f'{T}/ds', '--unzip', check=False)
-        if rc: raise RuntimeError(f'dataset download failed: {o[-300:]}')
-        for z in glob.glob(f'{T}/ds/**/*.zip', recursive=True): shutil.unpack_archive(z, f'{T}/ds/unz')
+        if src.startswith('dl3dv:') and src[6:] != 'auto':                                   # straight from HF (same frames, same order)
+            import dl3dv; dl3dv.fetch(src[6:], f'{T}/ds', os.environ['HF_TOKEN'])
+        else:
+            rc, o = kg('datasets', 'download', src[7:], '-p', f'{T}/ds', '--unzip', check=False)
+            if rc: raise RuntimeError(f'dataset download failed: {o[-300:]}')
+            for z in glob.glob(f'{T}/ds/**/*.zip', recursive=True): shutil.unpack_archive(z, f'{T}/ds/unz')
         cnt = {}
         for f in glob.glob(f'{T}/ds/**/*', recursive=True):
             if f.lower().endswith(('.jpg', '.jpeg', '.png')): cnt[os.path.dirname(f)] = cnt.get(os.path.dirname(f), 0) + 1
