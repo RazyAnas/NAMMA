@@ -284,3 +284,8 @@ The Claude cloud container **cannot reach kaggle.com** (proxy 403). GitHub's run
   ZeroGPU Space `dev-bjoern/sam3d-objects-mcp`, no Kaggle): torchvision Faster R-CNN finds sofa/bed/chair/TV/... in the
   hotel-room frames, picks each object's best frame, SAM 3 + SAM 3D Objects (Meta, SAM License) rebuild each in full 3D
   (GLB), viewer page published like a tour (`sam3d/<time>/tour_url.txt`). The object half of the Blender-style pipeline.
+  **First result (`sam3d/20261026-1307`)**: detector picked bed/sofa/chair/TV/suitcase frames correctly (sofa frame_00043, bed
+  frame_00127); sofa rebuilt in 82 s: clean solid shape with the back tufting, legs and the unseen back, but untextured grey
+  (this Space turns texture baking off) and proportions only approximate. Free ZeroGPU quota (~4.5 min/day) allowed only that
+  one object (bed/chair/TV refused: quota). More objects need the quota to reset (24 h) or our own GPU (SAM 3D Objects asks
+  for 32 GB VRAM; a T4 has 16 GB).
