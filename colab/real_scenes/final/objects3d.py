@@ -52,6 +52,75 @@ def merge_masks(node_frame, node_splats, n_splats, min_share=0.5, min_common=30)
     return np.array([uf.find(i) for i in range(len(node_splats))])
 
 
+def vote(comp, node_splats, n):
+    """Each splat's object = the merged component it fell in most often; purity = that share of its votes."""
+    owner, pure = np.full(n, -1), np.zeros(n)
+    if not node_splats: return owner, pure
+    xs = np.concatenate(node_splats).astype(np.int64); cs = np.concatenate([np.full(len(x), c) for c, x in zip(comp, node_splats)])
+    m = int(comp.max()) + 1; uk, cnt = np.unique(xs * m + cs, return_counts=True); sx, sc = uk // m, uk % m
+    tot = np.bincount(sx, weights=cnt, minlength=n); o = np.lexsort((-cnt, sx)); first = o[np.r_[True, sx[o][1:] != sx[o][:-1]]]
+    owner[sx[first]] = sc[first]; pure[sx[first]] = cnt[first] / tot[sx[first]]
+    return owner, pure
+
+
+def palette(n):
+    import colorsys
+    return np.array([colorsys.hsv_to_rgb((i * 0.618034) % 1, 0.85, 1.0) for i in range(n)], np.float32)
+
+
+def views(s, objs, allid, frames, K, W, H, C, pts, out):
+    """What the owner looks at: each object tinted its own colour with its name, beside the untouched model, from the two training
+    views that show the most objects and from above the room (dollhouse); plus model.ply with the tint for a 3D tour."""
+    from gsplat.rendering import rasterization
+    from plyfile import PlyData, PlyElement
+    from PIL import ImageFont
+    import v3_qa, room_prior
+    dev = s['means'].device; N = len(s['means']); ids = torch.as_tensor(allid.astype(np.int64), device=dev)
+    pal = torch.tensor(np.vstack([np.zeros((1, 3), np.float32), palette(len(objs))]), device=dev)
+    tint = s['colors'].clone(); on = ids > 0
+    tint[on, 0] = 0.45 * tint[on, 0] + 0.55 * (pal[ids[on]] - 0.5) / 0.28209479; tint[on, 1:] = 0     # SH DC toward the colour
+    op, sc = torch.sigmoid(s['opacities']), torch.exp(s['scales']); shd = int(round(np.sqrt(s['colors'].shape[1]))) - 1
+    try: font = ImageFont.load_default(size=22)
+    except Exception: font = ImageFont.load_default()
+
+    def render(c2w, Kv, keep, cols):
+        vm = torch.tensor(np.linalg.inv(c2w), dtype=torch.float32, device=dev)[None]; Kt = torch.tensor(Kv, dtype=torch.float32, device=dev)[None]
+        with torch.no_grad():
+            img, _, _ = rasterization(s['means'][keep], s['quats'][keep], sc[keep], op[keep], cols[keep], vm, Kt, W, H, sh_degree=shd)
+        return Image.fromarray((img[0].clamp(0, 1).cpu().numpy() * 255).astype(np.uint8))
+
+    def label(im, c2w, Kv):
+        dr = ImageDraw.Draw(im); w2c = np.linalg.inv(c2w)
+        for i, o in enumerate(objs):
+            pc = o['centre_run'] @ w2c[:3, :3].T + w2c[:3, 3]
+            if pc[2] <= 0: continue
+            u, v = Kv[0, 0] * pc[0] / pc[2] + Kv[0, 2], Kv[1, 1] * pc[1] / pc[2] + Kv[1, 2]
+            if 0 <= u < W and 0 <= v < H:
+                t = f"{o['id']} {o.get('label', '')}"[:28]; c = tuple(int(x * 255) for x in palette(len(objs))[i])
+                bb = dr.textbbox((u, v), t, font=font); dr.rectangle((bb[0] - 3, bb[1] - 2, bb[2] + 3, bb[3] + 2), fill=(0, 0, 0)); dr.text((u, v), t, fill=c, font=font)
+        return im
+
+    every = torch.ones(N, dtype=torch.bool, device=dev); rows = []
+    seen = [sum(1 for o in objs if (lambda pc: pc[2] > 0 and 0 <= K[0, 0] * pc[0] / pc[2] + K[0, 2] < W and 0 <= K[1, 1] * pc[1] / pc[2] + K[1, 2] < H)(
+        o['centre_run'] @ np.linalg.inv(c2w)[:3, :3].T + np.linalg.inv(c2w)[:3, 3])) for _, _, c2w in frames]
+    for fi in np.argsort(seen)[::-1][:2]:
+        c2w = frames[fi][2]; rows.append([Image.fromarray(frames[fi][1]), label(render(c2w, K, every, tint), c2w, K)])
+    up = room_prior.camera_up(C); keep, ctr, rad = v3_qa.dollhouse(s['means'].cpu().numpy(), pts, C, up)
+    side = np.cross(up, C[:, :3, 2].mean(0)); side /= np.linalg.norm(side) + 1e-9
+    c2w = v3_qa.look_at(ctr + up * rad * 1.1 + side * rad * 1.1, ctr, up); Kd = K.copy(); Kd[0, 0] = Kd[1, 1] = 0.5 * W / np.tan(np.radians(35))
+    keep = torch.as_tensor(keep, device=dev)
+    rows.append([render(c2w, Kd, keep, s['colors']), label(render(c2w, Kd, keep, tint), c2w, Kd)])
+    sheet = Image.new('RGB', (2 * W, len(rows) * H))
+    for r, (a, b) in enumerate(rows): sheet.paste(a.resize((W, H)), (0, r * H)); sheet.paste(b, (W, r * H))
+    sheet.save(f'{out}/objects_views.jpg', quality=88)
+    nr = tint.shape[1] - 1; cols = ['x', 'y', 'z', 'f_dc_0', 'f_dc_1', 'f_dc_2'] + [f'f_rest_{i}' for i in range(3 * nr)] + \
+        ['opacity', 'scale_0', 'scale_1', 'scale_2', 'rot_0', 'rot_1', 'rot_2', 'rot_3']
+    arr = torch.cat([s['means'], tint[:, 0], tint[:, 1:].transpose(1, 2).reshape(N, -1), s['opacities'][:, None], s['scales'], s['quats']], 1).cpu().numpy()
+    vv = np.zeros(N, [(c, 'f4') for c in cols])
+    for j, c in enumerate(cols): vv[c] = arr[:, j]
+    os.makedirs(f'{out}/full', exist_ok=True); PlyData([PlyElement.describe(vv, 'vertex')]).write(f'{out}/full/model.ply')
+
+
 def main(data, ply, level_json, mpu, out, nframes=40):
     sys.path.insert(0, os.getcwd()); from datasets.colmap import Parser, Dataset
     from gsplat.rendering import rasterization
@@ -89,15 +158,7 @@ def main(data, ply, level_json, mpu, out, nframes=40):
         say(f'frame {fi + 1}/{len(pick)}: {len(ms)} masks, {int(ok.sum())} visible splats')
     del gen; torch.cuda.empty_cache()
     comp = merge_masks(node_frame, node_splats, len(solid))
-    votes = {}                                                                              # (splat, component) -> votes
-    for c, sp_ in zip(comp, node_splats):
-        for x in sp_: votes[(int(x), int(c))] = votes.get((int(x), int(c)), 0) + 1
-    best, tot = {}, {}
-    for (x, c), n in votes.items():
-        tot[x] = tot.get(x, 0) + n
-        if n > best.get(x, (0, -1))[0]: best[x] = (n, c)
-    owner = np.full(len(solid), -1); pure = np.zeros(len(solid))
-    for x, (n, c) in best.items(): owner[x], pure[x] = c, n / tot[x]
+    owner, pure = vote(comp, node_splats, len(solid))
     # structure: floor / ceiling bands and the room box sides belong to the room
     Xn = X.cpu().numpy(); f, ceil, band, up = room_prior.planes(C, p.points); h = Xn @ up
     near_plane = np.abs(h - f) < band
@@ -148,7 +209,8 @@ def main(data, ply, level_json, mpu, out, nframes=40):
         Pl = (np.c_[Xn[o['members']], np.ones(len(o['members']))] @ L.T)[:, :3] * mpu       # tour coordinates, metres
         lo_, hi_ = np.percentile(Pl, 2, 0), np.percentile(Pl, 98, 0); o['box_m'] = [lo_.round(3).tolist(), hi_.round(3).tolist()]
         o['centre_m'] = ((lo_ + hi_) / 2).round(3).tolist(); o['size_m'] = (hi_ - lo_).round(2).tolist()
-    del s; torch.cuda.empty_cache()
+    for o in objs: o['centre_run'] = Xn[o['members']].mean(0)                                # for labels in the views
+    s = {k: v.cpu() for k, v in s.items()}; torch.cuda.empty_cache()                       # GPU for the naming models
     # names (best effort) + appearance embedding for search
     from transformers import AutoProcessor, CLIPModel, CLIPProcessor
     from transformers import Qwen2_5_VLForConditionalGeneration
@@ -179,7 +241,9 @@ def main(data, ply, level_json, mpu, out, nframes=40):
         cols = 6; sheet = Image.new('RGB', (cols * 230, ((len(tiles) + cols - 1) // cols) * 260), (0, 0, 0))
         for n, t in enumerate(tiles): sheet.paste(t, ((n % cols) * 230, (n // cols) * 260))
         sheet.save(f'{out}/objects_sheet.jpg', quality=88)
-    res = [{k: v for k, v in o.items() if k != 'members'} | dict(splats=int((allid == o['id']).sum())) for o in objs]
+    del vl, cm; torch.cuda.empty_cache(); s = {k: v.to(dev) for k, v in s.items()}
+    views(s, objs, allid, frames, K, W, H, C, p.points, out)
+    res = [{k: v for k, v in o.items() if k not in ('members', 'centre_run')} | dict(splats=int((allid == o['id']).sum())) for o in objs]
     json.dump(dict(objects=res, frames=len(pick), splats=N, metres_per_unit=mpu, minutes=round((time.time() - T0) / 60, 1)),
               open(f'{out}/objects.json', 'w'), indent=1)
     say('OBJECTS DONE', json.dumps([(o['id'], o['label'], o['how'], o.get('size_m')) for o in res]))

@@ -1,6 +1,7 @@
-# Object layer on a finished run (approved plan 26 Oct): which splats are which object, named or not, with photo, size and box
-# (v3/objects_gh.py -> Kaggle final/objects_job.py -> final/objects3d.py). Start: change "n" in colab/real_scenes/v3/OBJECTS.json and
-# push, when no other Kaggle job is running. Results: hf://datasets/<user>/namma-v3-out/objects/<time>/.
+# Object layer on a finished run (approved plan 26 Oct): which splats are which object, named or not, with photo, size and box,
+# then a tour of the object-tinted model + screenshots (v3/objects_gh.py -> Kaggle final/objects_job.py -> final/objects3d.py).
+# Start: change "n" in colab/real_scenes/v3/OBJECTS.json and push, when no other Kaggle job is running.
+# Results: hf://datasets/<user>/namma-v3-out/objects/<time>/ (objects.json, sheets, tour link).
 name: objects
 on:
   push:
@@ -19,12 +20,20 @@ jobs:
           sparse-checkout: |
             colab/real_scenes/v3
             colab/real_scenes/final
+            scripts/site_look
       - uses: actions/setup-python@v5
         with:
           python-version: "3.11"
-      - run: pip install -q kaggle==2.2.5 huggingface_hub
-      - name: Kaggle object-layer job
+      - run: pip install -q kaggle==2.2.5 huggingface_hub numpy pillow playwright==1.49.1 && python -m playwright install --with-deps chromium
+      - name: Kaggle object-layer job + tour
         env:
           KAGGLE_API_TOKEN: ${{ secrets.KAGGLE_API_TOKEN || secrets.KAGGLE_TOKEN }}
           HF_TOKEN: ${{ secrets.HF_TOKEN || secrets.HUGGINGFACE_WRITE_TOKEN }}
         run: python colab/real_scenes/v3/objects_gh.py
+      - name: Screenshots
+        if: env.TOUR_RUN != ''
+        env:
+          HF_TOKEN: ${{ secrets.HF_TOKEN || secrets.HUGGINGFACE_WRITE_TOKEN }}
+        run: |
+          sleep 90
+          python scripts/site_look/look.py
