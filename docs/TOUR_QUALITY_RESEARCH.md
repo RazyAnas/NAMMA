@@ -115,16 +115,15 @@ both makes the splat blurry again (FreeFix, 3DGS-Enhancer, GSFixer all name mult
 - **Qwen-Image-Edit-2511** (Alibaba, **Apache 2.0, open weights**, ChatGPT/Gemini-class editing): takes several input images
   (render + real reference photos), new-viewpoint ability built in, 4-step Lightning LoRA. 20B parameters: on Kaggle's T4 only
   as a 4-bit/GGUF build; quality and speed on a T4 **unverified** (community reports of artefacts at very low bits) -> smoke test.
-- **Gemini 2.5 Flash Image ("Nano Banana") / OpenAI gpt-image**: best quality, multi-image input, no GPU needed, but paid
-  (~$0.04 per image from price aggregators, not verified on the official pages; free tier for images is unclear). ~60 views per
-  room = ~$2-3. Would need an API key as a GitHub secret.
+- ~~Gemini / OpenAI image APIs~~: **ruled out by the owner (26 Oct): free and open-source only, nothing paid.**
 - Difix3D+ (baseline we measured, non-commercial), FreeFix (MIT, SDXL/Flux, no fine-tuning), GSFixer (video model, heavy),
   ArtifactWorld (Apr 2026, video model trained on 107k artefact clips; code "to be released").
 **Proof**: hold out a contiguous stretch of the video (not every 8th frame: "Mind the Gap" shows that only tests the path) and
 measure that stretch before/after; plus the off-path QA views.
 **Plan (`final/fix_views.py`, after run 4)**: render ~60 views 30-60 cm beside the path at walk height -> mask -> editor with 2
 nearest real photos -> composite -> 3 rounds of fine-tuning (weight 0.3, colour affine) -> QA on the held-out stretch.
-Smoke test first: 5 views through Qwen-Image-Edit-2511 on a T4 (time per image, does it keep the layout).
+Smoke test first: 5 views through Qwen-Image-Edit-2511 on a T4 (time per image, does it keep the layout). If it does not fit or is
+too slow: FreeFix with SDXL (open), then Difix3D+ (free, but its licence is non-commercial: research demo only).
 
 Sources: [FreeFix](https://arxiv.org/abs/2601.20857), [GSFixer](https://github.com/GVCLab/GSFixer),
 [ExploreGS](https://arxiv.org/abs/2508.06014), [ArtifactWorld](https://arxiv.org/abs/2604.12251),

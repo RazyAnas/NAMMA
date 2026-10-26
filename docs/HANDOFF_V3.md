@@ -5,6 +5,7 @@ describe the older custom pipeline and are kept for history. Measured findings, 
 Repo `github.com/RazyAnas/NAMMA` (public), branch **`claude/wonderful-cori-i3fn41`** (all work below is there, not on `main`).
 
 ## 1. Goal and owner rules
+- **Free and open-source tools only, nothing paid** (owner, 26 Oct): no paid APIs (Gemini/OpenAI image APIs ruled out), free GPUs (Kaggle).
 - **Goal**: phone video of a real room in → photoreal, walkable 3D model of *that* room out (real estate). Generation may only
   fill gaps, never replace or invent what was filmed, and generated content is flagged. Free GPUs only (Kaggle T4 x2).
   One command: video in, best possible 3D model out. Owner wants "extreme photorealism" (like Marble / Tencent HY-World) and
