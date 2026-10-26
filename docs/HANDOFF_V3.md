@@ -264,3 +264,6 @@ The Claude cloud container **cannot reach kaggle.com** (proxy 403). GitHub's run
 - **Qwen smoke test, attempt 2 (`qwen_smoke/20261026-0929`)**: Q4_K_M (13.2 GB) out of memory on one T4 (fp16 and bf16);
   Q3_K_M fp16 gave blank/NaN images; Lightning LoRA failed (Kaggle's torchao 0.10 too old). Attempt 3: torchao removed, bf16,
   Q4_K_M split by hand over both T4s (`split_gpus`), Q3_K_M bf16 on one T4 as fallback.
+- **Qwen attempt 3 (`qwen_smoke/20261026-1010`)**: LoRA loads now (torchao removed), split over 2 T4s works, but attention
+  needed a 5.1 GB block (3 inputs x ~4000 tokens at 1 MP each; bf16 on a T4 falls back to plain attention). Attempt 4: each
+  input image at 512^2 for the VAE (`qp.VAE_IMAGE_SIZE`), output still 1024x576, expandable CUDA segments.

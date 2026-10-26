@@ -19,6 +19,7 @@ PROMPT = CFG.get('prompt', 'Picture 1 is a render of a hotel room from a 3D scan
                  'Keep exactly the same camera position, framing, perspective, layout and objects as Picture 1; do not add, move or '
                  'remove anything.')
 os.environ['HF_HOME'] = f'{W}/hf'; REP = dict(cfg=CFG, prompt=PROMPT, cases=[])
+os.environ['PYTORCH_CUDA_ALLOC_CONF'] = 'expandable_segments:True'                         # less fragmentation
 
 def sh(c, check=False):
     print(f'\n[{time.time()-T0:5.0f}s] $ {c[:160]}', flush=True); r = subprocess.call(c, shell=True, executable='/bin/bash')
@@ -97,6 +98,9 @@ del means, scales, quats, opac, colors, sh0, shN; gc.collect(); torch.cuda.empty
 from transformers import Qwen2_5_VLForConditionalGeneration, BitsAndBytesConfig
 from diffusers import QwenImageEditPlusPipeline, FlowMatchEulerDiscreteScheduler, QwenImageTransformer2DModel, GGUFQuantizationConfig, AutoencoderKLQwenImage
 from diffusers.pipelines.qwenimage.pipeline_qwenimage_edit_plus import calculate_dimensions, CONDITION_IMAGE_SIZE
+import diffusers.pipelines.qwenimage.pipeline_qwenimage_edit_plus as qp                    # each input image becomes ~4000
+qp.VAE_IMAGE_SIZE = int(CFG.get('vae_area', 512 * 512))                                  # tokens at 1 MP; a T4 has no flash
+                                                                                         # attention in bf16 -> 512^2 per input
 emb = {}
 for dt in (torch.float16, torch.bfloat16):
     try:
