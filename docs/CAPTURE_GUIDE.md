@@ -28,6 +28,10 @@ stopping in the frame; walk hallways on the way.
 | **Keep the floor out of the frame**: aim at eye level | Repetitive tiles filling the frame is the most common reason a room fails |
 | **Pass look-alike places slowly with something unique in view** (a switch board, a bin, a sticker) | 22 Oct: both corridor ends looked alike and the solver put a window where a door is |
 | **One video per floor, never cut**: start at the entrance, stop after the last room | Rooms are linked by the walk between them; a cut loses that link |
+| **Every doorway twice: once walking in, once walking out, slowly** | Rooms are trained one by one and joined at the doors; both directions give the overlap that joins them |
+| **Same lights the whole time; don't switch lights between rooms** | Brightness jumps between rooms show up as seams and blotchy walls |
+| **Show big furniture from two sides** (walk past the sofa, bed, table so both ends are seen) | Each object gets its own solid shape for walking into, clicking and search; two sides make it fit |
+| **Mirrors: pass them sideways, don't stand facing one** | The model builds a fake room behind a mirror; a short, side-on view keeps it small |
 
 ## Send it
 Upload the video to Kaggle as a new **private** dataset (kaggle.com -> Datasets -> New dataset -> drop the video; any name, e.g.

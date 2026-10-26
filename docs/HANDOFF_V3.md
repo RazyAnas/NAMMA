@@ -297,3 +297,8 @@ The Claude cloud container **cannot reach kaggle.com** (proxy 403). GitHub's run
   0.3 weight beside the real frames. Held-out frames never trained on (Difix's own split trains on every 8th frame: patched)
   and measured exposure-fair before/after. Caveat: Difix was trained on 112 of DL3DV-Benchmark's 140 scenes and run 4's room
   is one of them, so a good result here can be flattered; the owner's home is the fair test. Results: `difix/<time>/`.
+- **Object layer plan (approved 26 Oct, after run 6)**: copy Hyper3D WorldGen's good idea for free on a real video. The splat
+  stays the look; each object gets an id/label/embedding (segment-everything masks voted onto splats + 3D clusters, so unknown
+  objects are found too) and a proxy mesh (SAM 3D / Hunyuan3D fitted to its real points, measured shape as fallback) for
+  collision, clicking, search and Blender export. Whole house = room by room. Details: `docs/TOUR_QUALITY_RESEARCH.md` 9.
+  Order: Difix v2 -> owner's home video (priority) -> run 6 -> object layer demo.

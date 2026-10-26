@@ -188,3 +188,24 @@ Sources: [Difix3D+ paper](https://arxiv.org/pdf/2503.01774), [Difix3D code](http
 [GSFixer](https://github.com/gvclab/GSFixer), [ArtiFixer paper](https://arxiv.org/pdf/2603.00492),
 [ArtiFixer card](https://huggingface.co/nvidia/ArtiFixer), [DN-Splatter](https://arxiv.org/html/2403.17822v3),
 [TIDI-GS](https://arxiv.org/pdf/2601.09291).
+
+## 9. Hyper3D WorldGen (owner's video, 26 Oct) -> NAMMA object layer
+
+WorldGen (Deemos, Aug/Sep 2026; built on CAST, SIGGRAPH 2025 best paper): one image -> each object a complete Rodin mesh
+(automatic or pin selection, regenerate/edit, "pose correction", optional physics for USDZ) + a 3DGS background; exports to
+Blender (script + proxy object), Unity, Unreal. Paid (Rodin credits, 2-week trial, no public WorldGen API), CAST has no official
+code, and from one photo the background and hidden sides are invented, so it is a reference, not a tool for a true-to-room tour.
+
+What we copy for free (approved plan, after run 6): keep the real splat for looks and add an object layer. Objects are found
+without needing names (segment-everything masks voted onto splats + 3D clusters off the floor/wall planes), named best-effort by a
+vision-language model (else "object N" + photo) with an appearance embedding for search. A proxy mesh per object (SAM 3D /
+Hunyuan3D fitted by ICP to the object's real points and snapped to the floor; the measured TSDF/hull shape if the fit is off by
+more than 5 cm) is used for collision, clicking, moving and hidden sides, never drawn over the real splats. Export: background
+.ply + per-object .ply/.glb + labels JSON (Blender via KIRI 3DGS Render, Apache). A whole house works room by room: one camera
+solve, rooms trained separately with door overlap (2 at a time on Kaggle's 2 T4s, ~8-10 GPU h per 5-room house), one file per
+room streamed in the viewer.
+
+Sources: [WorldGen on X](https://x.com/DeemosTech/status/2094440163246256523),
+[launch article](https://finance.yahoo.com/technology/ai/articles/hyper3d-launches-worldgen-turn-single-120600509.html),
+[Rodin pricing](https://hyper3d.ai/pricing), [CAST](https://arxiv.org/abs/2502.12894v2),
+[KIRI 3DGS Render](https://radiancefields.com/kiri-engine-ships-3dgs-render-5.0-for-blender).
