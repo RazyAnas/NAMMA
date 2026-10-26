@@ -1,14 +1,16 @@
 {
- "n": 9,
- "collect": true,
+ "n": 10,
+ "collect": false,
  "source": "dl3dv:389a460ca1995e0658e85fe8e6b520b4e88b370cd6710dfe728b1564bba31aee",
  "kaggle_user": "anasrazy",
  "env": {
   "STEPS": "30000",
   "NFRAMES": "420",
-  "VARIANTS": "[[\"full\", 30000, 1500000], [\"big\", 30000, 3000000]]"
+  "LONG": "1440",
+  "VARIANTS": "[[\"full\", 30000, 1500000], [\"geo\", 20000, 0, \"2dgs\"]]"
  },
  "scene": "DL3DV-Benchmark #44, Hotels-Motels: hotel room filmed handheld on a phone, 411 frames 960x540",
  "how": "change n (and source) and push to start a run: .github/workflows/namma-v3.yml -> gh_run.py",
- "note": "collect run 3 (hotel room, full 29.55 dB) and build + publish its tour"
+ "note": "run 4: same hotel room from the 1920x1080 frames trained at 1440 px (sharper), full 3DGS + 2DGS geometry -> mesh (walk collision with furniture); tour v2",
+ "dl3dv_res": "images_2"
 }

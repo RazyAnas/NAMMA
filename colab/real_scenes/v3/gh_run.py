@@ -28,11 +28,12 @@ else:
         tok = os.environ.get('HF_TOKEN'); assert tok, 'add the repository secret HF_TOKEN (after clicking Agree on DL3DV/DL3DV-Benchmark)'
         import dl3dv
         from PIL import Image
-        scene = src[6:]; rc, st = 1, ''
+        scene = src[6:]; rc, st = 1, ''; RES = cfg.get('dl3dv_res', 'images_4')            # images_4 960x540, images_2 1920x1080
+        suf = '' if RES == 'images_4' else '-' + RES.replace('images_', 'r')
         if scene != 'auto':                                                                    # already on Kaggle? then no download
-            rc, st = kg('datasets', 'status', f'{KU}/namma-dl3dv-{scene[:10]}', check=False)
-        if rc or 'ready' not in st.lower(): scene, folder = dl3dv.fetch(scene, 'dl', tok)
-        info['scene'] = scene; slug = f'namma-dl3dv-{scene[:10]}'; DS = f'{KU}/{slug}'         # one dataset per scene: no version races
+            rc, st = kg('datasets', 'status', f'{KU}/namma-dl3dv-{scene[:10]}{suf}', check=False)
+        if rc or 'ready' not in st.lower(): scene, folder = dl3dv.fetch(scene, 'dl', tok, RES)
+        info['scene'] = scene; slug = f'namma-dl3dv-{scene[:10]}{suf}'; DS = f'{KU}/{slug}'    # one dataset per scene + size: no races
         rc, st = kg('datasets', 'status', DS, check=False)
         if rc or 'ready' not in st.lower():
             files = sorted(glob.glob(f'{folder}/*.png') + glob.glob(f'{folder}/*.jpg')); assert files, f'no frames in {folder}'
@@ -61,7 +62,7 @@ else:
     say(kg('kernels', 'push', '-p', 'kern')[1][-400:]); t_push = time.time()
 
 seen, last, s = False, '', ''
-while time.time() - T0 < 320 * 60:
+while time.time() - T0 < 345 * 60:
     time.sleep(60); rc, s = kg('kernels', 'status', KID, check=False); s = s.lower()
     if rc: say('status check failed:', s[-150:]); continue
     if s != last: say('status:', s[-100:]); last = s
@@ -92,7 +93,7 @@ def tour_step():
     if os.path.isdir(f'{OUT}/images'): os.symlink(f'{OUT}/images', f'{data}/images')
     else:                                                                                  # same frames as the job made (frames.py)
         if src.startswith('dl3dv:') and src[6:] != 'auto':                                   # straight from HF (same frames, same order)
-            import dl3dv; dl3dv.fetch(src[6:], f'{T}/ds', os.environ['HF_TOKEN'])
+            import dl3dv; dl3dv.fetch(src[6:], f'{T}/ds', os.environ['HF_TOKEN'], cfg.get('dl3dv_res', 'images_4'))
         else:
             rc, o = kg('datasets', 'download', src[7:], '-p', f'{T}/ds', '--unzip', check=False)
             if rc: raise RuntimeError(f'dataset download failed: {o[-300:]}')
