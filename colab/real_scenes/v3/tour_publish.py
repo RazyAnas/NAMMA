@@ -9,10 +9,10 @@ Used by gh_run.py after a run, and on its own (.github/workflows/tour-publish.ym
 import os, re, secrets, sys
 
 
-def publish(api, user, results_repo, run, tour_dir, say=print):
+def publish(api, user, results_repo, run, tour_dir, say=print, url_path=None):
     sp = f'{user}/namma-tour'; api.create_repo(sp, repo_type='space', space_sdk='static', private=False, exist_ok=True)
     for f in {x.split('/')[0] for x in api.list_repo_files(sp, repo_type='space') if '/' in x}:      # old guessable folders out
-        if not re.fullmatch(r'\d{8}-\d{4}-[0-9a-f]{20}', f): api.delete_folder(f, repo_id=sp, repo_type='space')
+        if not re.fullmatch(r'\d{8}-\d{4}(-[a-z]+)?-[0-9a-f]{20}', f): api.delete_folder(f, repo_id=sp, repo_type='space')
     folder = f'{run}-{secrets.token_hex(10)}'
     api.upload_folder(folder_path=tour_dir, path_in_repo=folder, repo_id=sp, repo_type='space', ignore_patterns=['plan.json'])
     page = '<!doctype html><meta charset="utf-8"><title>NAMMA</title><body style="font:16px sans-serif;padding:24px;background:#111;color:#ddd"><h1>NAMMA 3D tours</h1><p>Open a tour with its link.</p>'
@@ -22,7 +22,7 @@ def publish(api, user, results_repo, run, tour_dir, say=print):
     try: api.update_repo_settings(sp, repo_type='space', private=False)
     except Exception: api.update_repo_visibility(sp, private=False, repo_type='space')
     open('tour_url.txt', 'w').write(f'https://{user}-namma-tour.static.hf.space/{folder}/index.html\n')
-    api.upload_file(path_or_fileobj='tour_url.txt', path_in_repo=f'{run}/tour_url.txt', repo_id=results_repo, repo_type='dataset')
+    api.upload_file(path_or_fileobj='tour_url.txt', path_in_repo=url_path or f'{run}/tour_url.txt', repo_id=results_repo, repo_type='dataset')
     say('tour published (public Space, random folder; link in the private results dataset: tour_url.txt)')
 
 
