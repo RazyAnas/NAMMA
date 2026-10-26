@@ -4,6 +4,7 @@
                 (longest / middle axis > 10: smears; thin flat discs are normal and only counted as flat_fraction), pass = exposure-fair PSNR >= 28 dB and < 10 % needles;
   qa_sheet.jpg  row 1: three held-out frames, real | model;  row 2: two views 50 cm-equivalent beside the walk, then a dollhouse
                 (room box only, ceiling cut) from outside above and from the top: missing walls, floaters and smears show up here;
+  qa_detail.jpg 100 % crops of the most textured part of each held-out frame, real | model (fine-detail loss)
   model.splat   levelled (floor at y = 0, up = +y) for SuperSplat, plus model.ply.
 Runs with the system python inside gsplat's examples folder (needs its Parser).
 Usage: python v3_qa.py <examples dir> <data dir> <result dir> <out dir>"""
@@ -55,6 +56,16 @@ def main(examples, data, result, out):
         d = vs[k]; gt = d['image'].numpy() / 255; i = val[k]
         tiles.append(np.concatenate([gt, render(C[i], d['K'].numpy(), gt.shape[1], gt.shape[0])[0]], 1))
     row1 = np.concatenate(tiles, 1)
+    # qa_detail.jpg: 100 % crops (no downscaling) of the most textured 480 px square of each held-out frame, real | model, so
+    # fine-detail loss on well-filmed views shows (the owner's complaint after run 4), not hidden by the sheet's size
+    det = []
+    for tl in tiles:
+        g, m_ = tl[:, :tl.shape[1] // 2], tl[:, tl.shape[1] // 2:]; c = min(480, g.shape[0], g.shape[1])
+        e = np.abs(np.diff(g.mean(2), axis=0))[:, :-1] + np.abs(np.diff(g.mean(2), axis=1))[:-1]       # texture energy
+        ii = np.cumsum(np.cumsum(np.pad(e, ((1, 0), (1, 0))), 0), 1); y, x = np.meshgrid(np.arange(0, e.shape[0] - c, 16), np.arange(0, e.shape[1] - c, 16), indexing='ij')
+        tot = ii[y + c, x + c] - ii[y, x + c] - ii[y + c, x] + ii[y, x]; y0, x0 = y.flat[tot.argmax()], x.flat[tot.argmax()]
+        det.append(np.concatenate([g[y0:y0 + c, x0:x0 + c], m_[y0:y0 + c, x0:x0 + c]], 1))
+    Image.fromarray((np.concatenate(det, 0) * 255).astype(np.uint8)).save(f'{out}/qa_detail.jpg', quality=92)
     up = camera_up(C); pts = p.points
     side = 0.15 * np.linalg.norm(C[:, :3, 3] - C[:, :3, 3].mean(0), axis=1).max()  # ~50 cm in a small room
     row2, alphas = [], []
