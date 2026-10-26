@@ -302,3 +302,12 @@ The Claude cloud container **cannot reach kaggle.com** (proxy 403). GitHub's run
   objects are found too) and a proxy mesh (SAM 3D / Hunyuan3D fitted to its real points, measured shape as fallback) for
   collision, clicking, search and Blender export. Whole house = room by room. Details: `docs/TOUR_QUALITY_RESEARCH.md` 9.
   Order: Difix v2 -> owner's home video (priority) -> run 6 -> object layer demo.
+- **Difix3D+ results.**
+  - **v1** (`difix/20261026-1850`, 4 h on a T4: 9 s per Difix view). Held-out frames, exposure-fair: 29.51 -> 30.31 dB, but
+    LPIPS 0.189 -> 0.195 (worse). The owner saw blotchy walls: the fine-tune ran without run 4's exposure correction, and Difix
+    re-shades each view a little differently.
+  - **v2** (`difix/20261026-1925`, 87 min): bilateral grid on real frames only, and a smear-only mask (colour-matched
+    difference > 0.08). Held-out: exposure-fair PSNR 29.51 -> 30.31, SSIM 0.932 -> 0.937, LPIPS 0.189 -> 0.183, all better.
+    Walls are no longer blotchy (sheet row 5). Smears by the mirror/bathroom and on the floor are only slightly reduced in the
+    tour (screenshots `site_look/20261026-2113`). A small, safe gain, not the fix for off-path smears.
+  - Caveat: Difix may have seen this DL3DV room in training.
