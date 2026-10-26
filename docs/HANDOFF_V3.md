@@ -246,3 +246,14 @@ The Claude cloud container **cannot reach kaggle.com** (proxy 403). GitHub's run
   frame per time window; ffmpeg H.264 fallback if OpenCV cannot decode it). Planned **run 6** after the Qwen test: NFRAMES ~900,
   LONG 1440, STEPS 40000, variants per run 5's winner. Expected: better detail near the path and during fast turns; it does not
   add viewpoints the camera never reached (off-path smears need the room prior / AI fix).
+- **Run 5 (results `20261026-0610`, room prior A/B, same frames/settings as run 4)**: `full` 29.07 dB exposure-fair / SSIM 0.925 /
+  needles 13 %; `prior` (final/room_prior.py) 29.00 dB / 0.925 / **needles 0.0 %** (pass). QA sheets look the same; the prior
+  costs nothing measurable and removes needle splats -> use `prior` from run 6 on. Mesh from 3DGS: 74 % voxels observed.
+  Tour published (gh_run publish fix works): link in `20261026-0610/tour_url.txt`.
+- **Hybrid "solid room" demo (`final/hybrid_demo.py`, hybrid-demo.yml, results `hybrid_demo/20261026-0906`)**: room shell from
+  the TSDF mesh footprint + furniture mesh, both textured from real training photos (Open3D ray-cast visibility), as flat
+  opaque surface splats. Synthetic room: fine (29-35 dB). **Run 4 room: worse than the splat model, stopped**: held-out
+  13.6 / 20.2 / 22.5 dB vs splat 25.1 / 26.0 / 28.2 (QA JPEG); wavy textures (TSDF surface noise), black holes (mesh holes),
+  floor only 2.3 % textured (bits of the TSDF floor above the shell floor block it), outline 78 corners. Lesson: with phone
+  video only, mesh geometry is not accurate enough to carry the photos; splats stay the base. Possible later use: shell planes
+  UNDER the trained splats only where splats are unreliable (not replacing them).
