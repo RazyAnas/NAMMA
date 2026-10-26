@@ -227,7 +227,8 @@ def main(data, ply, level_json, mpu, out, nframes=40):
         with torch.no_grad():
             enc = vp(text=[text], images=[im], return_tensors='pt').to(dev)
             ans = vp.batch_decode(vl.generate(**enc, max_new_tokens=12, do_sample=False)[:, enc['input_ids'].shape[1]:], skip_special_tokens=True)[0]
-            e = cm.get_image_features(**cp(images=im, return_tensors='pt').to(dev)); e = (e / e.norm(dim=-1, keepdim=True))[0]
+            vo = cm.vision_model(pixel_values=cp(images=im, return_tensors='pt')['pixel_values'].to(dev))  # same in every transformers
+            e = cm.visual_projection(vo.pooler_output); e = (e / e.norm(dim=-1, keepdim=True))[0]          # version (v5 changed get_image_features)
         ans = ans.strip().strip('.').lower()[:40]; o['vlm'] = ans
         o['label'] = ans if ans and ans not in GENERIC and len(ans.split()) <= 5 else f'object {i + 1}'
         o['embedding'] = [round(float(x), 4) for x in e.cpu()]
