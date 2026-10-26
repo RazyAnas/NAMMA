@@ -63,6 +63,40 @@ def vote(comp, node_splats, n):
     return owner, pure
 
 
+def refine(objs, frames, visf, n, room, min_vis=30, npos=8, nneg=8):
+    """Automatic 'AI brush' (WorldGen's pins without a person): in every frame each object gets positive pins on its own visible
+    splats, negative pins on neighbouring objects' splats inside its box, and that box; SAM 2 cuts it out; then every visible splat
+    re-votes from those per-object cut-outs. Splats no cut-out covered keep their first-pass object."""
+    from sam2.sam2_image_predictor import SAM2ImagePredictor
+    pr = SAM2ImagePredictor.from_pretrained('facebook/sam2.1-hiera-large'); rng = np.random.default_rng(0)
+    oid = np.full(n, -1)
+    for i, o in enumerate(objs): oid[o['members']] = i
+    ids, sets, used = [], [], np.zeros(len(objs), int)
+    for (gi, img, c2w), (idx, u, v) in zip(frames, visf):
+        lab = oid[idx]; present = [i for i in np.unique(lab[lab >= 0]) if (lab == i).sum() >= min_vis]
+        if not present: continue
+        with torch.inference_mode(): pr.set_image(img)
+        for i in present:
+            me = np.where(lab == i)[0]; x0, y0, x1, y1 = np.percentile(u[me], 2), np.percentile(v[me], 2), np.percentile(u[me], 98), np.percentile(v[me], 98)
+            other = np.where((lab >= 0) & (lab != i) & (u >= x0) & (u <= x1) & (v >= y0) & (v <= y1))[0]
+            pos = rng.choice(me, size=min(npos, len(me)), replace=False); neg = rng.choice(other, size=min(nneg, len(other)), replace=False) if len(other) else other
+            pts = np.r_[np.c_[u[pos], v[pos]], np.c_[u[neg], v[neg]]].astype(np.float32)
+            with torch.inference_mode():
+                m, _, _ = pr.predict(point_coords=pts, point_labels=np.r_[np.ones(len(pos)), np.zeros(len(neg))].astype(np.int32),
+                                     box=np.array([x0, y0, x1, y1], np.float32), multimask_output=False)
+            inside = m[0][v, u] > 0.5; ids.append(i); sets.append(idx[inside]); used[i] += 1
+    del pr; torch.cuda.empty_cache()
+    if not sets: return objs
+    owner, pure = vote(np.array(ids), sets, n); owner = np.where(owner >= 0, owner, oid)
+    out = []
+    for i, o in enumerate(objs):
+        mem = np.where((owner == i) & ~room)[0]
+        if len(mem) < 300: continue
+        out.append(dict(o, members=mem, purity=float(pure[mem][pure[mem] > 0].mean()) if (pure[mem] > 0).any() else o['purity'],
+                        brushed_frames=int(used[i])))
+    return out
+
+
 def palette(n):
     import colorsys
     return np.array([colorsys.hsv_to_rgb((i * 0.618034) % 1, 0.85, 1.0) for i in range(n)], np.float32)
@@ -135,7 +169,7 @@ def main(data, ply, level_json, mpu, out, nframes=40):
     from sam2.automatic_mask_generator import SAM2AutomaticMaskGenerator
     gen = SAM2AutomaticMaskGenerator.from_pretrained('facebook/sam2.1-hiera-large', points_per_side=24, pred_iou_thresh=0.8,
                                                      stability_score_thresh=0.9, min_mask_region_area=400)
-    node_frame, node_splats, frames = [], [], []
+    node_frame, node_splats, frames, visf = [], [], [], []
     for fi, j in enumerate(pick):
         d = ds[int(j)]; img = np.asarray(Image.fromarray(d['image'].numpy().astype(np.uint8)).resize((W, H), Image.LANCZOS))
         c2w = d['camtoworld'].numpy(); frames.append((int(ds.indices[int(j)]), img, c2w))
@@ -151,7 +185,8 @@ def main(data, ply, level_json, mpu, out, nframes=40):
         lab = np.zeros((H, W), np.int32)                                                    # largest mask < 25 % of the frame wins
         ms = sorted([m for m in ms if m['area'] < 0.25 * W * H], key=lambda m: m['area'])
         for mi, m in enumerate(ms): lab[m['segmentation']] = mi + 1
-        idx = ok.nonzero()[:, 0].cpu().numpy(); mid = lab[v[idx].cpu().numpy(), u[idx].cpu().numpy()]
+        idx = ok.nonzero()[:, 0].cpu().numpy(); uf, vf = u[idx].cpu().numpy(), v[idx].cpu().numpy(); mid = lab[vf, uf]
+        visf.append((idx, uf, vf))
         for mi in np.unique(mid[mid > 0]):
             sel = idx[mid == mi]
             if len(sel) >= 30: node_frame.append(fi); node_splats.append(sel)
@@ -183,6 +218,8 @@ def main(data, ply, level_json, mpu, out, nframes=40):
             mem = free[cl == c]
             if len(mem) >= 500 and np.ptp(h[mem]) > 0.1 / mpu: objs.append(dict(members=mem, how='geometry', purity=1.0))
     say(len(objs), 'objects', sum(o['how'] == 'geometry' for o in objs), 'of them found only by geometry')
+    if os.environ.get('OBJ_REFINE', '1') == '1' and objs:                                  # automatic 'AI brush' pass
+        objs = refine(objs, frames, visf, len(solid), room); say(len(objs), 'objects after the AI-brush pass')
     # per splat id (faint splats: nearest opaque splat's object)
     sid = np.zeros(len(solid), np.uint16)
     for i, o in enumerate(objs): sid[o['members']] = i + 1
