@@ -6,7 +6,12 @@ import json, os, re, time
 from playwright.sync_api import sync_playwright
 OUT = 'out'; os.makedirs(OUT, exist_ok=True); MAX_TOURS = int(os.environ.get('MAX_TOURS', 4))
 urls = [u.strip() for u in open(os.path.join(os.path.dirname(__file__), 'URLS.txt')) if u.strip() and not u.startswith('#')]
-log = {}
+log = {}; SECRET = None
+if os.environ.get('TOUR_RUN'):           # our own tour: link read from the private results dataset, never printed (public logs)
+    from huggingface_hub import hf_hub_download
+    t = open(hf_hub_download('anasrazy/namma-v3-out', f"{os.environ['TOUR_RUN']}/tour_url.txt", repo_type='dataset', token=os.environ['HF_TOKEN'])).read().strip()
+    SECRET = t.split('/')[-2]; urls = ['tour ' + t + '?webgl']
+hide = lambda x: x.replace(SECRET, '<folder>') if SECRET else x
 
 def shot(page, name):
     try: page.screenshot(path=f'{OUT}/{name}.jpg', type='jpeg', quality=85, timeout=240000); print('shot', name, flush=True)
@@ -45,14 +50,14 @@ with sync_playwright() as p:
         ctx.route(re.compile(r'https://[^/]+\.hf\.space/.*'), lambda route: route.continue_(headers={**route.request.headers, 'authorization': f'Bearer {tok}'}))
     for i, u in enumerate(urls):
         if u.startswith('tour '):                                                           # a tour page: walk around inside it
-            log[f'tour{i}'] = visit_tour(ctx, u[5:].strip(), i); print('TOUR', i, json.dumps(log[f'tour{i}'])[:3000], flush=True); continue
+            log[f'tour{i}'] = visit_tour(ctx, u[5:].strip(), i); print('TOUR', i, hide(json.dumps(log[f'tour{i}']))[:3000], flush=True); continue
         page = ctx.new_page(); page.goto(u, wait_until='networkidle', timeout=90000); page.wait_for_timeout(5000)
         page.screenshot(path=f'{OUT}/site{i}_full.jpg', type='jpeg', quality=75, full_page=True); shot(page, f'site{i}_top')
         links = sorted({a for a in page.eval_on_selector_all('a[href]', 'els => els.map(e => e.href)')})
         text = page.inner_text('body'); log[u] = dict(links=links, text=text[:12000])
         print('PAGE', u, '\nLINKS', json.dumps(links, indent=0), '\nTEXT', text[:8000], flush=True); page.close()
     b.close()
-json.dump(log, open(f'{OUT}/log.json', 'w'), indent=1)
+open(f'{OUT}/log.json', 'w').write(hide(json.dumps(log, indent=1)))
 tok = os.environ.get('HF_TOKEN')
 if tok:
     from huggingface_hub import HfApi
