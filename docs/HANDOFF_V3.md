@@ -6,6 +6,8 @@ Repo `github.com/RazyAnas/NAMMA` (public), branch **`claude/wonderful-cori-i3fn4
 
 ## 1. Goal and owner rules
 - **Free and open-source tools only, nothing paid** (owner, 26 Oct): no paid APIs (Gemini/OpenAI image APIs ruled out), free GPUs (Kaggle).
+  Personal project, not commercial (owner, 26 Oct): research / non-commercial licences are fine (Difix3D+, Dr. Splat code,
+  NC depth/pose models). Still free only: no paid APIs, no paid GPUs. Licences that forbid showing the results publicly (Lyra 2.0) stay out.
 - **Goal**: phone video of a real room in → photoreal, walkable 3D model of *that* room out (real estate). Generation may only
   fill gaps, never replace or invent what was filmed, and generated content is flagged. Free GPUs only (Kaggle T4 x2).
   One command: video in, best possible 3D model out. Owner wants "extreme photorealism" (like Marble / Tencent HY-World) and
@@ -289,3 +291,9 @@ The Claude cloud container **cannot reach kaggle.com** (proxy 403). GitHub's run
   (this Space turns texture baking off) and proportions only approximate. Free ZeroGPU quota (~4.5 min/day) allowed only that
   one object (bed/chair/TV refused: quota). More objects need the quota to reset (24 h) or our own GPU (SAM 3D Objects asks
   for 32 GB VRAM; a T4 has 16 GB).
+- **Difix3D+ test** (`final/difix_test.py`, `v3/difix_gh.py`, `.github/workflows/difix-test.yml`, `v3/DIFIX.json`): NVIDIA's
+  own gsplat progressive-update trainer started from run 4's splats; ~210 off-path targets (train cameras +-50 cm sideways),
+  fixed by single-step Difix (`nvidia/difix_ref`, guided by the nearest real frame) every 2000 steps for 12000 steps, trained at
+  0.3 weight beside the real frames. Held-out frames never trained on (Difix's own split trains on every 8th frame: patched)
+  and measured exposure-fair before/after. Caveat: Difix was trained on 112 of DL3DV-Benchmark's 140 scenes and run 4's room
+  is one of them, so a good result here can be flattered; the owner's home is the fair test. Results: `difix/<time>/`.

@@ -165,3 +165,26 @@ Sources: [Marble overview](https://help.scenario.com/articles/4774055514-marble-
 [Wan2.1-VACE-1.3B](https://huggingface.co/Wan-AI/Wan2.1-VACE-1.3B), [Beta Splatting](https://github.com/kristofe/beta-splatting),
 [GaussFusion](https://arxiv.org/abs/2603.25053v2), [ArtifactWorld](https://arxiv.org/pdf/2604.12251),
 [GSFixer](https://arxiv.org/pdf/2508.09667), [worldsplat](https://github.com/timscheuerai/worldsplat).
+
+### 8b. Re-ranked after "personal project, not commercial" (owner, 26 Oct): non-commercial licences allowed
+
+Compute is still the limit (free Kaggle T4, 16 GB each). Best fixer that fits, in order:
+1. **Difix3D+** (NVIDIA, CVPR 2025 oral, research licence): single-step SD-Turbo fixer, ~1 s per view on a T4, made for exactly
+   this (artifacts in novel views of 3DGS), code built on gsplat. Paper on DL3DV novel trajectories: 3DGS 17.18 -> 17.99 dB,
+   LPIPS 0.384 -> 0.293, FID 107 -> 41. Running now on run 4 (`difix/<time>/`). Caveat: trained on DL3DV-Benchmark scenes,
+   run 4's room may be among them; the owner's home is the fair test.
+2. **GSFixer** (ICML 2026, CogVideoX-5B video fixer + VGGT features, weights released): beats Difix3D+ and GenFusion on most
+   DL3DV-Res scenes in its paper; video model = consistent across views. 5B on a T4 is slow (offload); next if Difix is not enough.
+3. **ArtiFixer3D+** (NVIDIA, SIGGRAPH 2026, Wan2.1-14B based, ~17B params, research licence): claims the best published results;
+   too big for a free T4 (needs a 40-80 GB GPU). Out until we have such a GPU for free.
+4. **Fixer** (NVIDIA, Cosmos 0.6B, Nov 2025, open model licence): Difix's successor, but trained on driving data (3DGUT); Turing
+   (T4) not in its tested list. Possible A/B against Difix later.
+Also now allowed: Dr. Splat's own code for Round 2 search (Inria NC), MASt3R / VGGT for hard captures, Depth Anything V2-L and
+DSINE normals as depth/normal priors (DN-Splatter-style) against wall and floor smears.
+Still out: Lyra 2.0 (licence forbids showing results publicly; also H100-class).
+
+Sources: [Difix3D+ paper](https://arxiv.org/pdf/2503.01774), [Difix3D code](https://github.com/nv-tlabs/Difix3D),
+[difix_ref card](https://huggingface.co/nvidia/difix_ref), [Fixer card](https://huggingface.co/nvidia/Fixer),
+[GSFixer](https://github.com/gvclab/GSFixer), [ArtiFixer paper](https://arxiv.org/pdf/2603.00492),
+[ArtiFixer card](https://huggingface.co/nvidia/ArtiFixer), [DN-Splatter](https://arxiv.org/html/2403.17822v3),
+[TIDI-GS](https://arxiv.org/pdf/2601.09291).
