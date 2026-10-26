@@ -65,6 +65,47 @@ def euler_xyz(M):
     from scipy.spatial.transform import Rotation
     return Rotation.from_matrix(M).as_euler('xyz', degrees=True)
 
+def floorplan(run, tour, M=None):
+    """Floor plan like splattour's: the model seen from straight above with the ceiling and wall tops cut off (each pixel = the
+    highest splat below the cut, in its own colour, holes filled from the nearest splat), walls drawn dark on top (splat density
+    between knee and head height). Needs only <run>/full/model.ply, the level matrix and <tour>/plan.json (scale, room box), so
+    it can be redone without a GPU: make_tour.py floorplan <run> <tour>. Returns (width, height, pixels per metre)."""
+    from plyfile import PlyData
+    from PIL import Image
+    from scipy import ndimage
+    pl = json.load(open(f'{tour}/plan.json')); s = pl['scale']; lo, hi = np.array(pl['box'][:3]), np.array(pl['box'][3:]); h = hi[1] / 1.05
+    v = PlyData.read(f'{run}/full/model.ply')['vertex'].data
+    if M is None and os.path.exists(f'{run}/full/level.json'): M = np.array(json.load(open(f'{run}/full/level.json'))['matrix'])
+    if M is None:                                                                         # older runs: same matrix plan() used
+        sys.path.insert(0, os.path.dirname(os.path.abspath(__file__))); import to_splat
+        M = to_splat.level_matrix(f'{run}/full/nav.json', np.stack([v['x'], v['y'], v['z']], 1).astype(np.float64))
+    Q = (np.stack([v['x'], v['y'], v['z']], 1).astype(np.float64) @ M[:3, :3].T + M[:3, 3]) * s
+    a = 1 / (1 + np.exp(-v['opacity'].astype(np.float64))); size = np.exp(np.stack([v['scale_0'], v['scale_1'], v['scale_2']], 1).max(1)) * s
+    rgb = np.clip(0.5 + 0.28209479 * np.stack([v['f_dc_0'], v['f_dc_1'], v['f_dc_2']], 1), 0, 1)
+    inside = np.all((Q[:, [0, 2]] >= lo[[0, 2]]) & (Q[:, [0, 2]] <= hi[[0, 2]]), 1)
+    span = hi[[0, 2]] - lo[[0, 2]]; px = 900 / span.max(); Wp, Hp = (span * px).astype(int) + 1
+    col = np.clip(((Q[:, 0] - lo[0]) * px).astype(int), 0, Wp - 1); row = np.clip(((Q[:, 2] - lo[2]) * px).astype(int), 0, Hp - 1)
+    # photo: highest solid, small splat under the cut (0.75 x room height: wall tops show as lines, no ceiling)
+    m = inside & (a > 0.5) & (size < 0.15) & (Q[:, 1] < 0.75 * h) & (Q[:, 1] > -0.05 * h)
+    idx = (row * Wp + col)[m]; order = np.argsort(-Q[m, 1], kind='stable'); u, first = np.unique(idx[order], return_index=True)
+    img = np.zeros((Hp * Wp, 3)); top = np.full(Hp * Wp, -np.inf); img[u] = rgb[m][order[first]]; top[u] = Q[m, 1][order[first]]
+    img, top = img.reshape(Hp, Wp, 3), top.reshape(Hp, Wp); best, out = top.copy(), img.copy()
+    for dy in range(-2, 3):                                                                 # each splat covers ~1 cm around itself:
+        for dx in range(-2, 3):                                                             # the highest one nearby wins
+            if dy * dy + dx * dx > 5: continue
+            t, c = np.roll(top, (dy, dx), (0, 1)), np.roll(img, (dy, dx), (0, 1)); w_ = t > best; best[w_], out[w_] = t[w_], c[w_]
+    img, has = out, np.isfinite(best)
+    dist, (ii, jj) = ndimage.distance_transform_edt(~has, return_indices=True)
+    img = img[ii, jj] * (dist <= 6)[..., None]                                              # fill gaps up to ~5 cm, rest stays black
+    # walls: opacity-weighted density between knee and head height (vertical surfaces stack up there)
+    w = inside & (Q[:, 1] > 0.15 * h) & (Q[:, 1] < 0.85 * h) & (a > 0.3)
+    g, _, _ = np.histogram2d(row[w], col[w], bins=(Hp, Wp), range=((0, Hp), (0, Wp)), weights=a[w])
+    g = np.log1p(ndimage.gaussian_filter(g, 1.0)); g = np.clip(g / max(np.percentile(g[g > 0], 99), 1e-6), 0, 1) if (g > 0).any() else g
+    img = img * (1 - 0.75 * np.clip((g - 0.35) / 0.4, 0, 1))[..., None]
+    Image.fromarray((img * 255).clip(0, 255).astype(np.uint8)).save(f'{tour}/floorplan.png')
+    return int(Wp), int(Hp), float(px)
+
+
 def plan(examples, data, run, tour):
     sys.path.insert(0, examples); sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
     from datasets.colmap import Parser
@@ -108,20 +149,12 @@ def plan(examples, data, run, tour):
                                             fringing=dict(enabled=False, intensity=0.5)),
                     animTracks=[track], cameras=[dict(initial=pose(start))], annotations=ann, startMode='animTrack')
     json.dump(settings, open(f'{tour}/settings.json', 'w'))
-    # floor plan like splattour's: top-down density of the model's splats between knee and head height (walls light up), real
-    # photos of the spots as thumbnails; both drive the overlay in index.html (minimap with a live "you are here" dot)
+    Wp, Hp, px = floorplan(run, tour, M)                                                   # top-down picture for the minimap
     from PIL import Image
-    v = PlyData.read(f'{run}/full/model.ply')['vertex'].data; Q = L(np.stack([v['x'], v['y'], v['z']], 1).astype(np.float64))
-    a = 1 / (1 + np.exp(-v['opacity'].astype(np.float64))); m = np.all((Q >= lo) & (Q <= hi), 1) & (Q[:, 1] > 0.15 * h) & (Q[:, 1] < 0.85 * h) & (a > 0.3)
-    span = hi[[0, 2]] - lo[[0, 2]]; px = 900 / span.max(); Wp, Hp = (span * px).astype(int) + 1
-    H2, _, _ = np.histogram2d((Q[m, 2] - lo[2]) * px, (Q[m, 0] - lo[0]) * px, bins=(Hp, Wp), range=((0, Hp), (0, Wp)), weights=a[m])
-    g = np.log1p(H2); g = np.clip(g / max(np.percentile(g[g > 0], 99), 1e-6), 0, 1) ** 0.7 if (g > 0).any() else g
-    img = (np.stack([g * 245, g * 232, g * 215], -1) + 8).clip(0, 255).astype(np.uint8)
-    Image.fromarray(img).save(f'{tour}/floorplan.png')
     os.makedirs(f'{tour}/thumbs', exist_ok=True)
     for n, i in enumerate(spots):
         Image.open(p.image_paths[i]).convert('RGB').resize((240, int(240 * Hd / Wd))).save(f'{tour}/thumbs/spot{n + 1}.jpg', quality=82)
-    overlay = dict(floor=dict(x0=float(lo[0]), z0=float(lo[2]), px=float(px), w=int(Wp), h=int(Hp)),
+    overlay = dict(floor=dict(x0=float(lo[0]), z0=float(lo[2]), px=px, w=Wp, h=Hp),
                    spots=[dict(title=a_['title'], x=float(cs[i][0]), z=float(cs[i][2]), thumb=f'thumbs/spot{n + 1}.jpg') for n, (i, a_) in enumerate(zip(spots, ann))])
     json.dump(overlay, open(f'{tour}/overlay.json', 'w'))
     info = dict(metres_per_unit=round(s, 4), frames=len(cam), start_frame=start, fov=round(fov, 1), room_box=[lo.round(3).tolist(), hi.round(3).tolist()], walk_seconds=dur, spots=len(ann))
@@ -166,4 +199,4 @@ def build(run, tour, public, st='npx --no-install splat-transform'):
     return info
 
 if __name__ == '__main__':
-    {'plan': plan, 'build': build}[sys.argv[1]](*sys.argv[2:])
+    {'plan': plan, 'build': build, 'floorplan': floorplan}[sys.argv[1]](*sys.argv[2:])

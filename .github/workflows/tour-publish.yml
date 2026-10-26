@@ -1,5 +1,6 @@
 # Republish a run's built tour (results dataset <user>/namma-v3-out/<run>/tour) to the public Space with a new random folder,
-# then screenshot it (software WebGL). Start: set "run" in colab/real_scenes/v3/PUBLISH.json and push.
+# then screenshot it (software WebGL). Start: set "run" in colab/real_scenes/v3/PUBLISH.json and push ("floorplan": true
+# also redraws the minimap picture from the run's model first).
 # The link goes only to the private <run>/tour_url.txt (these logs are public); screenshots to site_look/<time>/.
 name: tour publish
 on:
@@ -18,15 +19,16 @@ jobs:
         with:
           sparse-checkout: |
             colab/real_scenes/v3
+            colab/real_scenes/final
             scripts/site_look
       - uses: actions/setup-python@v5
         with:
           python-version: "3.11"
-      - run: pip install -q huggingface_hub playwright==1.49.1 && python -m playwright install --with-deps chromium
+      - run: pip install -q huggingface_hub numpy scipy pillow plyfile playwright==1.49.1 && python -m playwright install --with-deps chromium
       - name: Publish
         env:
           HF_TOKEN: ${{ secrets.HF_TOKEN || secrets.HUGGINGFACE_WRITE_TOKEN }}
-        run: python colab/real_scenes/v3/tour_publish.py "$(python -c "import json;print(json.load(open('colab/real_scenes/v3/PUBLISH.json'))['run'])")"
+        run: python colab/real_scenes/v3/tour_publish.py $(python -c "import json;c=json.load(open('colab/real_scenes/v3/PUBLISH.json'));print(c['run'], 'floorplan' if c.get('floorplan') else '')")
       - name: Screenshots
         env:
           HF_TOKEN: ${{ secrets.HF_TOKEN || secrets.HUGGINGFACE_WRITE_TOKEN }}

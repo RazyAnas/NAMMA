@@ -154,6 +154,8 @@ for _ in range(6):                                                              
     pkg = {'cv2': 'opencv-python-headless', 'sklearn': 'scikit-learn', 'yaml': 'pyyaml', 'PIL': 'pillow'}.get(m.group(1).split('.')[0], m.group(1).split('.')[0])
     if pkg in tried: break                                                                  # installing it did not help
     tried.add(pkg); sh(f'pip -q install {pkg} 2>&1 | tail -1')
+import room_prior                                                                       # floor/ceiling + needle prior (kind 'prior')
+say('room prior patched in:', room_prior.patch(f'{EX}/simple_trainer.py'))
 import torch
 NGPU = torch.cuda.device_count(); say('GPUs:', NGPU)
 
@@ -162,8 +164,9 @@ def start(name, steps, cap, gpu, kind='gs'):
     if kind == '2dgs':                                                                    # geometry model: flat surfels
         cmd = (f'cd {EX} && CUDA_VISIBLE_DEVICES={gpu} PYTHONPATH={PP}:$PYTHONPATH python simple_trainer_2dgs.py --data-dir {D} --data-factor 1 '
                f'--result-dir {res} --max-steps {steps} --eval-steps {steps} --save-steps {steps} --disable-viewer --normal-loss --dist-loss {DEPTH}')
-    else:
-        cmd = (f'cd {EX} && CUDA_VISIBLE_DEVICES={gpu} PYTHONPATH={PP}:$PYTHONPATH python simple_trainer.py mcmc --data-dir {D} --data-factor 1 '
+    else:                                                                                  # 'prior': same + final/room_prior.py
+        pr = f'ROOM_PRIOR=1 PYTHONPATH={F}:' if kind == 'prior' else 'PYTHONPATH='
+        cmd = (f'cd {EX} && CUDA_VISIBLE_DEVICES={gpu} {pr}{PP}:$PYTHONPATH python simple_trainer.py mcmc --data-dir {D} --data-factor 1 '
                f'--result-dir {res} --max-steps {steps} --eval-steps {steps} --save-steps {steps} --ply-steps {steps} --save-ply '
                f'--disable-viewer --use-bilateral-grid {DEPTH} --strategy.cap-max {cap}')
     say(cmd); return dict(name=name, gpu=gpu, res=res, kind=kind, t=time.time(),

@@ -3,7 +3,8 @@ share links: each tour in a folder with a random name (only people with the link
 Space cannot serve its files to a browser (the page loads, its scene/scripts do not), so the owner chose public. The link is
 NOT printed (GitHub logs of this repo are public): it goes to <run>/tour_url.txt in the private results dataset.
 Used by gh_run.py after a run, and on its own (.github/workflows/tour-publish.yml, v3/PUBLISH.json) to republish a run's tour:
-  python tour_publish.py <run, e.g. 20261026-0309>      (HF_TOKEN in the environment; tour taken from the results dataset)"""
+  python tour_publish.py <run, e.g. 20261026-0309> [floorplan]   (HF_TOKEN in the environment; tour taken from the results
+  dataset; 'floorplan': redraw floorplan.png from the run's model first (final/make_tour.py floorplan) and save it back there)"""
 import os, re, secrets, sys
 
 
@@ -28,6 +29,11 @@ if __name__ == '__main__':
     from huggingface_hub import HfApi, snapshot_download
     run = sys.argv[1]; tok = os.environ.get('HF_TOKEN'); assert tok, 'HF_TOKEN missing'
     api = HfApi(token=tok); user = api.whoami()['name']; repo = f'{user}/namma-v3-out'
-    d = snapshot_download(repo, repo_type='dataset', allow_patterns=[f'{run}/tour/*', f'{run}/tour/**'], local_dir='pub', token=tok)
+    fp = 'floorplan' in sys.argv[2:]; extra = [f'{run}/full/{x}' for x in ('model.ply', 'level.json', 'nav.json')] if fp else []
+    d = snapshot_download(repo, repo_type='dataset', allow_patterns=[f'{run}/tour/*', f'{run}/tour/**'] + extra, local_dir='pub', token=tok)
     tour = os.path.join(d, run, 'tour'); assert os.path.exists(f'{tour}/index.html'), f'no built tour in {repo}/{run}/tour'
+    if fp:
+        sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', 'final')); import make_tour
+        print('floor plan redrawn:', make_tour.floorplan(os.path.join(d, run), tour), flush=True)
+        api.upload_file(path_or_fileobj=f'{tour}/floorplan.png', path_in_repo=f'{run}/tour/floorplan.png', repo_id=repo, repo_type='dataset')
     publish(api, user, repo, run, tour)

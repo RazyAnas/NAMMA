@@ -63,3 +63,41 @@ Sources: [Difix3D+](https://arxiv.org/abs/2503.01774), [GSFixer](https://arxiv.o
 [EVPGS](https://arxiv.org/abs/2503.21816), [Robust Gaussian Splatting](https://arxiv.org/abs/2404.04211),
 [splat-transform SOG speed-up](https://radiancefields.com/playcanvas-splat-transform-v3.9.0-speeds-up-sog-compression),
 [SOG format](https://developer.playcanvas.com/user-manual/gaussian-splatting/formats/sog/).
+
+## 6. Round 2 (26 Oct, after tour v2): what is still bad and what fixes it
+Tour v2 checked on screenshots: walk mode works, the guided walk is photoreal, but **streaky smears on the floor, ceiling and
+everything off the filmed path**, and the **floor-plan minimap is unreadable** (black with sparse dots).
+
+**What the newest evidence says**
+- **Off-path quality is a coverage problem first [Q]**: "Mind the Gap" (arXiv 2607.01556, Jul 2026): standard held-out tests
+  (every 8th frame) only measure near-path interpolation; real off-path views are **3-12 dB worse**, the gap tracks the angle to
+  the nearest training view, and **loss-side regularisation gives only marginal gains**. Our own 19 Oct numbers agree (34 dB on
+  the path, 15-17 dB 18 cm away). So: more filming coverage and generated views fix off-path; regularisers fix shapes.
+- **Floor/ceiling streaks = textureless planes + few views [Q]**: indoor 3DGS papers all add a geometric prior there:
+  DN-Splatter (WACV 2025, depth + normal priors), GaussianRoom, **PlanarGS** (Oct 2025, MIT code, GroundedSAM + DUSt3R planes,
+  1 h on an RTX 3090), **UncertainGS** (Feb 2026, Manhattan-world normals with uncertainty). The streaks themselves are needle
+  splats (effective rank 1): **effective-rank regulariser** (Hyung et al., NeurIPS 2024) pushes them to discs.
+- **Generative clean-up, licences checked [C]**: Difix3D+ (measured +0.37 dB here) is **NVIDIA licence = non-commercial only**,
+  and it was **fine-tuned on DL3DV**, so on our DL3DV test scene it will look better than on the owner's own videos.
+  **FreeFix** (Jan 2026, **MIT code** github.com/hyzhou404/FreeFix): no fine-tuning, any image diffusion model (SDXL or Flux),
+  interleaved render -> fix -> retrain per view with a per-pixel confidence mask; reports beating Difix3D+ on LLFF/Mip-NeRF 360.
+  Heavier (SDXL on a T4 fits in fp16; Flux does not). GSFixer: video diffusion, heaviest.
+- Monocular priors if we go further: **MoGe-2** (MIT code, metric depth + normals), Depth Anything V2 **Small** (Apache; Base/
+  Large are non-commercial), DSINE (restrictive Imperial licence).
+
+**Done now (code ready, measured on synthetic data; real numbers come from run 5)**
+1. **Room prior** (`final/room_prior.py`, variant kind `prior`): needle penalty (longest/middle > 6, = effective-rank idea in our
+   QA's terms) + floor/ceiling planes (floor height from SfM points, up from the cameras; splats within ~5 cm of a plane are
+   turned flat to it). No extra network. Synthetic room: needles 9.4 % -> 0 %, floor-splat tilt 61 deg -> 0 deg. Patched into
+   gsplat's simple_trainer by run.py, off unless the variant asks for it, so run 5 trains `full` and `prior` side by side.
+2. **Floor plan** (`make_tour.floorplan`): the model seen from above, ceiling and wall tops cut off, each pixel the highest splat
+   in its own colour, walls dark on top; redrawable without a GPU (`tour-publish.yml` with `"floorplan": true`).
+
+**Next, in order**: run 5 = run 4's settings + `prior` variant (A/B on the same frames, QA off-path views + needle %);
+Difix3D+ stage for the research demo (licence!) and FreeFix + SDXL as the commercial-safe path; MoGe-2 depth/normal loss if the
+cheap prior is not enough; the owner's own re-filmed room (coverage beats every loss term).
+
+Sources: [Mind the Gap](https://arxiv.org/abs/2607.01556), [FreeFix](https://arxiv.org/abs/2601.20857),
+[PlanarGS](https://arxiv.org/abs/2510.23930), [UncertainGS](https://www.sciencedirect.com/science/article/abs/pii/S0925231225028085),
+[Effective rank](https://arxiv.org/abs/2406.11672), [DN-Splatter](https://arxiv.org/abs/2403.17822),
+[MoGe-2](https://arxiv.org/abs/2507.02546).
