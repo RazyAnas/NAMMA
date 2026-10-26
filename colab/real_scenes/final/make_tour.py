@@ -3,7 +3,7 @@
                  floaters outside), SOG-compressed (~10x smaller than the .ply) by @playcanvas/splat-transform
   settings.json  start view inside the room at the height the phone was held, a guided walk along the real camera path (where the
                  model is at its best: it plays first), hotspots at evenly spaced spots of the walk, all in room coordinates
-  collision.glb  the room mesh (mesh_tsdf.py), if there is one: walk mode stays inside the room on the floor
+  collision.glb  room box + the room mesh's furniture (mesh_tsdf.py, simplified): walk mode stays inside, on the floor
 Coordinates: the viewer turns every splat file 180 deg about z (3DGS convention), so the file gets F (R p + t) with F = diag(-1,-1,1)
 while cameras/hotspots are written in room coordinates R p + t (measured with a test scene, see HANDOFF_V3.md section 9).
 Two steps (the camera reader needs gsplat's examples + torch, the converter needs Node):
@@ -173,6 +173,26 @@ def plan(examples, data, run, tour):
     json.dump(info, open(f'{tour}/tour.json', 'w'), indent=1); print('TOUR PLAN', json.dumps(info), flush=True)
     return info
 
+def collision(run, tour, faces=150000):
+    """Walk-mode collision = the room box (floor slab + 4 walls: never a hole to fall or walk through) + the furniture from the
+    room mesh (mesh_tsdf.py), cut to the room box above the floor and simplified to ~150k faces. Run 4's full mesh was 3M faces
+    / 63 MB with holes in walls (59 % of voxels observed): too big to download and leaky on its own."""
+    import trimesh
+    pl = json.load(open(f'{tour}/plan.json')); s = pl['scale']; lo, hi = np.array(pl['box'][:3]), np.array(pl['box'][3:])
+    parts = [trimesh.load(f'{tour}/room_collision.glb', force='mesh')] if os.path.exists(f'{tour}/room_collision.glb') else []
+    if os.path.exists(f'{run}/mesh/mesh.glb'):
+        m = trimesh.load(f'{run}/mesh/mesh.glb', force='mesh'); m.apply_scale(s)
+        c = m.triangles_center; keep = np.all((c >= lo + [0, 0.08, 0]) & (c <= hi), 1)            # inside, not the floor itself
+        m.update_faces(keep); m.remove_unreferenced_vertices()
+        if len(m.faces) > faces:
+            try: m = m.simplify_quadric_decimation(face_count=faces)
+            except Exception as e: print('mesh simplify failed, keeping', len(m.faces), 'faces:', str(e)[:120], flush=True)
+        if len(m.faces): parts.append(m)
+    if parts:
+        trimesh.util.concatenate(parts).export(f'{tour}/collision.glb')
+        print('collision:', sum(len(x.faces) for x in parts), 'faces,', round(os.path.getsize(f'{tour}/collision.glb') / 1e6, 1), 'MB', flush=True)
+
+
 def build(run, tour, public, st='npx --no-install splat-transform'):
     """plan.json + settings.json (from plan) + the model -> a static tour folder."""
     pl = json.load(open(f'{tour}/plan.json')); E, t, b, s = pl['rotate'], pl['translate'], pl['box'], pl.get('scale', 1.0)
@@ -192,10 +212,7 @@ def build(run, tour, public, st='npx --no-install splat-transform'):
     print(cmd, flush=True); subprocess.run(cmd, shell=True, check=True); os.remove(f'{tour}/clean.ply')
     boot = dict(contentUrl='./' + os.path.basename(out), settingsUrl='./settings.json')
     # collision for walk mode: the room mesh (mesh_tsdf.py, room coordinates before scaling) if there is one, else the room box
-    import trimesh
-    if os.path.exists(f'{run}/mesh/mesh.glb'):
-        mesh = trimesh.load(f'{run}/mesh/mesh.glb', force='mesh'); mesh.apply_scale(s); mesh.export(f'{tour}/collision.glb')
-    elif os.path.exists(f'{tour}/room_collision.glb'): shutil.copy(f'{tour}/room_collision.glb', f'{tour}/collision.glb')
+    collision(run, tour)
     if os.path.exists(f'{tour}/collision.glb'): boot['collisionUrl'] = './collision.glb'
     shutil.copy(f'{public}/index.css', tour)
     js = open(f'{public}/index.js').read()                                                 # walk mode also in rooms < 5 x 5 m
@@ -211,4 +228,4 @@ def build(run, tour, public, st='npx --no-install splat-transform'):
     return info
 
 if __name__ == '__main__':
-    {'plan': plan, 'build': build, 'floorplan': floorplan}[sys.argv[1]](*sys.argv[2:])
+    {'plan': plan, 'build': build, 'floorplan': floorplan, 'collision': collision}[sys.argv[1]](*sys.argv[2:])
