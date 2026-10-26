@@ -48,7 +48,9 @@ sh(f'python {F}/gsplat_warm.py', check=True)
 import numpy as np, torch, frames
 from PIL import Image
 D = f'{W}/data'; inp = [d for d in glob.glob('/kaggle/input/**/model.ply', recursive=True)]; assert inp, 'model.ply not attached'
-shutil.unpack_archive(glob.glob('/kaggle/input/**/sparse.zip', recursive=True)[0], D)          # -> D/sparse/0/*.bin
+zs = glob.glob('/kaggle/input/**/sparse.zip', recursive=True)                                 # Kaggle may have unzipped it
+if zs: shutil.unpack_archive(zs[0], D)                                                       # -> D/sparse/0/*.bin
+else: shutil.copytree(os.path.dirname(glob.glob('/kaggle/input/**/sparse/**/cameras.bin', recursive=True)[0]), f'{D}/sparse/0')
 for z in glob.glob('/kaggle/input/**/frames.zip', recursive=True): shutil.unpack_archive(z, f'{W}/fr')
 cnt = {}
 for f in glob.glob('/kaggle/input/**/*', recursive=True) + glob.glob(f'{W}/fr/**/*', recursive=True):
