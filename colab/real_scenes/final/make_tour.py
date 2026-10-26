@@ -84,26 +84,38 @@ def floorplan(run, tour, M=None):
     rgb = np.clip(0.5 + 0.28209479 * np.stack([v['f_dc_0'], v['f_dc_1'], v['f_dc_2']], 1), 0, 1)
     inside = np.all((Q[:, [0, 2]] >= lo[[0, 2]]) & (Q[:, [0, 2]] <= hi[[0, 2]]), 1)
     span = hi[[0, 2]] - lo[[0, 2]]; px = 900 / span.max(); Wp, Hp = (span * px).astype(int) + 1
+    out_px = px; px = min(px, 1 / max(float(np.median(size)), 1e-3)); Wp, Hp = (span * px).astype(int) + 1   # ~1 splat size per pixel
     col = np.clip(((Q[:, 0] - lo[0]) * px).astype(int), 0, Wp - 1); row = np.clip(((Q[:, 2] - lo[2]) * px).astype(int), 0, Hp - 1)
-    # photo: highest solid, small splat under the cut (0.75 x room height: wall tops show as lines, no ceiling)
-    m = inside & (a > 0.5) & (size < 0.15) & (Q[:, 1] < 0.75 * h) & (Q[:, 1] > -0.05 * h)
-    idx = (row * Wp + col)[m]; order = np.argsort(-Q[m, 1], kind='stable'); u, first = np.unique(idx[order], return_index=True)
-    img = np.zeros((Hp * Wp, 3)); top = np.full(Hp * Wp, -np.inf); img[u] = rgb[m][order[first]]; top[u] = Q[m, 1][order[first]]
-    img, top = img.reshape(Hp, Wp, 3), top.reshape(Hp, Wp); best, out = top.copy(), img.copy()
-    for dy in range(-2, 3):                                                                 # each splat covers ~1 cm around itself:
-        for dx in range(-2, 3):                                                             # the highest one nearby wins
-            if dy * dy + dx * dx > 5: continue
-            t, c = np.roll(top, (dy, dx), (0, 1)), np.roll(img, (dy, dx), (0, 1)); w_ = t > best; best[w_], out[w_] = t[w_], c[w_]
-    img, has = out, np.isfinite(best)
+    # photo: every splat under the cut (0.75 x room height: wall tops show as lines, no ceiling) blended from the top down by its
+    # opacity, like a camera looking straight down (MCMC models are mostly semi-transparent splats: "solid only" left gaps)
+    below = inside & (Q[:, 1] < 0.75 * h) & (Q[:, 1] > -0.05 * h); m = below & (a > 0.02) & (size < 0.3)
+    print(f'floor plan: {len(a)} splats, {inside.sum()} inside the room, {below.sum()} under the cut, {m.sum()} drawn; '
+          f'opacity median {np.median(a):.2f}, size median {np.median(size) * 100:.1f} cm', flush=True)
+    sig = size[m] * px; pid, hh, aa, cc = [], [], [], []                                    # each splat over its own footprint
+    for dy in range(-3, 4):
+        for dx in range(-3, 4):
+            d2 = dy * dy + dx * dx; k = (2.25 * sig ** 2 >= d2) if d2 else np.ones(len(sig), bool)
+            r, c = row[m][k] + dy, col[m][k] + dx; ok = (r >= 0) & (r < Hp) & (c >= 0) & (c < Wp)
+            pid.append((r * Wp + c)[ok]); hh.append(Q[m, 1][k][ok]); cc.append(rgb[m][k][ok])
+            aa.append((a[m][k] * np.exp(-0.5 * d2 / np.maximum(sig[k], 0.5) ** 2))[ok])
+    pid, hh, cc = np.concatenate(pid), np.concatenate(hh), np.concatenate(cc); aa = np.clip(np.concatenate(aa), 0, 0.99)
+    o = np.lexsort((-hh, pid)); pid, aa, cc = pid[o], aa[o], cc[o]                          # per pixel, top first
+    lt = np.log1p(-aa); ex = np.cumsum(lt) - lt                                              # log transmittance before each splat
+    st = np.r_[0, np.flatnonzero(np.diff(pid)) + 1]; ex -= np.repeat(ex[st], np.diff(np.r_[st, len(pid)]))
+    wgt = aa * np.exp(ex); n = Hp * Wp
+    alpha = np.bincount(pid, wgt, n); img = np.stack([np.bincount(pid, wgt * cc[:, k], n) for k in range(3)], -1)
+    img = (img / np.maximum(alpha, 1e-6)[:, None]).reshape(Hp, Wp, 3); alpha = alpha.reshape(Hp, Wp)
+    has = alpha > 0.2
     dist, (ii, jj) = ndimage.distance_transform_edt(~has, return_indices=True)
-    img = img[ii, jj] * (dist <= 6)[..., None]                                              # fill gaps up to ~5 cm, rest stays black
+    img = img[ii, jj] * (dist <= 4)[..., None]                                              # fill gaps up to ~3 cm, rest stays black
     # walls: opacity-weighted density between knee and head height (vertical surfaces stack up there)
     w = inside & (Q[:, 1] > 0.15 * h) & (Q[:, 1] < 0.85 * h) & (a > 0.3)
     g, _, _ = np.histogram2d(row[w], col[w], bins=(Hp, Wp), range=((0, Hp), (0, Wp)), weights=a[w])
     g = np.log1p(ndimage.gaussian_filter(g, 1.0)); g = np.clip(g / max(np.percentile(g[g > 0], 99), 1e-6), 0, 1) if (g > 0).any() else g
     img = img * (1 - 0.75 * np.clip((g - 0.35) / 0.4, 0, 1))[..., None]
-    Image.fromarray((img * 255).clip(0, 255).astype(np.uint8)).save(f'{tour}/floorplan.png')
-    return int(Wp), int(Hp), float(px)
+    W2, H2 = (span * out_px).astype(int) + 1
+    Image.fromarray((img * 255).clip(0, 255).astype(np.uint8)).resize((int(W2), int(H2)), Image.LANCZOS).save(f'{tour}/floorplan.png')
+    return int(W2), int(H2), float(out_px)
 
 
 def plan(examples, data, run, tour):
