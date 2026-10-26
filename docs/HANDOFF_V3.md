@@ -208,3 +208,24 @@ The Claude cloud container **cannot reach kaggle.com** (proxy 403). GitHub's run
   artifacts) are blocked; github.com, raw.githubusercontent.com, api.github.com (public JSON) and registry.npmjs.org work.
 - **Capture guide rewritten** (`docs/CAPTURE_GUIDE.md`): SplatTour's method (upright, 0.5x ultra-wide, 3 passes per room, one
   uncut video per floor, floor out of frame) + our 22 Oct lessons; upload as a private Kaggle dataset, source `kaggle:anasrazy/<name>`.
+- **Tour publishing now (26 Oct, replaces the private-Space note above)**: public static Space `anasrazy/namma-tour`, each tour
+  in a folder `<RUN>-<20 random hex>` (owner's choice: private static Spaces cannot serve their files to a browser). The link
+  is never printed (GitHub logs are public): it is in the private `namma-v3-out/<RUN>/tour_url.txt`. Code:
+  `v3/tour_publish.py` (used by gh_run.py after a run). **Republish any run's built tour** without Kaggle: set `run` in
+  `v3/PUBLISH.json` and push -> `.github/workflows/tour-publish.yml` (own concurrency group, ~5 min) publishes, then
+  screenshots it with `scripts/site_look/look.py` in `TOUR_RUN` mode (link read from the dataset, folder redacted in logs) ->
+  `site_look/<time>/`. Bug fixed: gh_run.py published only if `scene.sog` existed, so tour v2 (compressed PLY) was built but
+  not published by the collect run; run 4 started before the fix, so republish it with PUBLISH.json when it ends.
+- **Tour v2 (run 3 model, results `20261026-0309`, published 09:20 IST)**: metric scale 1.848 m/unit (median phone height
+  1.35 m), room box 7.1 x 2.6 x 7.0 m, room-box collision, walk mode on (viewer's 5 m minimum patched to 2), SH1 colour as
+  `scene.compressed.ply` (1.39M splats, 35 MB), 15,794 smear splats removed, sharpness 0.2, 6 spots, 68 s guided walk.
+  **Checked on screenshots (site_look/20261026-0349)**: loads, guided walk start is photoreal, Walk Mode active with WASD.
+  Still bad: streaky smears on the floor, ceiling and anything off the filmed path (needs run 4 detail + Difix3D+); the
+  floor-plan minimap (SfM points top-down) is mostly black with sparse dots, hard to read (TODO: render a top-down image of
+  the splat instead).
+- **Run 4** (GitHub run 40262727449, started 08:40 IST): `images_2` 1920x1080 -> 1440 px, 420 frames, full 3DGS 30k + 2DGS geo
+  20k -> TSDF mesh -> mesh collision; ETA ~12:00 IST.
+- **Owner's YouTube link (2t-PLeenqqA) judged**: it shows the **Aholo Viewer** (Manycore, MIT): LOD chunk streaming of huge
+  splat scenes + collision tools. A viewer/delivery upgrade, not reconstruction quality; its demos look sharp because of
+  drone/scanner captures. Useful later for whole-house tours; our PlayCanvas viewer already has LOD streaming and voxel
+  collision. Quality levers stay: training resolution, capture coverage, Difix3D+/GSFixer, SH colour.
