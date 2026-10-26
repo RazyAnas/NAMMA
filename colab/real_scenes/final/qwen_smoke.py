@@ -136,7 +136,11 @@ def metrics(a, gt):
     tt = lambda x: torch.tensor(x).permute(2, 0, 1)[None].to(lp.parameters().__next__().device) * 2 - 1
     return dict(psnr=round(ps(a), 2), psnr_exposure_fair=round(ps(fit), 2), ssim=round(float(structural_similarity(a, g, channel_axis=2, data_range=1)), 4),
                 lpips=round(float(lp(tt(a), tt(g)).item()), 4))
-def split_gpus(tr, frac=0.45):
+def gm():
+    """GPU memory in use per device (GB), for the log."""
+    return ' '.join(f'GPU{i} {torch.cuda.memory_allocated(i) / 1e9:.1f}/{torch.cuda.max_memory_allocated(i) / 1e9:.1f}GB' for i in range(torch.cuda.device_count()))
+
+def split_gpus(tr, frac=0.5):
     """The 20B transformer over both T4s by hand (GGUF weights move with .to(); accelerate's dispatcher rebuilds parameters):
     first `frac` of the blocks + the input layers on GPU 0 (it also holds the VAE), the rest + output layers on GPU 1; a
     pre-hook moves each module's inputs to its GPU, and the result goes back to GPU 0 for the scheduler."""
@@ -159,12 +163,12 @@ def split_gpus(tr, frac=0.45):
 
 done = False
 SMALL = 'qwen-image-edit-2511-Q3_K_M.gguf'                                                   # 9.9 GB, if 13 GB + activations do not fit
-for dt, gg, split in [(torch.bfloat16, GGUF, True), (torch.bfloat16, SMALL, False)]:      # fp16: blank/NaN images; 13 GB > one T4
+for dt, gg, split in [(torch.bfloat16, SMALL, True), (torch.bfloat16, GGUF, True)]:       # fp16: blank/NaN; split: 13 GB > one T4
     try:
         t1 = time.time(); torch.cuda.reset_peak_memory_stats(); say('editor try', dt, gg, 'split' if split else '')
         tr = QwenImageTransformer2DModel.from_single_file(f'https://huggingface.co/unsloth/Qwen-Image-Edit-2511-GGUF/blob/main/{gg}',
               quantization_config=GGUFQuantizationConfig(compute_dtype=dt), torch_dtype=dt, config=REPO, subfolder='transformer')
-        if split and torch.cuda.device_count() > 1: split_gpus(tr); say('transformer split over 2 GPUs')
+        if split and torch.cuda.device_count() > 1: split_gpus(tr); say('transformer split over 2 GPUs', gm())
         vae = AutoencoderKLQwenImage.from_pretrained(REPO, subfolder='vae', torch_dtype=dt)
         pipe = QwenImageEditPlusPipeline.from_pretrained(REPO, transformer=tr, vae=vae, text_encoder=None, torch_dtype=dt,
                                                          scheduler=FlowMatchEulerDiscreteScheduler.from_config(LIGHT))
@@ -172,10 +176,11 @@ for dt, gg, split in [(torch.bfloat16, GGUF, True), (torch.bfloat16, SMALL, Fals
             pipe.load_lora_weights('lightx2v/Qwen-Image-Edit-2511-Lightning', weight_name=LORA); REP['lora'] = LORA; steps = STEPS
             for n_, q_ in pipe.transformer.named_parameters():                                # LoRA ships bf16; compute may be fp16
                 if 'lora' in n_ and q_.dtype != dt: q_.data = q_.data.to(dt)
+            say('LoRA loaded', gm())
         except Exception as ex: say('LoRA failed:', type(ex).__name__, str(ex)[:300]); REP['lora'] = f'failed: {str(ex)[:200]}'; steps = 12
         if split and torch.cuda.device_count() > 1: pipe.vae.to('cuda:0')                  # transformer already placed
         else: pipe.to('cuda:0')
-        REP['load_s'] = round(time.time() - t1); say('editor loaded', REP['load_s'], 's')
+        REP['load_s'] = round(time.time() - t1); say('editor loaded', REP['load_s'], 's', gm())
         for c in cases:
             e, m = emb[c['name']]; t2 = time.time()
             with torch.inference_mode():
@@ -186,7 +191,7 @@ for dt, gg, split in [(torch.bfloat16, GGUF, True), (torch.bfloat16, SMALL, Fals
             out = out.resize((WO, HO)); out.save(f"{O}/{c['name']}_qwen.jpg", quality=92); c['qwen'] = out
             r = dict(name=c['name'], seconds=round(time.time() - t2, 1))
             if c['gt'] is not None: r.update(before=metrics(c['render'], c['gt']), after=metrics(out, c['gt']))
-            REP['cases'].append(r); say(json.dumps(r)); save_report()
+            REP['cases'].append(r); say(json.dumps(r), gm()); save_report()
         REP.update(edit_dtype=str(dt), gguf=gg, steps=steps, gpu_peak_gb=round(torch.cuda.max_memory_allocated(0) / 1e9, 1)); done = True; break
     except Exception as ex:
         say('editor failed with', dt, gg, type(ex).__name__, str(ex)[:400]); REP[f'editor_error_{dt}_{gg}'] = str(ex)[:400]; REP['cases'] = []
