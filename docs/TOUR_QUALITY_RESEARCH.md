@@ -130,3 +130,38 @@ Sources: [FreeFix](https://arxiv.org/abs/2601.20857), [GSFixer](https://github.c
 [FixingGS](https://arxiv.org/abs/2509.18759), [3DGS-Enhancer](https://nips.cc/virtual/2024/poster/95333),
 [GSFix3D](https://arxiv.org/abs/2508.14717), [Qwen-Image-Edit-2511](https://huggingface.co/Qwen/Qwen-Image-Edit-2511),
 [Lightning LoRA](https://huggingface.co/lightx2v/Qwen-Image-Edit-2511-Lightning).
+
+## 8. "A Marble-like product: upload photos/video, get a full photoreal room" (owner, 26 Oct)
+
+**What Marble does** (World Labs, architecture unpublished): text / 1 image / panorama / 2-8 photos / short video in,
+Gaussian-splat world out (+ mesh, .spz export, Chisel editing). Generative: it invents what the input does not show.
+
+**What we measured so far** (all on run 4, hotel room): per-image AI fixes do not work for us. Qwen-Image-Edit drifts the
+view and copies objects (28 -> 16 dB). FreeFix (masked SDXL, per image) raises held-out PSNR 25.84 -> 27.11 but makes texture
+softer (SSIM 0.925 -> 0.902, LPIPS 0.203 -> 0.249) and leaves the smears. SAM 3D Objects gives clean solid furniture, but grey
+and approximate. Common cause: each image is fixed on its own, so the fixes disagree and the splat averages them into blur.
+
+**Merge that fits the evidence and the rules (free/open, T4)**: keep the trained splat as the truth where the video saw the
+room, and let a *video* model fill only what it did not see, many frames at once so the fill is consistent:
+1. **Poses + geometry**: hloc SfM (now). Fallback and fast preview for "ordinary photos": WorldMirror 2.0 (Tencent HY-World 2.0,
+   1.2B, feed-forward camera + depth + 3DGS in one pass, accepts camera/depth priors; free Tencent licence, not EU/UK/KR, >1M
+   monthly users needs Tencent's OK).
+2. **Photoreal core**: gsplat MCMC on the real frames (run 4/5) -> run 6 (video frames, 1920 px, ~3M splats). Candidate kernel
+   upgrade: Deformable Beta Splatting (SIGGRAPH 2025, Apache-2.0, authors report better than 3DGS-MCMC with 45% of the params).
+3. **Generative fill ("the Marble part")**: render the splat along walk paths through the bad spots; mask = pixels no real photo
+   supports (low alpha / FreeFix-style certainty); **Wan2.1-VACE-1.3B** (Apache-2.0, ~8 GB, 480p, video inpainting with masks)
+   fills the masked pixels across the whole 81-frame clip at once; retrain with real frames (full weight) + filled frames
+   (masked pixels only, low weight). Real pixels are never changed, so held-out frames must not get worse (same proof as before).
+4. **Solid objects** (optional, Round 2): SAM 3D Objects for collision/search, not for looks.
+5. **Product**: free Gradio Space upload form -> private HF dataset -> GitHub Action -> Kaggle T4 job -> tour link. Not instant
+   like Marble (H100s): ~2-3 h per room, Kaggle's 30 GPU h/week = ~10 rooms/week.
+
+**Rejected**: Lyra 2.0 (NVIDIA internal-research licence: outputs may not be shown publicly), Difix3D+ (non-commercial),
+GaussFusion (CVPR 2026, no code yet), ArtifactWorld (gated weights, licence unknown), GSFixer (CogVideoX-5B, licence unstated,
+tested on H100), WorldStereo 2.0 (17B, too big for a T4).
+
+Sources: [Marble overview](https://help.scenario.com/articles/4774055514-marble-by-world-labs-the-essentials),
+[HY-World 2.0](https://huggingface.co/tencent/HY-World-2.0), [Lyra 2.0 card](https://huggingface.co/nvidia/Lyra-2.0),
+[Wan2.1-VACE-1.3B](https://huggingface.co/Wan-AI/Wan2.1-VACE-1.3B), [Beta Splatting](https://github.com/kristofe/beta-splatting),
+[GaussFusion](https://arxiv.org/abs/2603.25053v2), [ArtifactWorld](https://arxiv.org/pdf/2604.12251),
+[GSFixer](https://arxiv.org/pdf/2508.09667), [worldsplat](https://github.com/timscheuerai/worldsplat).
