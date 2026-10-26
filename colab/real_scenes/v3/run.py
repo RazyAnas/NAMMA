@@ -160,6 +160,12 @@ for _ in range(6):                                                              
     tried.add(pkg); sh(f'pip -q install {pkg} 2>&1 | tail -1')
 import room_prior                                                                       # floor/ceiling + needle prior (kind 'prior')
 say('room prior patched in:', room_prior.patch(f'{EX}/simple_trainer.py'))
+import geo_prior                                                                        # dense depth + normal guide (kind 'geo')
+say('geo prior patched in:', geo_prior.patch(f'{EX}/simple_trainer.py'))
+if any(len(v) > 3 and 'geo' in v[3] for v in VARIANTS):                                  # DA3 depth per frame, before training
+    sh(f'cd {EX} && PYTHONPATH={EX}:{F}:$PYTHONPATH python {F}/geo_prior.py {D} {W}/geo 2>&1 | grep -v "it/s" | tail -15')
+    if os.path.exists(f'{W}/geo/geo_report.json'): shutil.copy(f'{W}/geo/geo_report.json', O); push(f'{O}/geo_report.json', 'geo_report.json')
+    sh('nvidia-smi --query-gpu=memory.used --format=csv')
 import torch
 NGPU = torch.cuda.device_count(); say('GPUs:', NGPU)
 
@@ -169,7 +175,8 @@ def start(name, steps, cap, gpu, kind='gs'):
         cmd = (f'cd {EX} && CUDA_VISIBLE_DEVICES={gpu} PYTHONPATH={PP}:$PYTHONPATH python simple_trainer_2dgs.py --data-dir {D} --data-factor 1 '
                f'--result-dir {res} --max-steps {steps} --eval-steps {steps} --save-steps {steps} --disable-viewer --normal-loss --dist-loss {DEPTH}')
     else:                                                                                  # 3DGS (+ room prior / pose refinement)
-        pr = f'ROOM_PRIOR=1 PYTHONPATH={F}:' if 'prior' in kind else 'PYTHONPATH='            # kinds: gs, prior, pose, prior+pose
+        env = ('ROOM_PRIOR=1 ' if 'prior' in kind else '') + (f'GEO_PRIOR=1 GEO_DIR={W}/geo ' if 'geo' in kind else '')
+        pr = f'{env}PYTHONPATH={F}:' if env else 'PYTHONPATH='                              # kinds: gs, prior, pose, geo and + of them
         po = ' --pose-opt' if 'pose' in kind else ''                                           # refine the SfM cameras while training
         cmd = (f'cd {EX} && CUDA_VISIBLE_DEVICES={gpu} {pr}{PP}:$PYTHONPATH python simple_trainer.py mcmc --data-dir {D} --data-factor 1 '
                f'--result-dir {res} --max-steps {steps} --eval-steps {steps} --save-steps {steps} --ply-steps {steps} --save-ply '
