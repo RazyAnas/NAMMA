@@ -28,9 +28,10 @@ json.dump(dict(id=KID, title='namma-difix', code_file='difix_test.py', language=
                dataset_sources=[DS, cfg['frames_dataset']]), open('kern/kernel-metadata.json', 'w'))
 code = open(f'{FIN}/difix_test.py').read(); first = 'import gc, glob, json, os, shutil, subprocess, sys, time\n'; assert code.startswith(first)
 open('kern/difix_test.py', 'w').write(code.replace(first, first + f'os.environ["JOB_CFG"] = {json.dumps(json.dumps(cfg))}  # set by difix_gh.py\n', 1))
-say(kg('kernels', 'push', '-p', 'kern')[1][-400:]); t_push = time.time()
+if cfg.get('collect_only'): say('collect only: no new Kaggle run, waiting for the last one'); t_push = time.time() - 3600  # poller ran out
+else: say(kg('kernels', 'push', '-p', 'kern')[1][-400:]); t_push = time.time()
 seen, last, s = False, '', ''
-while time.time() - T0 < 240 * 60:
+while time.time() - T0 < 280 * 60:
     time.sleep(60); rc, s = kg('kernels', 'status', KID, check=False); s = s.lower()
     if rc: say('status check failed:', s[-150:]); continue
     if s != last: say('status:', s[-100:]); last = s
