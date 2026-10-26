@@ -10,6 +10,9 @@ next to the real frames (progressive 3D update). Real frames keep full weight, s
   coords     Difix's COLMAP loader normalises without gsplat 1.5.3's upside-down fix: cameras moved into the run's frame
   caveat     Difix was trained on 112 of DL3DV-Benchmark's 140 scenes; run 4's hotel room is one of the 140, so it may have
              seen this room. The fair test is the owner's own home.
+  v2         v1 (whole Difix views, no exposure correction) made plain walls blotchy: the video's auto-exposure got painted onto
+             them and Difix re-shades each view a little differently. v2 keeps run 4's exposure correction (bilateral grid, real
+             frames only) and learns from a Difix view only where it removed something (smear_thr: colour-matched difference)
   out        model.ply (run's coordinates, gsplat PLY layout -> tour), difix_report.json, sheet
 Inputs (v3/difix_gh.py): namma-qwen-in (the run's model.ply + sparse) and the run's own frames dataset (never other images)."""
 T0 = time.time(); W = '/kaggle/temp/dx'; O = '/kaggle/working'; os.makedirs(W, exist_ok=True)
@@ -33,11 +36,35 @@ tr = f'{DG}/simple_trainer_difix3d.py'; src = open(tr).read()                   
 for a, b in [('self.difix.to("cuda")', 'self.difix.to(os.environ.get("DIFIX_DEVICE", "cuda"))'),                 # Difix on the 2nd T4
              ('self.parser.camtoworlds[self.valset.indices]', 'self.target_poses'),                               # our off-path views
              ('distance=0.5)', 'distance=float(os.environ.get("DIFIX_STEP", "0.5")))'),
-             ('image=image, ref_image=ref_image,', 'image=_dsz(image), ref_image=_dsz(ref_image),')]:            # Difix's 1024 x 576
-    assert a in src, a; src = src.replace(a, b)
-src = src.replace('\n@dataclass\nclass Config:', '\ndef _dsz(im):\n    k = 1024 / max(im.size)\n'
-                  '    return im.resize((round(im.size[0] * k / 8) * 8, round(im.size[1] * k / 8) * 8), Image.LANCZOS)\n\n@dataclass\nclass Config:', 1)
-assert '_dsz(im)' in src; open(tr, 'w').write(src)
+             ('image=image, ref_image=ref_image,', 'image=_dsz(image), ref_image=_dsz(ref_image),'),            # Difix's 1024 x 576
+             ('            if cfg.use_bilateral_grid:\n                grid_y, grid_x = torch.meshgrid(',              # exposure fix for real
+              '            if cfg.use_bilateral_grid and not is_novel_data:\n                grid_y, grid_x = torch.meshgrid('),  # frames only
+             ('            output_image.save(f"{self.render_dir}/novel/{step}/Fixed/{i:04d}.png")\n',
+              '            output_image.save(f"{self.render_dir}/novel/{step}/Fixed/{i:04d}.png")\n'
+              '            _smear_mask(image, output_image, f"{self.render_dir}/novel/{step}/Alpha/{i:04d}.png", i)\n')]:
+    assert src.count(a) >= 1, a; src = src.replace(a, b)
+helper = '''
+def _dsz(im):
+    k = 1024 / max(im.size)
+    return im.resize((round(im.size[0] * k / 8) * 8, round(im.size[1] * k / 8) * 8), Image.LANCZOS)
+
+def _smear_mask(render, fixed, alpha_path, i):
+    """Train on a Difix view only where it removed something (a smear), not where it just re-shaded a plain wall: colour-match
+    the render to the fix (one affine map per image), keep pixels still differing by > DIFIX_SMEAR_THR, grown a little."""
+    thr = float(os.environ.get("DIFIX_SMEAR_THR", "0"))
+    if thr <= 0: return
+    from scipy import ndimage
+    r = np.asarray(render, np.float32).reshape(-1, 3) / 255; f = np.asarray(fixed, np.float32).reshape(-1, 3) / 255
+    A = np.c_[r, np.ones(len(r), np.float32)]; d = np.abs(A @ np.linalg.lstsq(A, f, rcond=None)[0] - f).max(1)
+    m = ndimage.binary_dilation(ndimage.binary_opening((d > thr).reshape(render.size[1], render.size[0]), iterations=2), iterations=8)
+    a = np.asarray(Image.open(alpha_path).convert("L")) > 127
+    Image.fromarray(((a & m) * 255).astype(np.uint8), mode="L").save(alpha_path)
+    if i % 20 == 0: print(f"smear mask view {i}: {m.mean():.3f} of the image", flush=True)
+
+@dataclass
+class Config:'''
+src = src.replace('\n@dataclass\nclass Config:', helper, 1)
+assert '_smear_mask(render' in src and '_dsz(im)' in src; open(tr, 'w').write(src)
 dc = f'{DG}/datasets/colmap.py'; src = open(dc).read()                         # Difix trains on every 8th frame and tests on the
 a = ('                self.indices = indices[indices % self.parser.test_every == 0]\n'          # rest; ours is the other way round:
      '            else:\n                self.indices = indices[indices % self.parser.test_every != 0]')  # every 8th frame is held out
@@ -104,7 +131,8 @@ from lib_bilagrid import color_correct
 RES = f'{W}/res'; S0 = 29999
 cfg = std.Config(data_dir=D, data_factor=1, result_dir=RES, test_every=8, normalize_world_space=True, disable_viewer=True, sh_degree=3,
                  max_steps=S0 + FT, eval_steps=[], save_steps=[], fix_steps=list(range(S0 + 1, S0 + FT, EVERY)),
-                 novel_data_lambda=float(CFG.get('novel_lambda', 0.3)), strategy=DefaultStrategy(verbose=False))
+                 novel_data_lambda=float(CFG.get('novel_lambda', 0.3)), strategy=DefaultStrategy(verbose=False),
+                 use_bilateral_grid=bool(CFG.get('bilateral_grid', True)))                   # run 4 had it: phone auto-exposure
 run = std.Runner(0, 0, 1, cfg)
 assert np.allclose(run.parser.camtoworlds[:, :3, 3], np.array(gs['c']), atol=1e-4), 'camera frames differ'
 for k in run.splats.keys(): run.splats[k].data = splats[k].to(run.device)
@@ -115,6 +143,7 @@ for i in tri[::STRIDE]:
     for sgn in (1, -1):
         c = C[i].copy(); c[:3, 3] += sgn * side * c[:3, 0]; targets.append(c)                    # camera's own left/right
 run.target_poses = np.stack(targets); os.environ['DIFIX_STEP'] = str(side / 2)              # reach the targets in 2 rounds
+os.environ['DIFIX_SMEAR_THR'] = str(CFG.get('smear_thr', 0))                          # 0 = whole Difix view (v1)
 REP.update(side_units=round(side, 4), targets=len(targets), train_views=len(tri), heldout_views=len(run.valset))
 say('Difix3D runner ready; side', round(side, 4), 'units;', len(targets), 'off-path targets;', len(tri), 'train,', len(run.valset), 'held-out')
 

@@ -1,5 +1,5 @@
 {
- "n": 3,
+ "n": 4,
  "run": "20261026-0327",
  "frames_dataset": "anasrazy/namma-dl3dv-389a460ca1-r2",
  "scene": "389a460ca1995e0658e85fe8e6b520b4e88b370cd6710dfe728b1564bba31aee",
@@ -9,10 +9,11 @@
  "shift": 0.15,
  "eval_views": 16,
  "sheet_views": 8,
- "finetune_steps": 12000,
- "fix_every": 2000,
- "target_stride": 3,
- "novel_lambda": 0.3,
- "how": "change n and push: .github/workflows/difix-test.yml -> v3/difix_gh.py -> final/difix_test.py on Kaggle (one Kaggle job at a time)",
- "collect_only": true
+ "finetune_steps": 9000,
+ "fix_every": 3000,
+ "target_stride": 6,
+ "novel_lambda": 1.0,
+ "smear_thr": 0.08,
+ "bilateral_grid": true,
+ "how": "change n and push: .github/workflows/difix-test.yml -> v3/difix_gh.py -> final/difix_test.py on Kaggle (one Kaggle job at a time)"
 }
