@@ -168,6 +168,9 @@ Sources: [Marble overview](https://help.scenario.com/articles/4774055514-marble-
 
 ### 8b. Re-ranked after "personal project, not commercial" (owner, 26 Oct): non-commercial licences allowed
 
+**Update 26 Oct: Difix3D+ tested twice on run 4 and dropped by the owner ("not worth it"): v2 was safe (held-out slightly
+better, walls clean) but barely touched the off-path smears, at 9 s per view on a T4. AI view-fixing is off the plan.**
+
 Compute is still the limit (free Kaggle T4, 16 GB each). Best fixer that fits, in order:
 1. **Difix3D+** (NVIDIA, CVPR 2025 oral, research licence): single-step SD-Turbo fixer, ~1 s per view on a T4, made for exactly
    this (artifacts in novel views of 3DGS), code built on gsplat. Paper on DL3DV novel trajectories: 3DGS 17.18 -> 17.99 dB,

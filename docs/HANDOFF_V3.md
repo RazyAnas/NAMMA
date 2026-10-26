@@ -311,3 +311,6 @@ The Claude cloud container **cannot reach kaggle.com** (proxy 403). GitHub's run
     Walls are no longer blotchy (sheet row 5). Smears by the mirror/bathroom and on the floor are only slightly reduced in the
     tour (screenshots `site_look/20261026-2113`). A small, safe gain, not the fix for off-path smears.
   - Caveat: Difix may have seen this DL3DV room in training.
+- **Difix dropped (owner, 26 Oct: "not worth it").** Code, config and workflow removed from the repo (`difix_test.py`,
+  `difix_gh.py`, `DIFIX.json`, `difix-test.yml`; in git history if ever needed). Its results stay above. The off-path smears are
+  now tackled at training time instead (run 6: room prior + depth/surface guide), not by AI-fixed views.
