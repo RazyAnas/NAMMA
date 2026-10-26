@@ -48,6 +48,25 @@ else:
             say('dataset', DS, st[-120:])
         else: say('dataset', DS, 'already on Kaggle')
         datasets, env['SOURCE'] = [DS], f'kaggle:{slug}'
+    elif src.startswith('dl3dv-video:'):                                                       # the scene's original phone video:
+        scene = src[12:]; slug = f'namma-dl3dv-{scene[:10]}-video'; DS = f'{KU}/{slug}'; info['scene'] = scene  # more frames than
+        rc, st = kg('datasets', 'status', DS, check=False)                                     # the ~400 DL3DV extracted
+        if rc or 'ready' not in st.lower():
+            from huggingface_hub import HfApi, hf_hub_download
+            tok = os.environ.get('HF_TOKEN'); vr = 'DL3DV/DL3DV-ALL-video'; api = HfApi(token=tok)
+            sub = next(k for k in [f'{i}K' for i in range(1, 12)] if api.file_exists(vr, f'{k}/{scene}/video.mp4', repo_type='dataset'))
+            os.makedirs('in', exist_ok=True)
+            shutil.copy(hf_hub_download(vr, f'{sub}/{scene}/video.mp4', repo_type='dataset', token=tok, local_dir='dl'), 'in/video.mp4')
+            subprocess.run('ffprobe -v error -show_entries stream=codec_name,width,height,r_frame_rate,nb_frames:format=duration '
+                           '-of compact in/video.mp4', shell=True)
+            json.dump(dict(title=slug, id=DS, licenses=[dict(name='other')]), open('in/dataset-metadata.json', 'w'))
+            say(kg('datasets', 'create', '-p', 'in', '-q')[1][-300:])
+            for _ in range(120):
+                time.sleep(20); st = kg('datasets', 'status', DS, check=False)[1]
+                if 'ready' in st.lower() or 'error' in st.lower(): break
+            say('dataset', DS, st[-120:])
+        else: say('dataset', DS, 'already on Kaggle')
+        datasets, env['SOURCE'] = [DS], f'kaggle:{slug}'
     elif src.startswith('kaggle:'):
         datasets, env['SOURCE'] = [src[7:]], f'kaggle:{src[7:].split("/")[-1]}'
     else: sys.exit(f'unknown source {src}')

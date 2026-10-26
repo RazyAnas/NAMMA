@@ -240,3 +240,9 @@ The Claude cloud container **cannot reach kaggle.com** (proxy 403). GitHub's run
   Qwen-Image-Edit-2511 with [render + 2 nearest real frames], text encoder 4-bit (freed), transformer GGUF Q4_K_M (fallback Q3_K_M,
   then bf16), Lightning 4-step LoRA; report = s/image, GPU GB, PSNR/SSIM/LPIPS before/after on held-out; sheet to
   `namma-v3-out/qwen_smoke/<time>/`. Owner rule: free/open only (Qwen weights Apache 2.0; unsloth GGUF = quantised Apache).
+- **More frames (owner's idea, prepared)**: DL3DV gives only ~411 frames of this scene (~2-3 per second of video); we already use
+  all of them. New source `dl3dv-video:<hash>` in gh_run.py: the scene's original phone video (DL3DV/DL3DV-ALL-video,
+  `7K/389a460ca1.../video.mp4`, 1.6 GB) -> Kaggle dataset `namma-dl3dv-<hash10>-video` -> run.py `frames.from_video` (sharpest
+  frame per time window; ffmpeg H.264 fallback if OpenCV cannot decode it). Planned **run 6** after the Qwen test: NFRAMES ~900,
+  LONG 1440, STEPS 40000, variants per run 5's winner. Expected: better detail near the path and during fast turns; it does not
+  add viewpoints the camera never reached (off-path smears need the room prior / AI fix).
