@@ -1,6 +1,6 @@
 """Object-by-object 3D demo (GitHub Actions, CPU; .github/workflows/sam3d-demo.yml, settings in v3/SAM3D.json).
 The 'Video -> frames -> identify objects -> 3D objects' half of the Blender-style pipeline on the hotel-room scene (DL3DV, run 4):
-a CPU detector (DETR, Apache-2.0) finds the furniture in the frames and picks, per object, the frame where it is biggest and not
+a CPU detector (torchvision Faster R-CNN, BSD) finds the furniture in the frames and picks, per object, the frame where it is biggest and not
 cut off; each pick goes to SAM 3 (segment by name) + SAM 3D Objects (Meta, SAM License, full 3D shape incl. unseen sides) on a free
 Hugging Face ZeroGPU Space; the GLBs and the photos go into a 3D viewer page (model-viewer), published like a tour (random
 folder, link only in the private results dataset) + screenshots of it in hf://datasets/<user>/namma-v3-out/sam3d/<time>/."""
@@ -23,18 +23,17 @@ frames = sorted(x.path for x in api.list_repo_tree(dl3dv.REPO, path_in_repo=src,
 cand = [hf_hub_download(dl3dv.REPO, f, repo_type='dataset', local_dir='ds', token=tok) for f in frames[::max(1, len(frames) // int(cfg.get('sample', 60)))]]
 say(len(frames), 'frames in the scene,', len(cand), 'looked at')
 
-# 1. identify objects: DETR (COCO classes) on CPU, best frame per object = biggest box that does not touch the left/right edge
-from transformers import DetrForObjectDetection, DetrImageProcessor
-proc = DetrImageProcessor.from_pretrained('facebook/detr-resnet-50', revision='no_timm')
-det = DetrForObjectDetection.from_pretrained('facebook/detr-resnet-50', revision='no_timm').eval()
+# 1. identify objects: torchvision Faster R-CNN v2 (COCO, BSD) on CPU, best frame per object = biggest box not touching the left/right edge
+import torchvision
+wts = torchvision.models.detection.FasterRCNN_ResNet50_FPN_V2_Weights.DEFAULT; labels = wts.meta['categories']
+det = torchvision.models.detection.fasterrcnn_resnet50_fpn_v2(weights=wts).eval(); prep = wts.transforms()
 want = cfg['objects']; best = {}
 for f in cand:
     im = Image.open(f).convert('RGB'); im.thumbnail((800, 800)); W, H = im.size
-    with torch.no_grad(): o = det(**proc(images=im, return_tensors='pt'))
-    r = proc.post_process_object_detection(o, target_sizes=[(H, W)], threshold=0.8)[0]
+    with torch.no_grad(): r = det([prep(torchvision.transforms.functional.pil_to_tensor(im))])[0]
     for s, l, b in zip(r['scores'].tolist(), r['labels'].tolist(), r['boxes'].tolist()):
-        name = det.config.id2label[l]
-        if name not in want: continue
+        name = labels[l]
+        if name not in want or s < 0.8: continue
         x0, y0, x1, y1 = b; area = (x1 - x0) * (y1 - y0) / (W * H); whole = x0 > 0.02 * W and x1 < 0.98 * W
         sc = area * (1 if whole else 0.3) * s
         if sc > best.get(name, (0,))[0]: best[name] = (sc, f, [round(v / W, 3) for v in b], round(area, 3), whole)

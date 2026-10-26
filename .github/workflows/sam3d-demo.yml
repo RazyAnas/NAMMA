@@ -1,4 +1,4 @@
-# Object-by-object 3D demo on the hotel room (CPU runner + free ZeroGPU Space, no Kaggle): DETR finds the furniture in the frames,
+# Object-by-object 3D demo on the hotel room (CPU runner + free ZeroGPU Space, no Kaggle): a COCO detector finds the furniture in the frames,
 # SAM 3 + SAM 3D Objects rebuild each one in full 3D, viewer page published + screenshots (v3/sam3d_gh.py).
 # Start: change "n" in colab/real_scenes/v3/SAM3D.json and push. Results: hf://datasets/<user>/namma-v3-out/sam3d/<time>/.
 name: sam3d demo
@@ -22,8 +22,8 @@ jobs:
         with:
           python-version: "3.11"
       - run: |
-          pip install -q torch --index-url https://download.pytorch.org/whl/cpu
-          pip install -q huggingface_hub transformers gradio_client numpy pillow playwright==1.49.1 && python -m playwright install --with-deps chromium
+          pip install -q torch torchvision --index-url https://download.pytorch.org/whl/cpu
+          pip install -q huggingface_hub gradio_client numpy pillow playwright==1.49.1 && python -m playwright install --with-deps chromium
       - name: Objects -> 3D -> viewer
         env:
           HF_TOKEN: ${{ secrets.HF_TOKEN || secrets.HUGGINGFACE_WRITE_TOKEN }}
