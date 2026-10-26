@@ -267,3 +267,9 @@ The Claude cloud container **cannot reach kaggle.com** (proxy 403). GitHub's run
 - **Qwen attempt 3 (`qwen_smoke/20261026-1010`)**: LoRA loads now (torchao removed), split over 2 T4s works, but attention
   needed a 5.1 GB block (3 inputs x ~4000 tokens at 1 MP each; bf16 on a T4 falls back to plain attention). Attempt 4: each
   input image at 512^2 for the VAE (`qp.VAE_IMAGE_SIZE`), output still 1024x576, expandable CUDA segments.
+- **Qwen smoke test RESULT (attempt 5, `qwen_smoke/20261026-1102`)**: ran with Q3_K_M bf16 split over both T4s + Lightning
+  4-step LoRA, inputs at 512^2, output 1024x576: **~4 min per image**, GPU peak 14.1 GB. Held-out frames: exposure-fair
+  PSNR 28.03 -> 16.09 and 26.36 -> 15.84 dB, SSIM 0.92 -> 0.48, LPIPS 0.16 -> 0.56. Outputs look like sharp photos, but
+  the editor re-frames the view (camera drift) and copies objects from the reference photos (the dog twice, wall art twice).
+  **Not usable for training views** (would teach the model shifted walls and duplicates). Next candidate: FreeFix (MIT,
+  per-pixel confidence mask keeps confident pixels fixed), Difix3D+ for the research demo only (non-commercial licence).
