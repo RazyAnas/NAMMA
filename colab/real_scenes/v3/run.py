@@ -168,11 +168,12 @@ def start(name, steps, cap, gpu, kind='gs'):
     if kind == '2dgs':                                                                    # geometry model: flat surfels
         cmd = (f'cd {EX} && CUDA_VISIBLE_DEVICES={gpu} PYTHONPATH={PP}:$PYTHONPATH python simple_trainer_2dgs.py --data-dir {D} --data-factor 1 '
                f'--result-dir {res} --max-steps {steps} --eval-steps {steps} --save-steps {steps} --disable-viewer --normal-loss --dist-loss {DEPTH}')
-    else:                                                                                  # 'prior': same + final/room_prior.py
-        pr = f'ROOM_PRIOR=1 PYTHONPATH={F}:' if kind == 'prior' else 'PYTHONPATH='
+    else:                                                                                  # 3DGS (+ room prior / pose refinement)
+        pr = f'ROOM_PRIOR=1 PYTHONPATH={F}:' if 'prior' in kind else 'PYTHONPATH='            # kinds: gs, prior, pose, prior+pose
+        po = ' --pose-opt' if 'pose' in kind else ''                                           # refine the SfM cameras while training
         cmd = (f'cd {EX} && CUDA_VISIBLE_DEVICES={gpu} {pr}{PP}:$PYTHONPATH python simple_trainer.py mcmc --data-dir {D} --data-factor 1 '
                f'--result-dir {res} --max-steps {steps} --eval-steps {steps} --save-steps {steps} --ply-steps {steps} --save-ply '
-               f'--disable-viewer --use-bilateral-grid {DEPTH} --strategy.cap-max {cap}')
+               f'--disable-viewer --use-bilateral-grid {DEPTH} --strategy.cap-max {cap}{po}')
     say(cmd); return dict(name=name, gpu=gpu, res=res, kind=kind, t=time.time(),
                           p=subprocess.Popen(cmd, shell=True, executable='/bin/bash', stdout=open(f'{res}.log', 'w'), stderr=subprocess.STDOUT))
 
