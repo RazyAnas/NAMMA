@@ -101,3 +101,33 @@ Sources: [Mind the Gap](https://arxiv.org/abs/2607.01556), [FreeFix](https://arx
 [PlanarGS](https://arxiv.org/abs/2510.23930), [UncertainGS](https://www.sciencedirect.com/science/article/abs/pii/S0925231225028085),
 [Effective rank](https://arxiv.org/abs/2406.11672), [DN-Splatter](https://arxiv.org/abs/2403.17822),
 [MoGe-2](https://arxiv.org/abs/2507.02546).
+
+## 7. "Use a ChatGPT/Gemini-class image AI to fix the smears" (owner's idea, 26 Oct)
+**Problem [Q]**: an image editor fixes each picture on its own; two neighbouring views get two different "fixes", and training on
+both makes the splat blurry again (FreeFix, 3DGS-Enhancer, GSFixer all name multi-view consistency as the main difficulty).
+**What makes it work (combined from Difix3D+, FreeFix, GSFixer, ExploreGS)**:
+1. Give the editor the **nearest real photos as references** (it copies real detail instead of inventing).
+2. Only let it change the **unreliable pixels** (confidence mask from the render; real reprojected pixels kept), composite back.
+3. Fix views **one at a time along a path and retrain in between** (each fixed view constrains the next = consistency), with
+   low weight and a per-view colour correction (FreeFix).
+4. Place the extra views where the walker goes but the video did not (ExploreGS: information-gain camera placement, 2025).
+**Editors**:
+- **Qwen-Image-Edit-2511** (Alibaba, **Apache 2.0, open weights**, ChatGPT/Gemini-class editing): takes several input images
+  (render + real reference photos), new-viewpoint ability built in, 4-step Lightning LoRA. 20B parameters: on Kaggle's T4 only
+  as a 4-bit/GGUF build; quality and speed on a T4 **unverified** (community reports of artefacts at very low bits) -> smoke test.
+- **Gemini 2.5 Flash Image ("Nano Banana") / OpenAI gpt-image**: best quality, multi-image input, no GPU needed, but paid
+  (~$0.04 per image from price aggregators, not verified on the official pages; free tier for images is unclear). ~60 views per
+  room = ~$2-3. Would need an API key as a GitHub secret.
+- Difix3D+ (baseline we measured, non-commercial), FreeFix (MIT, SDXL/Flux, no fine-tuning), GSFixer (video model, heavy),
+  ArtifactWorld (Apr 2026, video model trained on 107k artefact clips; code "to be released").
+**Proof**: hold out a contiguous stretch of the video (not every 8th frame: "Mind the Gap" shows that only tests the path) and
+measure that stretch before/after; plus the off-path QA views.
+**Plan (`final/fix_views.py`, after run 4)**: render ~60 views 30-60 cm beside the path at walk height -> mask -> editor with 2
+nearest real photos -> composite -> 3 rounds of fine-tuning (weight 0.3, colour affine) -> QA on the held-out stretch.
+Smoke test first: 5 views through Qwen-Image-Edit-2511 on a T4 (time per image, does it keep the layout).
+
+Sources: [FreeFix](https://arxiv.org/abs/2601.20857), [GSFixer](https://github.com/GVCLab/GSFixer),
+[ExploreGS](https://arxiv.org/abs/2508.06014), [ArtifactWorld](https://arxiv.org/abs/2604.12251),
+[FixingGS](https://arxiv.org/abs/2509.18759), [3DGS-Enhancer](https://nips.cc/virtual/2024/poster/95333),
+[GSFix3D](https://arxiv.org/abs/2508.14717), [Qwen-Image-Edit-2511](https://huggingface.co/Qwen/Qwen-Image-Edit-2511),
+[Lightning LoRA](https://huggingface.co/lightx2v/Qwen-Image-Edit-2511-Lightning).
