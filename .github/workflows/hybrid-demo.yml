@@ -24,6 +24,7 @@ jobs:
         with:
           python-version: "3.11"
       - run: pip install -q huggingface_hub numpy pillow playwright==1.49.1 && python -m playwright install --with-deps chromium
+      - run: sudo apt-get install -y -q libegl1 libgl1 libgomp1 > /dev/null     # Open3D's shared libraries (ray casting only, no display)
       - name: Hybrid model + tour
         env:
           HF_TOKEN: ${{ secrets.HF_TOKEN || secrets.HUGGINGFACE_WRITE_TOKEN }}
