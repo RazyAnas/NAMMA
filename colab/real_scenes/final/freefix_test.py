@@ -30,6 +30,9 @@ sch = f'{W}/freefix/ours/schedulers/euler_discrete_scheduler.py'; src = open(sch
 src = src.replace("            import ipdb; ipdb.set_trace()\n", "")                         # stop in the guide-only branch
 src = src.replace("        else:\n            x0 = warp_latent * 0.8 + x0 * 0.2", "        elif warp_latent is not None:\n            x0 = warp_latent * 0.8 + x0 * 0.2")
 assert 'ipdb' not in src; open(sch, 'w').write(src)
+pl = f'{W}/freefix/ours/pipelines/sdxl_pipeline.py'; src = open(pl).read()                     # fused latents come out fp32
+dec = '            image = self.vae.decode(latents, return_dict=False)[0]\n'; assert src.count(dec) == 1
+open(pl, 'w').write(src.replace(dec, dec.replace('decode(latents,', 'decode(latents.to(self.vae.dtype),')))
 F = f'{W}/repo/colab/real_scenes/final'; FF = f'{W}/freefix'; EX = f'{W}/gsplat/examples'; sys.path.insert(0, F)
 sh(f'git clone -q --depth 1 -b v1.5.3 https://github.com/nerfstudio-project/gsplat {W}/gsplat && touch {EX}/datasets/__init__.py; '
    f'echo "torch==$(python -c "import torch; print(torch.__version__)")" > {W}/pin.txt; '
@@ -85,6 +88,7 @@ from recon.refiner import Refiner
 from ours.pipelines.sdxl_pipeline import StableDiffusionXLImg2ImgPipeline
 from ours.schedulers.euler_discrete_scheduler import EulerDiscreteScheduler
 from omegaconf import OmegaConf
+from diffusers import AutoencoderKL
 base = OmegaConf.load(f'{FF}/exp_cfg/base.yaml')
 cfgd = Config(data_dir=D, data_factor=1, result_dir=RES, test_every=8, disable_viewer=True, sh_degree=3)
 side = SHIFT * float(np.linalg.norm(gp.camtoworlds[:, :3, 3] - gp.camtoworlds[:, :3, 3].mean(0), axis=1).max())
@@ -105,7 +109,9 @@ before = []
 for i in range(NVIEWS):
     rgb, *_ = ref.render(i); before.append(rgb.detach().cpu()); save_img(rgb, f'{O}/view{i}_before.jpg')
 
-pipe = StableDiffusionXLImg2ImgPipeline.from_pretrained('stabilityai/stable-diffusion-xl-refiner-1.0', torch_dtype=torch.float16).to('cuda')
+vae = AutoencoderKL.from_pretrained('madebyollin/sdxl-vae-fp16-fix', torch_dtype=torch.float16)   # MIT; SDXL's own VAE overflows in fp16
+pipe = StableDiffusionXLImg2ImgPipeline.from_pretrained('stabilityai/stable-diffusion-xl-refiner-1.0', vae=vae, torch_dtype=torch.float16).to('cuda')
+assert not pipe.vae.config.force_upcast
 pipe.scheduler = EulerDiscreteScheduler.from_config(pipe.scheduler.config)
 strength, nsteps = float(CFG.get('strength', 0.7)), int(base.num_inference_steps)
 infer_steps = int(nsteps * strength); mask_scheduler = [int(infer_steps * c) for c in base.c_scheduler]
@@ -121,6 +127,7 @@ for i in range(NVIEWS):
                warp_mask=None if first else alpha, height=H, width=W_, guidance_scale=3.5, num_inference_steps=nsteps,
                generator=gen, strength=strength).images[0].resize((W_, H))
     out.save(f'{O}/view{i}_sdxl.jpg', quality=92); gens.append(np.asarray(out))
+    assert np.isfinite(gens[-1]).all() and gens[-1].std() > 5, f'SDXL output for view {i} is blank'
     rc = [dict(image=torch.from_numpy(np.asarray(out)), camtoworld=cam['c2w'], K=cam['K'], Gen=True, image_id=f'gen_{i}')]
     ref.refine(rc, train_cams, train_prob, max_steps=int(CFG.get('refine_steps', 400)) * (2 if first else 1))
     train_cams.append(rc[0]); train_prob.append(base.gen_prob)
