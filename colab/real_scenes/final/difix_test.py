@@ -84,6 +84,8 @@ splats = dict(means=t_('x', 'y', 'z'), scales=t_('scale_0', 'scale_1', 'scale_2'
 say(len(v), 'splats, SH degree', int(np.sqrt(nr + 1)) - 1); assert nr == 15, 'expects SH degree 3'
 
 # 2 Difix3D's trainer, its cameras moved into the run's frame
+for d in (f'{DG}/datasets', f'{DX}/examples', f'{DX}/src'): open(f'{d}/__init__.py', 'a').close()   # else Kaggle's
+for m in [m for m in sys.modules if m.split('.')[0] in ('datasets', 'examples', 'src', 'utils')]: del sys.modules[m]  # 'datasets' wins
 sys.path[:0] = [DG, DX, f'{F}/fused_ssim_shim']; os.chdir(DG)
 if torch.cuda.device_count() > 1: os.environ['DIFIX_DEVICE'] = 'cuda:1'
 import datasets.colmap as dxc
