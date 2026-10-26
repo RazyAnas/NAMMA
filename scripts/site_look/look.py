@@ -13,9 +13,13 @@ if os.environ.get('TOUR_RUN'):           # our own tour: link read from the priv
     SECRET = t.split('/')[-2]; urls = ['tour ' + t + '?webgl']
 hide = lambda x: x.replace(SECRET, '<folder>') if SECRET else x
 
+CAM = 'window.app ? (() => { const c = window.app.root.findComponents("camera")[0]; if (!c) return null; const p = c.entity.getPosition(); return [p.x, p.y, p.z].map(v => Math.round(v * 100) / 100); })() : null'
+
 def shot(page, name):
     try: page.screenshot(path=f'{OUT}/{name}.jpg', type='jpeg', quality=85, timeout=240000); print('shot', name, flush=True)
     except Exception as e: print('shot failed', name, str(e)[:120], flush=True)
+    try: print('camera', name, page.evaluate(CAM), flush=True)                             # PlayCanvas viewers: where are we?
+    except Exception as e: print('camera unknown', name, str(e)[:80], flush=True)
 
 def visit_tour(ctx, url, k):
     page = ctx.new_page(); rec = dict(url=url, requests=[])
