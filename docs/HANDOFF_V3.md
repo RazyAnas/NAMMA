@@ -230,3 +230,13 @@ The Claude cloud container **cannot reach kaggle.com** (proxy 403). GitHub's run
   splat scenes + collision tools. A viewer/delivery upgrade, not reconstruction quality; its demos look sharp because of
   drone/scanner captures. Useful later for whole-house tours; our PlayCanvas viewer already has LOD streaming and voxel
   collision. Quality levers stay: training resolution, capture coverage, Difix3D+/GSFixer, SH colour.
+- **Run 4 (results `20261026-0327`, owner: "excellent")**: 1440 px from images_2, 411/411 frames, held-out 29.22 dB exposure-fair
+  (run 3: 29.55 at 960 px; not directly comparable), SSIM 0.934, needles 12.7 % (run 3: 15.8 %), 2DGS mesh 3M faces with holes
+  (59 % voxels observed). Tour collision = room box + mesh furniture cut to the room, simplified to 150k faces (2.8 MB,
+  `make_tour.collision`). Published via PUBLISH.json (floorplan + collision). site_look now logs the camera position per shot.
+- **Run 5** (GitHub run 40278290892, started 11:42 IST): run 4 settings, variants `full` vs `prior` (room prior A/B).
+- **Qwen smoke test ready, not started** (`final/qwen_smoke.py`, `v3/qwen_gh.py`, `.github/workflows/qwen-smoke.yml`, start by
+  setting `n` > 0 in `v3/QWEN.json`, only when no namma-v3 run is training): renders 2 held-out + 3 off-path views of run 4,
+  Qwen-Image-Edit-2511 with [render + 2 nearest real frames], text encoder 4-bit (freed), transformer GGUF Q4_K_M (fallback Q3_K_M,
+  then bf16), Lightning 4-step LoRA; report = s/image, GPU GB, PSNR/SSIM/LPIPS before/after on held-out; sheet to
+  `namma-v3-out/qwen_smoke/<time>/`. Owner rule: free/open only (Qwen weights Apache 2.0; unsloth GGUF = quantised Apache).
