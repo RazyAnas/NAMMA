@@ -273,3 +273,14 @@ The Claude cloud container **cannot reach kaggle.com** (proxy 403). GitHub's run
   the editor re-frames the view (camera drift) and copies objects from the reference photos (the dog twice, wall art twice).
   **Not usable for training views** (would teach the model shifted walls and duplicates). Next candidate: FreeFix (MIT,
   per-pixel confidence mask keeps confident pixels fixed), Difix3D+ for the research demo only (non-commercial licence).
+- **FreeFix RESULT (attempt 3, `freefix/20261026-1235`, Kaggle T4, 18.6 min)**: FreeFix's own loop (certainty from the
+  splat Hessian -> masked SDXL-refiner img2img, fp16-safe VAE `madebyollin/sdxl-vae-fp16-fix` -> refine 400-800 steps) on
+  8 off-path views of run 4, held-out frames never trained on. Held-out (16 frames, FreeFix renderer): PSNR 25.84 -> 27.11,
+  but SSIM 0.925 -> 0.902 and LPIPS 0.203 -> 0.249 (worse): colours closer, fine texture softer (sofa fabric, floor). The
+  SDXL views remove some smear but also invent/smooth detail (toilet, door). Tour of the refined model published
+  (`freefix/20261026-1235/tour_url.txt`, screenshots `site_look/20261026-1312`): smears by the mirror/bathroom and on the
+  floor are still there. **Not a fix in this form**; not merged into the pipeline.
+- **SAM 3D Objects demo** (`v3/sam3d_gh.py`, `.github/workflows/sam3d-demo.yml`, `v3/SAM3D.json`; CPU runner + free
+  ZeroGPU Space `dev-bjoern/sam3d-objects-mcp`, no Kaggle): torchvision Faster R-CNN finds sofa/bed/chair/TV/... in the
+  hotel-room frames, picks each object's best frame, SAM 3 + SAM 3D Objects (Meta, SAM License) rebuild each in full 3D
+  (GLB), viewer page published like a tour (`sam3d/<time>/tour_url.txt`). The object half of the Blender-style pipeline.
