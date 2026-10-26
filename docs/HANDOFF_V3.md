@@ -257,3 +257,10 @@ The Claude cloud container **cannot reach kaggle.com** (proxy 403). GitHub's run
   floor only 2.3 % textured (bits of the TSDF floor above the shell floor block it), outline 78 corners. Lesson: with phone
   video only, mesh geometry is not accurate enough to carry the photos; splats stay the base. Possible later use: shell planes
   UNDER the trained splats only where splats are unreliable (not replacing them).
+- **Owner rule (26 Oct): never mix the hall and the hotel room.** The hall is a separate capture/project (images of it sit in
+  the `namma-prep` Kaggle kernel output, attached to jobs only for the gsplat build cache). Jobs on a run must take frames only
+  from that run's own frames dataset; `qwen_smoke.py` now filters by dataset name and checks frames == cameras (the first Qwen
+  test silently picked the hall images as "reference photos").
+- **Qwen smoke test, attempt 2 (`qwen_smoke/20261026-0929`)**: Q4_K_M (13.2 GB) out of memory on one T4 (fp16 and bf16);
+  Q3_K_M fp16 gave blank/NaN images; Lightning LoRA failed (Kaggle's torchao 0.10 too old). Attempt 3: torchao removed, bf16,
+  Q4_K_M split by hand over both T4s (`split_gpus`), Q3_K_M bf16 on one T4 as fallback.

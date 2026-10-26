@@ -35,7 +35,7 @@ sh('ls /kaggle/input /kaggle/input/* | head -30; nvidia-smi --query-gpu=name,mem
 sh(f'git clone -q --depth 1 -b v1.5.3 https://github.com/nerfstudio-project/gsplat {W}/gsplat && touch {EX}/datasets/__init__.py; '
    f'echo "torch==$(python -c "import torch; print(torch.__version__)")" > {W}/pin.txt; '
    f'pip install -q -c {W}/pin.txt ninja gsplat==1.5.3 plyfile lpips gguf peft bitsandbytes accelerate "transformers>=4.51" '
-   '"git+https://github.com/huggingface/diffusers" 2>&1 | tail -3; '
+   '"git+https://github.com/huggingface/diffusers" 2>&1 | tail -3; pip uninstall -y -q torchao; '
    'pip install -q --no-deps "git+https://github.com/rmbrualla/pycolmap@cc7ea4b7301720ac29287dbe450952511b32125e"; '
    'sed -i "s/np.uint64(-1)/np.uint64(np.iinfo(np.uint64).max)/" $(python -c "import importlib.util as u; print(u.find_spec(\'pycolmap\').submodule_search_locations[0])")/scene_manager.py')
 tgz = glob.glob('/kaggle/input/**/gsplat_ext.tgz', recursive=True)                          # namma-prep's compiled gsplat
@@ -51,15 +51,18 @@ D = f'{W}/data'; inp = [d for d in glob.glob('/kaggle/input/**/model.ply', recur
 zs = glob.glob('/kaggle/input/**/sparse.zip', recursive=True)                                 # Kaggle may have unzipped it
 if zs: shutil.unpack_archive(zs[0], D)                                                       # -> D/sparse/0/*.bin
 else: shutil.copytree(os.path.dirname(glob.glob('/kaggle/input/**/sparse/**/cameras.bin', recursive=True)[0]), f'{D}/sparse/0')
-for z in glob.glob('/kaggle/input/**/frames.zip', recursive=True): shutil.unpack_archive(z, f'{W}/fr')
-cnt = {}
-for f in glob.glob('/kaggle/input/**/*', recursive=True) + glob.glob(f'{W}/fr/**/*', recursive=True):
+FDS = CFG.get('frames_dataset', 'namma-dl3dv').split('/')[-1]                                # only the run's frames dataset:
+for z in glob.glob(f'/kaggle/input/**/{FDS}/**/frames.zip', recursive=True): shutil.unpack_archive(z, f'{W}/fr')  # other inputs
+cnt = {}                                                                                      # (namma-prep) hold other images
+for f in [g for g in glob.glob('/kaggle/input/**/*', recursive=True) if f'/{FDS}/' in g] + glob.glob(f'{W}/fr/**/*', recursive=True):
     if f.lower().endswith(('.jpg', '.jpeg', '.png')) and '/sparse' not in f: cnt[os.path.dirname(f)] = cnt.get(os.path.dirname(f), 0) + 1
+assert cnt, f'no frames found in the attached dataset {FDS}'
 say('frames', frames.from_images(max(cnt, key=cnt.get), f'{D}/images', NFRAMES, LONG))
 sys.path.insert(0, EX); from datasets.colmap import Parser
 from gsplat import rasterization
 from plyfile import PlyData
 p = Parser(D, factor=1, normalize=True, test_every=8); C = p.camtoworlds; names = p.image_names
+nf = len(glob.glob(f'{D}/images/*.jpg')); assert nf == len(names), f'{nf} frames but the run has {len(names)} cameras: wrong frames'
 v = PlyData.read(inp[0])['vertex'].data; dev = 'cuda'
 t = lambda *k: torch.tensor(np.stack([v[x] for x in k], 1), dtype=torch.float32, device=dev)
 means, scales, quats = t('x', 'y', 'z'), torch.exp(t('scale_0', 'scale_1', 'scale_2')), t('rot_0', 'rot_1', 'rot_2', 'rot_3')
@@ -129,13 +132,35 @@ def metrics(a, gt):
     tt = lambda x: torch.tensor(x).permute(2, 0, 1)[None].to(lp.parameters().__next__().device) * 2 - 1
     return dict(psnr=round(ps(a), 2), psnr_exposure_fair=round(ps(fit), 2), ssim=round(float(structural_similarity(a, g, channel_axis=2, data_range=1)), 4),
                 lpips=round(float(lp(tt(a), tt(g)).item()), 4))
+def split_gpus(tr, frac=0.45):
+    """The 20B transformer over both T4s by hand (GGUF weights move with .to(); accelerate's dispatcher rebuilds parameters):
+    first `frac` of the blocks + the input layers on GPU 0 (it also holds the VAE), the rest + output layers on GPU 1; a
+    pre-hook moves each module's inputs to its GPU, and the result goes back to GPU 0 for the scheduler."""
+    def mover(dev):
+        def mv(x):
+            if torch.is_tensor(x): return x.to(dev)
+            if isinstance(x, (tuple, list)): return type(x)(mv(y) for y in x)
+            return x
+        return lambda m, a, kw: (mv(a), {k_: mv(v) for k_, v in kw.items()})
+    n = len(tr.transformer_blocks); k = int(n * frac)
+    for i, b in enumerate(tr.transformer_blocks):
+        dev = 'cuda:0' if i < k else 'cuda:1'; b.to(dev); b.register_forward_pre_hook(mover(dev), with_kwargs=True)
+    for name, m in tr.named_children():
+        if name == 'transformer_blocks': continue
+        dev = 'cuda:1' if name in ('norm_out', 'proj_out') else 'cuda:0'; m.to(dev); m.register_forward_pre_hook(mover(dev), with_kwargs=True)
+    def back(m, a, out):
+        if isinstance(out, tuple): return (out[0].to('cuda:0'),) + tuple(out[1:])
+        out.sample = out.sample.to('cuda:0'); return out
+    tr.register_forward_hook(back)
+
 done = False
 SMALL = 'qwen-image-edit-2511-Q3_K_M.gguf'                                                   # 9.9 GB, if 13 GB + activations do not fit
-for dt, gg in [(torch.float16, GGUF), (torch.float16, SMALL), (torch.bfloat16, GGUF)]:
+for dt, gg, split in [(torch.bfloat16, GGUF, True), (torch.bfloat16, SMALL, False)]:      # fp16: blank/NaN images; 13 GB > one T4
     try:
-        t1 = time.time(); torch.cuda.reset_peak_memory_stats(); say('editor try', dt, gg)
+        t1 = time.time(); torch.cuda.reset_peak_memory_stats(); say('editor try', dt, gg, 'split' if split else '')
         tr = QwenImageTransformer2DModel.from_single_file(f'https://huggingface.co/unsloth/Qwen-Image-Edit-2511-GGUF/blob/main/{gg}',
               quantization_config=GGUFQuantizationConfig(compute_dtype=dt), torch_dtype=dt, config=REPO, subfolder='transformer')
+        if split and torch.cuda.device_count() > 1: split_gpus(tr); say('transformer split over 2 GPUs')
         vae = AutoencoderKLQwenImage.from_pretrained(REPO, subfolder='vae', torch_dtype=dt)
         pipe = QwenImageEditPlusPipeline.from_pretrained(REPO, transformer=tr, vae=vae, text_encoder=None, torch_dtype=dt,
                                                          scheduler=FlowMatchEulerDiscreteScheduler.from_config(LIGHT))
@@ -144,7 +169,9 @@ for dt, gg in [(torch.float16, GGUF), (torch.float16, SMALL), (torch.bfloat16, G
             for n_, q_ in pipe.transformer.named_parameters():                                # LoRA ships bf16; compute may be fp16
                 if 'lora' in n_ and q_.dtype != dt: q_.data = q_.data.to(dt)
         except Exception as ex: say('LoRA failed:', type(ex).__name__, str(ex)[:300]); REP['lora'] = f'failed: {str(ex)[:200]}'; steps = 12
-        pipe.to('cuda:0'); REP['load_s'] = round(time.time() - t1); say('editor loaded', REP['load_s'], 's')
+        if split and torch.cuda.device_count() > 1: pipe.vae.to('cuda:0')                  # transformer already placed
+        else: pipe.to('cuda:0')
+        REP['load_s'] = round(time.time() - t1); say('editor loaded', REP['load_s'], 's')
         for c in cases:
             e, m = emb[c['name']]; t2 = time.time()
             with torch.inference_mode():
