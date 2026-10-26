@@ -26,6 +26,10 @@ def save_report(): json.dump(REP, open(f'{O}/freefix_report.json', 'w'), indent=
 
 sh(f'git clone -q --depth 1 -b claude/wonderful-cori-i3fn41 https://github.com/RazyAnas/NAMMA {W}/repo', check=True)
 sh(f'git clone -q --depth 1 https://github.com/hyzhou404/FreeFix {W}/freefix', check=True)
+sch = f'{W}/freefix/ours/schedulers/euler_discrete_scheduler.py'; src = open(sch).read()          # upstream leaves a debugger
+src = src.replace("            import ipdb; ipdb.set_trace()\n", "")                         # stop in the guide-only branch
+src = src.replace("        else:\n            x0 = warp_latent * 0.8 + x0 * 0.2", "        elif warp_latent is not None:\n            x0 = warp_latent * 0.8 + x0 * 0.2")
+assert 'ipdb' not in src; open(sch, 'w').write(src)
 F = f'{W}/repo/colab/real_scenes/final'; FF = f'{W}/freefix'; EX = f'{W}/gsplat/examples'; sys.path.insert(0, F)
 sh(f'git clone -q --depth 1 -b v1.5.3 https://github.com/nerfstudio-project/gsplat {W}/gsplat && touch {EX}/datasets/__init__.py; '
    f'echo "torch==$(python -c "import torch; print(torch.__version__)")" > {W}/pin.txt; '
