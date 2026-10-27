@@ -314,3 +314,13 @@ The Claude cloud container **cannot reach kaggle.com** (proxy 403). GitHub's run
 - **Difix dropped (owner, 26 Oct: "not worth it").** Code, config and workflow removed from the repo (`difix_test.py`,
   `difix_gh.py`, `DIFIX.json`, `difix-test.yml`; in git history if ever needed). Its results stay above. The off-path smears are
   now tackled at training time instead (run 6: room prior + depth/surface guide), not by AI-fixed views.
+- **Object layer v2 (27 Oct, `objects/20261027-0443`, 14.5 min on a T4)**: 17 objects. Better than v1: window went to the room;
+  3 duplicates merged; bag (CLIP 0.97), AC, suitcase, coat, picture frame right. Worse than v1: the "bed" merge swallowed the
+  dresser + TV (a lamp crop was renamed "bed" by CLIP 0.58, then merged on the shared word "bed"); sofa and dresser lost their
+  names; 17 "couch" (3.25 m) and 11 "bed" are mixed wall pieces; side table -> "trash can", wall art -> "cushion", floor lamp ->
+  "lampshade". Verdict: not better than v1 overall. Fixes for v3: merge only on look (CLIP) + overlap, never on a name; CLIP may
+  only replace a generic VLM answer; give the VLM the measured size; split mixed objects. Tour labels / click / search are in
+  `make_tour.py` (tested with a stub viewer), used by the next objects run (or `collect_only`).
+- **Run 6 started 27 Oct 05:25 UTC** (RUN.json n=12): original video, 900 frames, 1920 px, 3M splats, 50k steps; A/B `full`
+  (room prior) vs `geo` (room prior + DA3 depth/surface guide). Likely longer than the 345-min GitHub poll: then set
+  `"collect": true`, bump n and push to collect.
