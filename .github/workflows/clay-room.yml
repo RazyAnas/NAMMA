@@ -23,7 +23,13 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.11"
-      - run: sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /opt/hostedtoolcache/CodeQL && sudo apt-get update -qq && sudo apt-get install -y -qq libegl1 libgl1 libgomp1 blender > /dev/null && df -h / && blender --version | head -1
+      # apt's blender hung for 54 min (run 40541641951); the official Blender 4.2 LTS build needs only a few X libs
+      - timeout-minutes: 25
+        run: |
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /opt/hostedtoolcache/CodeQL
+          sudo apt-get update -qq && sudo DEBIAN_FRONTEND=noninteractive apt-get install -y -qq libegl1 libgl1 libgomp1 libxi6 libxxf86vm1 libxfixes3 libxrender1 libxkbcommon0 libsm6 > /dev/null
+          (timeout 900 curl -sSfL https://download.blender.org/release/Blender4.2/blender-4.2.3-linux-x64.tar.xz | sudo tar -xJ -C /opt && sudo ln -sf /opt/blender-4.2.3-linux-x64/blender /usr/local/bin/blender && blender --version | head -1) || echo "no blender: the Blender check is skipped"
+          df -h /
       - run: pip install -q huggingface_hub numpy pillow pandas playwright==1.49.1 && python -m playwright install --with-deps chromium
       - name: Clay room
         env:
