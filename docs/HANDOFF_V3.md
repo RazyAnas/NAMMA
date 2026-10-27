@@ -338,3 +338,16 @@ The Claude cloud container **cannot reach kaggle.com** (proxy 403). GitHub's run
   SSIM 0.936; smear filter -0.05 dB; **the tour as shipped (compressed PLY, SH band 1) -2.1 dB** (0.896; wrong colours, hazy
   mirror/glass); compressed PLY with all SH bands -0.08 dB (91 MB vs 37.5 MB); SH 0 -2.8 dB. SOG with SH is hours on a CPU.
   make_tour.build now keeps all SH bands (TOUR_SH=1 for the small file); run 4's tour rebuilt with `tour_publish.py rebuild`.
+- **Plan A (clay room) PAUSED by the owner (27 Oct, "we will do plan A later")**. Code: `final/clay_room.py`, `v3/clay_gh.py`,
+  `clay-room.yml` (now installs the official Blender 4.2 build; apt's blender hung 54 min). Rerun = bump `v3/CLAY.json` n.
+- **Plan B v1, NAMMA World by "drones" (27 Oct)**: `final/world_v1.py` (loop), `final/world_job.py` (Kaggle T4 job),
+  `v3/world_gh.py` + `world.yml` + `v3/WORLD.json` (runner). Start from the photo as a textured surface (MoGe-2 metric depth,
+  cut at depth jumps) + a painted "behind" layer; then virtual cameras (90-degree lens, ~40 views: turns, up/down, side steps)
+  render the world, paint what is missing (RealVisXL V4 inpainting + LCM-LoRA, 8 steps), get its depth (MoGe-2 with the known
+  lens), fit it to the depth already there and add it as a textured patch. Bug found and fixed with a synthetic room + oracle
+  painter: the old gap-fill copied wrong seam pixels into whole patches (2.7-25 % depth error with a PERFECT depth model);
+  now outliers are dropped and the correction is a smooth normalized convolution: 0 % wrong, 39.5 dB / 99.87 % coverage on
+  random views; 32.9 dB with a depth model 1.3x off + 5 % noise. Test scripts were in the scratchpad (synthetic box room +
+  table; `WORLD_LOCAL=1` runs world_job.py on the CPU with stand-in models). Output per sample: world.glb, look-around viewer
+  (drag = turn 360 degrees, WASD walk within walk_m, "Show generated" tints AI parts orange), world360.jpg, drones/*.jpg
+  (render | painted per drone), world_sheet.jpg (real neighbouring frames | world) and report.json (PSNR/SSIM, times).
