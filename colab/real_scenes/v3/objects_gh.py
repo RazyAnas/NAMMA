@@ -2,7 +2,8 @@
 The run's model.ply + sparse/ (private HF results dataset) -> private Kaggle dataset namma-objects-in -> Kaggle job
 anasrazy/namma-objects (final/objects_job.py -> final/objects3d.py, with the run's frames dataset attached; the run's level matrix
 and metres-per-unit from its tour go in JOB_CFG) -> outputs -> hf://datasets/<user>/namma-v3-out/objects/<time>/,
-then a tour of the object-tinted model (link only in objects/<time>/tour_url.txt) + screenshots. Only one Kaggle GPU job at a time."""
+then two tours: the real model with object labels / click-to-select / search (link only in objects/<time>/tour_url.txt)
+and the object-tinted model (tour_tint_url.txt), + screenshots. Only one Kaggle GPU job at a time."""
 import glob, json, os, shutil, subprocess, sys, time
 V = os.path.dirname(os.path.abspath(__file__)); FIN = os.path.join(os.path.dirname(V), 'final'); sys.path.insert(0, V); sys.path.insert(0, FIN)
 cfg = json.load(open(f'{V}/OBJECTS.json')); KU = cfg.get('kaggle_user', 'anasrazy'); KID = f'{KU}/namma-objects'; DS = f'{KU}/namma-objects-in'
@@ -58,12 +59,16 @@ say(f'results: hf://datasets/{repo}/{dst}')
 if not os.path.exists(f'{OUT}/objects.json'): sys.exit(f'Kaggle job ended with: {s[-200:]} (no objects.json)')
 if not os.path.exists(f'{OUT}/full/model.ply'): sys.exit('no tinted model.ply: no tour')
 
-# tour of the object-tinted model (each object its own colour), built like the run's own tour
-d = snapshot_download(repo, repo_type='dataset', local_dir='dl2', token=tok,
-                      allow_patterns=[f'{R}/full/level.json', f'{R}/full/nav.json', f'{R}/mesh/mesh.glb', f'{R}/sparse/**'])
-HR = f'{OUT}/run'; os.makedirs(f'{HR}/full', exist_ok=True); shutil.move(f'{OUT}/full/model.ply', f'{HR}/full/model.ply')
-for x in ('level.json', 'nav.json'): shutil.copy(f'{d}/{R}/full/{x}', f'{HR}/full/{x}')
-if os.path.exists(f'{d}/{R}/mesh/mesh.glb'): os.makedirs(f'{HR}/mesh', exist_ok=True); shutil.copy(f'{d}/{R}/mesh/mesh.glb', f'{HR}/mesh/mesh.glb')
+# two tours, built like the run's own: the real model with a label, click-to-select and search per object (the one to use), and
+# the object-tinted model (each object its own colour: to check the split)
+d0 = d; d = snapshot_download(repo, repo_type='dataset', local_dir='dl2', token=tok,
+                              allow_patterns=[f'{R}/full/level.json', f'{R}/full/nav.json', f'{R}/mesh/mesh.glb', f'{R}/sparse/**'])
+HR, HT = f'{OUT}/run', f'{OUT}/run_tint'
+for h in (HR, HT):
+    os.makedirs(f'{h}/full', exist_ok=True); shutil.copy(f'{OUT}/objects.json', h); shutil.copytree(f'{OUT}/crops', f'{h}/crops', dirs_exist_ok=True)
+    for x in ('level.json', 'nav.json'): shutil.copy(f'{d}/{R}/full/{x}', f'{h}/full/{x}')
+    if os.path.exists(f'{d}/{R}/mesh/mesh.glb'): os.makedirs(f'{h}/mesh', exist_ok=True); shutil.copy(f'{d}/{R}/mesh/mesh.glb', f'{h}/mesh/mesh.glb')
+shutil.copy(f'{d0}/{R}/full/model.ply', f'{HR}/full/model.ply'); shutil.move(f'{OUT}/full/model.ply', f'{HT}/full/model.ply')
 T = os.path.abspath('work'); EX = f'{T}/gsplat/examples'; data = f'{T}/data'; os.makedirs(data, exist_ok=True)
 run(f'git clone -q --depth 1 -b v1.5.3 https://github.com/nerfstudio-project/gsplat {T}/gsplat && touch {EX}/datasets/__init__.py')
 run('pip install -q torch --index-url https://download.pytorch.org/whl/cpu && pip install -q opencv-python-headless imageio tqdm plyfile scipy trimesh '
@@ -74,10 +79,11 @@ shutil.copytree(f'{d}/{R}/sparse', f'{data}/sparse', dirs_exist_ok=True)
 import dl3dv, frames                                                                      # the run's frames, same names and order
 _, folder = dl3dv.fetch(cfg['scene'], f'{T}/ds', tok, cfg.get('dl3dv_res', 'images_2'))
 say('frames', frames.from_images(folder, f'{data}/images', int(cfg.get('nframes', 420)), int(cfg.get('long', 1440))))
-run(f'python {FIN}/make_tour.py plan {EX} {data} {HR} {OUT}/tour')
-run(f'python {FIN}/make_tour.py build {HR} {OUT}/tour {T}/node_modules/@playcanvas/supersplat-viewer/public {T}/node_modules/.bin/splat-transform')
-api.upload_folder(folder_path=f'{OUT}/tour', path_in_repo=f'{dst}/tour', repo_id=repo, repo_type='dataset')
+run(f'python {FIN}/make_tour.py plan {EX} {data} {HR} {OUT}/tour'); shutil.copytree(f'{OUT}/tour', f'{OUT}/tour_tint')
 import tour_publish
-tour_publish.publish(api, user, repo, f'{R}-objects', f'{OUT}/tour', say, url_path=f'{dst}/tour_url.txt')
+for h, tour, name, url in ((HR, 'tour', f'{R}-objects', 'tour_url.txt'), (HT, 'tour_tint', f'{R}-objtint', 'tour_tint_url.txt')):
+    run(f'python {FIN}/make_tour.py build {h} {OUT}/{tour} {T}/node_modules/@playcanvas/supersplat-viewer/public {T}/node_modules/.bin/splat-transform')
+    api.upload_folder(folder_path=f'{OUT}/{tour}', path_in_repo=f'{dst}/{tour}', repo_id=repo, repo_type='dataset')
+    tour_publish.publish(api, user, repo, name, f'{OUT}/{tour}', say, url_path=f'{dst}/{url}')
 if os.environ.get('GITHUB_ENV'): open(os.environ['GITHUB_ENV'], 'a').write(f'TOUR_RUN={dst}\n')
 say('done')

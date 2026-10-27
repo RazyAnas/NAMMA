@@ -22,8 +22,17 @@ OVERLAY = """<style>
   #nm-strip button{border:2px solid #fff3;border-radius:8px;padding:0;background:#000;cursor:pointer;position:relative}
   #nm-strip img{width:96px;height:64px;object-fit:cover;display:block;border-radius:6px}
   #nm-strip span{position:absolute;left:4px;bottom:2px;color:#fff;font:11px system-ui,sans-serif;text-shadow:0 0 3px #000}
-  @media (max-width:640px){#nm-plan{width:38vw}#nm-strip{display:none}}
+  #nm-find{position:fixed;left:50%;bottom:72px;transform:translateX(-50%);width:min(80vw,340px);z-index:11;font:13px system-ui,sans-serif;color:#eee;display:none}
+  #nm-q{width:100%;box-sizing:border-box;padding:9px 12px;border-radius:20px;border:1px solid #fff4;background:#111d;color:#fff;font:inherit;outline:none}
+  #nm-hits{display:flex;flex-direction:column-reverse;gap:4px;margin-bottom:6px;max-height:50vh;overflow-y:auto}
+  #nm-hits button,#nm-card{display:flex;align-items:center;gap:8px;background:#111e;border:1px solid #fff3;border-radius:8px;color:#eee;font:inherit;padding:4px;cursor:pointer;text-align:left}
+  #nm-hits img,#nm-card img{width:44px;height:44px;object-fit:cover;border-radius:5px;flex:none}
+  #nm-card{position:fixed;z-index:11;display:none;max-width:260px;padding:6px 8px}
+  #nm-card b{display:block} #nm-card small{color:#aaa}
+  @media (max-width:640px){#nm-plan{width:38vw}#nm-strip{display:none}#nm-find{bottom:84px}}
 </style>
+<div id="nm-find"><div id="nm-hits"></div><input id="nm-q" type="search" placeholder="Search the room: sofa, lamp, bag ..." autocomplete="off"></div>
+<div id="nm-card"></div>
 <div id="nm-plan"><div class="wrap"><img src="./floorplan.png" alt="floor plan"><div class="dot" id="nm-dot"></div></div><div>FLOOR PLAN</div></div>
 <div id="nm-strip"></div>
 <script type="module">
@@ -37,6 +46,31 @@ OVERLAY = """<style>
   const dot = document.getElementById('nm-dot');
   setInterval(() => { const app = window.app; if (!app) return; let c; app.root.forEach(e => { if (e.camera) c = e.getPosition(); });
     if (c) { const [l, t] = pos(c.x, c.z); dot.style.left = Math.max(0, Math.min(100, l)) + '%'; dot.style.top = Math.max(0, Math.min(100, t)) + '%'; } }, 200);
+  // objects (objects3d.py): search by name / description, and click an object in the 3D view to see what it is
+  const obs = o.objects || [], find = document.getElementById('nm-find'), q = document.getElementById('nm-q'), hits = document.getElementById('nm-hits'), card = document.getElementById('nm-card');
+  const row = (x) => `${x.thumb ? `<img src="./${x.thumb}" alt="">` : ''}<span><b>${x.label}</b><br><small>${x.size}</small></span>`;
+  const match = (s) => { const w = s.toLowerCase().split(' ').filter(Boolean); return obs.filter(x => w.every(t => x.words.includes(t) || x.words.split(' ').some(v => v.startsWith(t.slice(0, Math.max(3, t.length - 1)))))); };
+  const show = () => { hits.innerHTML = ''; (q.value.trim() ? match(q.value) : obs).slice(0, 8).forEach(x => {
+    const b = document.createElement('button'); b.innerHTML = row(x); b.onclick = () => { go(x.i); hits.innerHTML = ''; q.blur(); }; hits.appendChild(b); }); };
+  if (obs.length) {
+    find.style.display = 'block'; q.oninput = show; q.onfocus = show; q.onblur = () => setTimeout(() => { if (document.activeElement !== q) hits.innerHTML = ''; }, 200);
+    ['keydown', 'keyup', 'keypress'].forEach(t => q.addEventListener(t, e => { e.stopPropagation(); if (t === 'keydown' && e.key === 'Enter') { const m = match(q.value); if (m.length) { go(m[0].i); hits.innerHTML = ''; q.blur(); } } }));
+    let down = null;
+    window.addEventListener('pointerdown', e => { down = e.target.tagName === 'CANVAS' ? [e.clientX, e.clientY, Date.now()] : null; });
+    window.addEventListener('pointerup', e => {
+      if (!down || Math.hypot(e.clientX - down[0], e.clientY - down[1]) > 6 || Date.now() - down[2] > 400) return;
+      const cam = window.app && window.app.root.findComponents('camera')[0]; if (!cam) return;
+      const r = e.target.getBoundingClientRect(), a = cam.entity.getPosition(), p = cam.screenToWorld(e.clientX - r.left, e.clientY - r.top, 10);
+      const d = [p.x - a.x, p.y - a.y, p.z - a.z], o_ = [a.x, a.y, a.z]; let best = null, bt = 1e9;
+      obs.forEach(x => { let t0 = 0, t1 = 1e9;                                                  // ray vs the object's box (+2 cm)
+        for (let k = 0; k < 3; k++) { const inv = 1 / (d[k] || 1e-9); let u = (x.lo[k] - 0.02 - o_[k]) * inv, v = (x.hi[k] + 0.02 - o_[k]) * inv;
+          if (u > v) [u, v] = [v, u]; t0 = Math.max(t0, u); t1 = Math.min(t1, v); }
+        if (t0 <= t1 && t0 < bt) { bt = t0; best = x; } });
+      if (!best) { card.style.display = 'none'; return; }
+      card.innerHTML = row(best); card.style.display = 'flex'; card.onclick = () => { go(best.i); card.style.display = 'none'; };
+      card.style.left = Math.min(e.clientX + 12, innerWidth - 270) + 'px'; card.style.top = Math.min(e.clientY + 12, innerHeight - 70) + 'px';
+    });
+  }
 </script>"""
 
 def room_collision(pts, h, path):
@@ -154,6 +188,7 @@ def plan(examples, data, run, tour):
                                             target=[float(x) for k in keys for x in pose(k)['target']], fov=[fov] * len(keys))))
     spots = np.linspace(0, len(cam) - 1, 8).astype(int)[1:-1]
     ann = [dict(position=pose(i)['target'], title=f'Spot {n + 1}', text='Real filmed view', camera=dict(initial=pose(i))) for n, i in enumerate(spots)]
+    oann, oitems = objects_layer(run, tour, cam, fov, len(ann)); ann += oann
     settings = dict(version=2, tonemapping='none', highPrecisionRendering=False, background=dict(color=[0.08, 0.08, 0.09]),
                     postEffectSettings=dict(sharpness=dict(enabled=True, amount=0.2), bloom=dict(enabled=False, intensity=0.1, blurLevel=2),
                                             grading=dict(enabled=False, brightness=1, contrast=1, saturation=1, tint=[1, 1, 1]),
@@ -167,11 +202,38 @@ def plan(examples, data, run, tour):
     for n, i in enumerate(spots):
         Image.open(p.image_paths[i]).convert('RGB').resize((240, int(240 * Hd / Wd))).save(f'{tour}/thumbs/spot{n + 1}.jpg', quality=82)
     overlay = dict(floor=dict(x0=float(lo[0]), z0=float(lo[2]), px=px, w=Wp, h=Hp),
-                   spots=[dict(title=a_['title'], x=float(cs[i][0]), z=float(cs[i][2]), thumb=f'thumbs/spot{n + 1}.jpg') for n, (i, a_) in enumerate(zip(spots, ann))])
+                   spots=[dict(title=a_['title'], x=float(cs[i][0]), z=float(cs[i][2]), thumb=f'thumbs/spot{n + 1}.jpg') for n, (i, a_) in enumerate(zip(spots, ann))], objects=oitems)
     json.dump(overlay, open(f'{tour}/overlay.json', 'w'))
-    info = dict(metres_per_unit=round(s, 4), frames=len(cam), start_frame=start, fov=round(fov, 1), room_box=[lo.round(3).tolist(), hi.round(3).tolist()], walk_seconds=dur, spots=len(ann))
+    info = dict(metres_per_unit=round(s, 4), frames=len(cam), start_frame=start, fov=round(fov, 1), room_box=[lo.round(3).tolist(), hi.round(3).tolist()], walk_seconds=dur, spots=len(spots), objects=len(oitems))
     json.dump(info, open(f'{tour}/tour.json', 'w'), indent=1); print('TOUR PLAN', json.dumps(info), flush=True)
     return info
+
+def objects_layer(run, tour, cam, fov, first):
+    """The object layer (objects3d.py: <run>/objects.json + crops/) in the tour: a labelled hotspot on top of each object; clicking
+    it, its search hit or the object itself flies to the real filmed frame that showed it best, looking at it (cameras = video order,
+    room coordinates; objects3d writes boxes in the same coordinates: level matrix x metres per unit). No objects.json: nothing."""
+    f = f'{run}/objects.json'
+    if not os.path.exists(f): return [], []
+    from PIL import Image
+    os.makedirs(f'{tour}/objects', exist_ok=True); ann, items = [], []
+    for o in json.load(open(f))['objects']:
+        lo, hi = np.array(o['box_m'][0], float), np.array(o['box_m'][1], float); c = (lo + hi) / 2; sz = hi - lo
+        fi = o.get('frame')
+        if fi is None or fi >= len(cam):                                                    # no best frame: the nearest one >= 1 m away
+            d = np.linalg.norm(cam - c, axis=1); fi = int(np.argmin(np.where(d >= 1.0, d, 1e9)))
+        eye = cam[fi]; r = lambda v: [round(float(x), 3) for x in v]
+        w, dp = sorted([sz[0], sz[2]], reverse=True)
+        size = f'about {w:.1f} x {dp:.1f} m, {sz[1]:.1f} m tall'
+        thumb = None
+        if o.get('crop') and os.path.exists(f'{run}/{o["crop"]}'):
+            t = Image.open(f'{run}/{o["crop"]}').convert('RGB'); t.thumbnail((200, 200)); thumb = f'objects/{o["id"]}.jpg'; t.save(f'{tour}/{thumb}', quality=82)
+        label = o.get('label') or f'object {o["id"]}'
+        ann.append(dict(position=r([c[0], hi[1] + 0.06, c[2]]), title=label[:1].upper() + label[1:], text=size,
+                        camera=dict(initial=dict(position=r(eye), target=r(c), fov=round(fov, 1)))))
+        words = ' '.join(x for x in (label, o.get('vlm', ''), o.get('clip_label', '')) if x).lower()
+        items.append(dict(i=first + len(ann) - 1, id=o['id'], label=label, size=size, words=words, thumb=thumb, lo=r(lo), hi=r(hi)))
+    print('tour objects:', len(items), [x['label'] for x in items], flush=True)
+    return ann, items
 
 def collision(run, tour, faces=150000):
     """Walk-mode collision = the room box (floor slab + 4 walls: never a hole to fall or walk through) + the furniture from the

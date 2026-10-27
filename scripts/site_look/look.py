@@ -32,6 +32,10 @@ def visit_tour(ctx, url, k):
         for key in ['w'] * 12 + ['ArrowUp'] * 12: page.keyboard.press(key); page.wait_for_timeout(120)
         page.wait_for_timeout(4000); shot(page, f'tour{k}_c_moved')
         page.mouse.click(W / 2, H * 0.7); page.wait_for_timeout(6000); shot(page, f'tour{k}_d_clicked')
+        if page.is_visible('#nm-q'):                                                        # our tours: object search box
+            q = os.environ.get('LOOK_QUERY', 'bed'); page.fill('#nm-q', q); page.wait_for_timeout(1500); shot(page, f'tour{k}_f_search')
+            rec['search'] = [q, page.eval_on_selector_all('#nm-hits button', 'els => els.map(e => e.innerText.split("\\n")[0])')]
+            page.press('#nm-q', 'Enter'); page.wait_for_timeout(9000); shot(page, f'tour{k}_g_found')
         rec['buttons'] = page.eval_on_selector_all('button, [role=button]', 'els => els.map(e => (e.innerText || e.getAttribute("aria-label") || e.title || "").trim()).filter(t => t)')
         for n, label in enumerate([b for b in rec['buttons'] if re.search(r'plan|floor|3d|doll|overview|map|room|bed|living|kitchen|bath|hall|salon|cocina', b, re.I)][:6]):
             try:
