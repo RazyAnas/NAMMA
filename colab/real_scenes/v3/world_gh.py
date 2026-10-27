@@ -5,7 +5,7 @@ T4: MoGe-2 depth + SDXL inpainting drones) -> outputs -> hf://datasets/<user>/na
 sample's viewer published like the tours (links only in tour_url.txt files). One Kaggle job at a time."""
 import glob, json, os, shutil, subprocess, sys, time
 V = os.path.dirname(os.path.abspath(__file__)); FIN = os.path.join(os.path.dirname(V), 'final'); sys.path.insert(0, V); sys.path.insert(0, FIN)
-cfg = json.load(open(f'{V}/WORLD.json')); KU = cfg.get('kaggle_user', 'anasrazy'); KID = f'{KU}/namma-world'; DS = f'{KU}/namma-world-in'
+cfg = json.load(open(f'{V}/WORLD.json'))
 OUT = os.path.abspath('out'); T0 = time.time(); STAMP = time.strftime('%Y%m%d-%H%M')
 run = lambda c: subprocess.run(c, shell=True, check=True, executable='/bin/bash')
 
@@ -21,6 +21,10 @@ def kg(*args, check=True):
 
 if not cfg.get('n'): say('WORLD.json n = 0: nothing to do'); sys.exit(0)
 tok = os.environ.get('HF_TOKEN'); assert tok and os.environ.get('KAGGLE_API_TOKEN'), 'needs HF_TOKEN and KAGGLE_API_TOKEN secrets'
+from kaggle.api.kaggle_api_extended import KaggleApi                                       # the account is the token's own (a new
+_ka = KaggleApi(); _ka.authenticate(); KU = cfg.get('kaggle_user') or _ka.config_values['username']   # token = maybe a new account)
+say('Kaggle account:', 'anasrazy' if KU == 'anasrazy' else 'not anasrazy (a newer account; name kept out of the public log)')
+KID = f'{KU}/namma-world'; DS = f'{KU}/namma-world-in'
 from huggingface_hub import HfApi, snapshot_download
 api = HfApi(token=tok); user = api.whoami()['name']; repo = f'{user}/namma-v3-out'; R = cfg['run']; dst = f'world/{STAMP}'
 import numpy as np, cv2
