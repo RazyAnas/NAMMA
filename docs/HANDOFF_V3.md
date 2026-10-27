@@ -321,6 +321,10 @@ The Claude cloud container **cannot reach kaggle.com** (proxy 403). GitHub's run
   "lampshade". Verdict: not better than v1 overall. Fixes for v3: merge only on look (CLIP) + overlap, never on a name; CLIP may
   only replace a generic VLM answer; give the VLM the measured size; split mixed objects. Tour labels / click / search are in
   `make_tour.py` (tested with a stub viewer), used by the next objects run (or `collect_only`).
-- **Run 6 started 27 Oct 05:25 UTC** (RUN.json n=12): original video, 900 frames, 1920 px, 3M splats, 50k steps; A/B `full`
-  (room prior) vs `geo` (room prior + DA3 depth/surface guide). Likely longer than the 345-min GitHub poll: then set
-  `"collect": true`, bump n and push to collect.
+- **Run 6 stopped (owner, 27 Oct: no Kaggle GPU hours left this week)**. RUN.json n=12 is prepared (original video, 900
+  frames, 1920 px, 3M splats, 50k steps; A/B `full` room prior vs `geo` room prior + DA3 guide). The attempt had already failed
+  in 30 s: gh_run pushed the kernel before the new video dataset `namma-dl3dv-389a460ca1-video` was ready ("not valid dataset
+  sources"; ffprobe missing on the runner). Before rerunning: wait for the dataset to be ready, then bump n. Consider the
+  `mcmc` strategy first (docs/KMYI_NOTES.md).
+- **Kwang Moo Yi's posts** (owner: "all the important tweets related to our problems"): `docs/KMYI_NOTES.md`, about 55 posts
+  grouped by our problems, with a ranked list of what to try (1: gsplat's `mcmc` strategy, his own 3DGS-MCMC).
