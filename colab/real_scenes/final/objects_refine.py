@@ -3,8 +3,9 @@
 (docs/KMYI_NOTES.md): object ids must agree in 3D, not only per frame.
   walls   big vertical planes (RANSAC on the opaque splats, >= 1.5 m wide and 1.2 m tall). The part of an object lying on such
           a plane is wall when it spans > 1.5 m (v2: 'couch' = sofa + coat + art + the wall between them).
-  smooth  each opaque splat takes the clear majority id of its 12 nearest neighbours within 5 cm (room = 0 counts too), twice.
-  split   each object is cut into its 3D-connected pieces; every big piece is its own object (v2: 'bed' = bed + dresser).
+  smooth  each opaque splat takes the clear majority id of its 12 nearest neighbours within 5 cm (room = 0 counts too; at least
+          4 neighbours), twice.
+  split   an object holding two or more big separate parts is cut into them (v2: 'bed' = bed + dresser); else it stays whole.
   merge   two objects are one only if their boxes overlap >= 50 % AND they look alike (CLIP cosine >= 0.85), never on a name.
   names   Qwen2.5-VL-3B on the CPU, told the measured size and whether the thing hangs on a wall; CLIP zero-shot over the
           size-plausible labels replaces its answer only when the answer is generic or impossible for that size / place.
@@ -100,31 +101,31 @@ def smooth(P, lab, k=12, r=0.05, rounds=2):
     for _ in range(rounds):
         L = np.where(ok, lab[nb], -1); labels = np.unique(lab)
         cnt = np.stack([(L == c).sum(1) for c in labels], 1); best = cnt.argmax(1); top = cnt[np.arange(len(P)), best]
-        flip = (top > ok.sum(1) / 2) & (labels[best] != lab); lab = np.where(flip, labels[best], lab)
+        flip = (top > ok.sum(1) / 2) & (ok.sum(1) >= 5) & (labels[best] != lab); lab = np.where(flip, labels[best], lab)
     return lab
 
 
-def split(P, lab, min_pts=150):
-    """Every object -> its 3D-connected pieces (DBSCAN, eps 6 cm or 2.5 x the typical spacing). Big pieces become objects
-    (parent kept), small ones join the nearest big piece within 10 cm, else the room."""
+def split(P, lab, min_pts=150, gap=0.3):
+    """An object is cut only when it holds two or more big parts (each >= 10 % of it and >= min_pts) that DBSCAN separates
+    (eps 10 cm or 4 x the typical spacing): v2's 'bed' = bed + dresser. Otherwise it stays whole (big furniture has few opaque
+    splats and falls apart at small eps: v3.0 lost the bed and the sofa that way); only bits > 30 cm from every big part go to
+    the room."""
     import open3d as o3d
     from scipy.spatial import cKDTree
     out = np.zeros(len(P), int); parent = {}; nid = 0
     for k in np.unique(lab[lab > 0]):
         m = np.where(lab == k)[0]
         if len(m) < 30: continue
-        Q = P[m]; nn = cKDTree(Q).query(Q, k=2)[0][:, 1]; eps = max(0.06, 2.5 * float(np.median(nn)))
-        cl = np.asarray(o3d.geometry.PointCloud(o3d.utility.Vector3dVector(Q)).cluster_dbscan(eps=eps, min_points=6))
-        if not (cl >= 0).any(): cl = np.zeros(len(m), int)
-        sz = np.bincount(cl[cl >= 0]); big = [c for c in np.where(sz >= max(min_pts, 0.15 * sz.max()))[0]]
-        if not big: big = [int(sz.argmax())] if sz.max() >= min_pts / 2 else []
-        if not big: continue
-        ids = {}
+        Q = P[m]; nn = cKDTree(Q).query(Q, k=2)[0][:, 1]; eps = max(0.10, 4 * float(np.median(nn)))
+        cl = np.asarray(o3d.geometry.PointCloud(o3d.utility.Vector3dVector(Q)).cluster_dbscan(eps=eps, min_points=4))
+        sz = np.bincount(cl[cl >= 0]) if (cl >= 0).any() else np.zeros(0, int)
+        big = [c for c in range(len(sz)) if sz[c] >= max(min_pts, 0.10 * len(m))]
+        if len(big) <= 1:                                                                  # one object: keep it whole
+            main = (cl == big[0]) if big else (cl == int(sz.argmax()) if len(sz) else np.ones(len(m), bool))
+            d = cKDTree(Q[main]).query(Q, k=1)[0]; nid += 1; parent[nid] = int(k); out[m[d < gap]] = nid; continue
+        bigpts = np.isin(cl, big); ids = {}
         for c in big: nid += 1; ids[c] = nid; parent[nid] = int(k); out[m[cl == c]] = nid
-        small = ~np.isin(cl, big)
-        if small.any():
-            bigpts = np.isin(cl, big); d, j = cKDTree(Q[bigpts]).query(Q[small], k=1)
-            near = d < 0.10; out[m[small][near]] = out[m[bigpts][j[near]]]
+        d, j = cKDTree(Q[bigpts]).query(Q[~bigpts], k=1); near = d < gap; out[m[~bigpts][near]] = out[m[bigpts][j[near]]]
     return out, parent
 
 
