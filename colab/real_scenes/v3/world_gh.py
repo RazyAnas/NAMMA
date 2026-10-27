@@ -61,8 +61,9 @@ if not cfg.get('collect'):
             j = fi + off
             if not 0 <= j < len(p.image_names): continue
             Tj = np.linalg.inv(p.camtoworlds[j]) @ c2w_i; c2w = np.linalg.inv(Tj)                 # camera j in camera i's frame (SfM units)
-            cv2.imwrite(f'{o}nb_{off:+d}.jpg', load(j), [cv2.IMWRITE_JPEG_QUALITY, 95])
-            nbs.append(dict(offset=off, frame=p.image_names[j], file=f'{smp["name"]}__nb_{off:+d}.jpg', c2w=c2w.tolist()))
+            tag = ('p' if off > 0 else 'm') + str(abs(off))                                     # no '+': Kaggle drops it from file names
+            cv2.imwrite(f'{o}nb_{tag}.jpg', load(j), [cv2.IMWRITE_JPEG_QUALITY, 95])
+            nbs.append(dict(offset=off, frame=p.image_names[j], file=f'{smp["name"]}__nb_{tag}.jpg', c2w=c2w.tolist()))
         json.dump(dict(name=smp['name'], input=f'{smp["name"]}__input.jpg', frame=p.image_names[fi], K=K.tolist(), prompt=smp.get('prompt', cfg.get('prompt')),
                        sfm=dict(uv=np.stack([u[ok], v[ok]], 1).astype(int).tolist(), z=pc[ok, 2].tolist()), neighbours=nbs), open(f'{o}cam.json', 'w'))
         say(smp['name'], p.image_names[fi], f'{W}x{H}', int(ok.sum()), 'SfM points,', len(nbs), 'neighbours')

@@ -101,35 +101,135 @@ def fit_depth(pred, z_known, known, hole, ring_px=40):
     return (s * pred * np.exp(corr)).astype(np.float32), s, round(mad, 4), int(use.sum())
 
 
-def fly(world, inpaint, depth_fn, size=1024, fov=90.0, plan=None, step=4, min_hole=0.003, log=None):
+def normals_of(D, K, step=4, span=3):
+    """Points and unit normals (facing the camera) of a z-depth map on a step-px grid (OpenCV camera frame); the point map is
+    smoothed and differences span +-span grid cells, points next to a depth jump are left out."""
+    H, W = D.shape; ys, xs = np.arange(step // 2, H, step), np.arange(step // 2, W, step); gx, gy = np.meshgrid(xs, ys)
+    z = cv2.medianBlur(D.astype(np.float32), 5)[gy, gx]
+    P = np.stack([(gx + 0.5 - K[0, 2]) / K[0, 0] * z, (gy + 0.5 - K[1, 2]) / K[1, 1] * z, z], -1).astype(np.float32)
+    Ps = cv2.GaussianBlur(P, (0, 0), 1.5); k = span; dx = np.zeros_like(P); dy = np.zeros_like(P)
+    dx[:, k:-k] = Ps[:, 2 * k:] - Ps[:, :-2 * k]; dy[k:-k] = Ps[2 * k:] - Ps[:-2 * k]
+    n = np.cross(dx, dy); n /= np.linalg.norm(n, axis=-1, keepdims=True) + 1e-12; n *= -np.sign((n * P).sum(-1, keepdims=True) + 1e-12)
+    lz = np.log(np.maximum(z, 1e-3)); jmp = cv2.dilate((np.abs(cv2.Laplacian(lz, cv2.CV_32F)) > 0.03).astype(np.uint8), np.ones((2 * k + 1, 2 * k + 1), np.uint8)) > 0
+    ok = ~jmp; ok[:k] = ok[-k:] = False; ok[:, :k] = ok[:, -k:] = False
+    return P[ok].astype(np.float64), n[ok].astype(np.float64)
+
+
+def _level(h, lowest=True, bin_m=0.05, frac=0.25):
+    """Height of the lowest (or highest) dense level among heights h: the first 5 cm bin from that end holding >= frac of the
+    fullest bin's count, refined by the median of the points within 5 cm of it."""
+    lo_, hi_ = np.percentile(h, 0.5), np.percentile(h, 99.5); bins = np.arange(lo_ - bin_m, hi_ + 2 * bin_m, bin_m)
+    cnt, edges = np.histogram(h, bins); idx = np.flatnonzero(cnt >= frac * cnt.max()); i = idx[0] if lowest else idx[-1]
+    c = 0.5 * (edges[i] + edges[i + 1]); near = np.abs(h - c) < bin_m
+    return float(np.median(h[near])) if near.any() else float(c)
+
+
+def room_box(D, K, margin_m=0.8, behind_m=1.5, height_m=2.6):
+    """The room as a box (geometric grounding for the drones: walls, floor and ceiling are planes). From the photo's metric depth:
+    up = mean of floor/ceiling normals; floor = the lowest level of upward-facing points (not a table top), ceiling = the highest
+    level of downward-facing ones (floor + height_m when not seen); walls along the 2 Manhattan directions of the wall normals,
+    each the farthest surface that way (a wall bounds the room: nearer faces such as a table's sides are not walls). A wall the
+    photo does not see goes margin_m beyond the farthest point that way (behind_m behind the camera), and never closer than
+    0.8 m to the camera, so the drones stay inside. Returns dict(R: columns = box axes in the camera frame (e1, up, e2), lo, hi:
+    bounds along them, seen: which faces were measured)."""
+    P, n = normals_of(D, K); up0 = np.array([0., -1., 0.]); m = max(50, int(0.01 * len(P)))  # OpenCV y is down
+    fl, ce = n @ up0 > np.cos(np.radians(30)), n @ -up0 > np.cos(np.radians(30))
+    up = n[fl].sum(0) - n[ce].sum(0) if (fl.sum() + ce.sum()) > m else up0.copy(); up /= np.linalg.norm(up)
+    for it in range(3):                                                                       # floor plane from point positions
+        h = P @ up; nu = n @ up; fl, ce = (nu > 0.8) & (h < -0.2), (nu < -0.8) & (h > 0.2)        # (normals only pick candidates)
+        floor = _level(h[fl], True) if fl.sum() > m else float(np.percentile(h, 1))
+        floor = min(floor, float(np.percentile(h, 1)) + 0.05)                                  # nothing far below the floor
+        Fp = P[fl & (np.abs(h - floor) < 0.12)]
+        if len(Fp) < m: break
+        u = np.linalg.svd(Fp - Fp.mean(0), full_matrices=False)[2][-1]; u *= np.sign(u @ up)
+        if np.degrees(np.arccos(np.clip(u @ up, -1, 1))) > 20: break                         # not a floor: keep the normals' up
+        up = u
+    ceil_ = _level(h[ce], False) if ce.sum() > m else None
+    if ceil_ is None or not 1.8 < ceil_ - floor < 4.5: ceil_ = max(floor + height_m, float(np.percentile(h, 99.5)) + 0.05); seen_c = False
+    else: seen_c = True
+    a = np.cross(up, [0., 0., 1.]); a /= np.linalg.norm(a); b = np.cross(up, a)                 # horizontal basis
+    wl = np.abs(nu) < 0.3; th = np.arctan2(n[wl] @ b, n[wl] @ a)
+    t0 = float(np.angle(np.exp(4j * th).mean()) / 4) if wl.sum() > m else 0.0
+    e1 = np.cos(t0) * a + np.sin(t0) * b; e2 = np.cross(e1, up); R = np.stack([e1, up, e2], 1)
+    lo, hi, seen = np.zeros(3), np.zeros(3), dict(floor=bool(fl.sum() > m), ceiling=seen_c)
+    lo[1], hi[1] = floor, ceil_
+    for i, e in ((0, e1), (2, e2)):
+        c = P @ e; nc = n @ e
+        for sgn in (1, -1):
+            sc = sgn * c; ext = float(np.percentile(sc, 99.5))                                 # the farthest points that way
+            near = wl & (sgn * nc < -0.8) & (sc > ext - 0.15)                                 # facing back, at that extent: a wall
+            if near.sum() > m and ext > 0.3: d = float(np.median(sc[near])); seen[f'{"+" if sgn > 0 else "-"}{i}'] = True
+            else: d = ext + margin_m if ext > 0.3 else behind_m; seen[f'{"+" if sgn > 0 else "-"}{i}'] = False
+            d = max(d, 0.8)
+            if sgn > 0: hi[i] = d
+            else: lo[i] = -d
+    return dict(R=R, lo=lo, hi=hi, seen=seen)
+
+
+def box_depth(box, c2w, K, W, H):
+    """z-depth of the room box seen from a camera inside it."""
+    uu, vv = np.meshgrid(np.arange(W) + 0.5, np.arange(H) + 0.5)
+    dc = np.stack([(uu - K[0, 2]) / K[0, 0], (vv - K[1, 2]) / K[1, 1], np.ones_like(uu)], -1).reshape(-1, 3)
+    d = dc @ c2w[:3, :3].T @ box['R']; o = c2w[:3, 3] @ box['R']                              # in box axes; d has camera z = 1
+    with np.errstate(divide='ignore', invalid='ignore'):
+        t = np.where(d > 0, (box['hi'] - o) / d, np.where(d < 0, (box['lo'] - o) / d, np.inf))
+    return np.maximum(t.min(1), 1e-3).reshape(H, W).astype(np.float32)                          # t along dc = z-depth
+
+
+def match_colour(painted, rgb, both, region):
+    """Exposure / white balance of the painted pixels matched to the real ones: per-channel gain + offset fitted on pixels that
+    have both (the overlap band), applied to region."""
+    if both.sum() < 200: return painted
+    out = painted.astype(np.float32)
+    for ch in range(3):
+        x, y = out[..., ch][both], rgb[..., ch][both].astype(np.float32); g = np.clip(y.std() / (x.std() + 1e-6), 0.7, 1.4)
+        out[..., ch][region] = (out[..., ch][region] - x.mean()) * g + y.mean()
+    return out.clip(0, 255).astype(np.uint8)
+
+
+def fly(world, inpaint, depth_fn, size=1024, fov=90.0, plan=None, step=4, min_hole=0.003, log=None, box=None):
     """The drone loop. inpaint(rgb uint8, hole bool, **view) -> rgb uint8; depth_fn(rgb uint8, **view) -> z-depth [H, W] (any
-    scale). view = c2w, K (the real models ignore them; the synthetic test's oracle painter uses them)."""
+    scale). view = c2w, K, depth (the world's depth, the room box where it has nothing: the painter's ControlNet guide; the
+    synthetic test's oracle painter uses c2w and K). With a room box the new pixels go onto the box (straight walls, floor and
+    ceiling; depth_fn is not needed), else onto depth_fn's depth fitted to the world."""
     f = 0.5 * size / np.tan(np.radians(fov) / 2); K = np.array([[f, 0, size / 2], [0, f, size / 2], [0, 0, 1.]]); stats = []
     for k, c2w in enumerate(plan or drone_plan()):
         t0 = time.time(); rgb, z, hit = world.render(c2w, K, size, size); hole = ~hit
         if hole.mean() < min_hole: stats.append(dict(view=k, hole_pct=round(100 * float(hole.mean()), 2), skipped=True)); continue
         o_ = 2 * (step + 2) + 1                                                                   # overlap the old surface by a grid cell + 2 px:
         hole_d = cv2.dilate(hole.astype(np.uint8), np.ones((o_, o_), np.uint8)) > 0                  # no crack at the seam
-        painted = inpaint(rgb, hole_d, c2w=c2w, K=K); painted = np.where(hole_d[..., None], painted, rgb).astype(np.uint8)
-        pred = np.clip(depth_fn(painted, c2w=c2w, K=K), 1e-3, None)
-        zz, s, res, nring = fit_depth(pred, np.where(hit, z, 1.0), hit, hole)
+        bz = box_depth(box, c2w, K, size, size) if box is not None else None
+        painted = inpaint(rgb, hole_d, c2w=c2w, K=K, depth=np.where(hit, z, bz) if bz is not None else None)
+        painted = match_colour(painted, rgb, hole_d & hit, hole_d)
+        painted = np.where(hole_d[..., None], painted, rgb).astype(np.uint8)
+        if bz is not None: zz, s, res, nring = bz, 1.0, None, 0
+        else:
+            pred = np.clip(depth_fn(painted, c2w=c2w, K=K), 1e-3, None)
+            zz, s, res, nring = fit_depth(pred, np.where(hit, z, 1.0), hit, hole)
         zz = np.where(hit, z * 1.002, zz).astype(np.float32)                                  # overlap = the old surface, 0.2 % behind it
         n = patch(world, zz, K, c2w, painted, hole_d, step, f'Drone_{k + 1}')
         st = dict(view=k, hole_pct=round(100 * float(hole.mean()), 1), scale=round(s, 3), fit_residual=res, ring_px=nring, triangles=n, seconds=round(time.time() - t0, 1))
         stats.append(st); say('drone', st)
-        if log: cv2.imwrite(f'{log}/drone_{k + 1:02d}.jpg', cv2.cvtColor(np.concatenate([rgb, painted], 1), cv2.COLOR_RGB2BGR), [cv2.IMWRITE_JPEG_QUALITY, 80])
+        if log:                                                                               # render | painted (| the depth guide)
+            row = [rgb, painted]
+            if bz is not None:
+                dv = 1 / np.where(hit, z, bz); dv = (255 * (dv - dv.min()) / (np.ptp(dv) + 1e-9)).astype(np.uint8); row.append(np.repeat(dv[..., None], 3, -1))
+            cv2.imwrite(f'{log}/drone_{k + 1:02d}.jpg', cv2.cvtColor(np.concatenate(row, 1), cv2.COLOR_RGB2BGR), [cv2.IMWRITE_JPEG_QUALITY, 80])
     return stats
 
 
-def start(world, img, K, depth, inpaint, step=2):
-    """The photo as the first textured surface (cut at depth jumps) + what is hidden right behind its depth jumps (painted)."""
+def start(world, img, K, depth, inpaint, step=2, box=None):
+    """The photo as the first textured surface (cut at depth jumps) + what is hidden right behind its depth jumps (painted; its
+    depth = the room box there when given, else the far side of the jump)."""
     D = depth.astype(np.float32); lg = np.log(D); jump = np.zeros(D.shape, bool)
     jump[:, 1:] |= np.abs(np.diff(lg, axis=1)) > G.JUMP; jump[1:, :] |= np.abs(np.diff(lg, axis=0)) > G.JUMP
     far = cv2.dilate(D, np.ones((31, 31), np.uint8)); band = cv2.dilate(jump.astype(np.uint8), np.ones((31, 31), np.uint8)) > 0
     occl = band & (D < 0.95 * far)
     X, F, UV = G.grid_mesh(D, K, np.ones(D.shape, bool), step, G.JUMP); world.add(X, F, UV, img, 'Photo')
     if occl.any():
-        behind = inpaint(img, occl, c2w=np.eye(4), K=K); bd = cv2.medianBlur(np.where(occl, far, D).astype(np.float32), 5)
+        H, W = D.shape; bz = box_depth(box, np.eye(4), K, W, H) if box is not None else None
+        if bz is not None: far = np.maximum(np.minimum(bz, 1.6 * far), D)                         # behind = the wall / floor, not beyond it
+        behind = inpaint(img, occl, c2w=np.eye(4), K=K, depth=np.where(occl, far, D)); bd = cv2.medianBlur(np.where(occl, far, D).astype(np.float32), 5)
         keep = cv2.dilate(occl.astype(np.uint8), np.ones((5, 5), np.uint8)) > 0
         X2, F2, UV2 = G.grid_mesh(bd, K, keep, step, G.JUMP); world.add(X2, F2, UV2, behind, 'Behind')
     return dict(photo_triangles=len(F), hidden_pct=round(100 * float(occl.mean()), 1))
