@@ -255,14 +255,26 @@ def collision(run, tour, faces=150000):
         print('collision:', sum(len(x.faces) for x in parts), 'faces,', round(os.path.getsize(f'{tour}/collision.glb') / 1e6, 1), 'MB', flush=True)
 
 
+def smear_mask(v, box, scale):
+    """Spiky streaks: longest axis > 8x the middle one and > 1 % of the room diagonal (box in metres, scale = metres per unit)."""
+    sc = np.sort(np.exp(np.stack([v['scale_0'], v['scale_1'], v['scale_2']], 1)), 1)
+    room = float(np.linalg.norm(np.array(box[3:]) - np.array(box[:3]))) / scale
+    return (sc[:, 2] > 8 * sc[:, 1]) & (sc[:, 2] > 0.01 * room)
+
+def clean(run, tour, out):
+    """The model as the tour ships it before conversion (smear filter only), in the model's own coordinates, for measuring."""
+    from plyfile import PlyData, PlyElement
+    pl = json.load(open(f'{tour}/plan.json')); v = PlyData.read(f'{run}/full/model.ply')['vertex'].data
+    bad = smear_mask(v, pl['box'], pl.get('scale', 1.0)); PlyData([PlyElement.describe(v[~bad], 'vertex')]).write(out)
+    print(f'smears removed: {bad.sum()} of {len(v)}', flush=True)
+
 def build(run, tour, public, st='npx --no-install splat-transform'):
     """plan.json + settings.json (from plan) + the model -> a static tour folder."""
     pl = json.load(open(f'{tour}/plan.json')); E, t, b, s = pl['rotate'], pl['translate'], pl['box'], pl.get('scale', 1.0)
     # smears out: splats long in ONE direction (longest > 8x middle axis) that are also big (> 1 % of the room) are the spiky
     # streaks seen off the walk (run 3: 16 % needles); thin flat discs on surfaces stay
     from plyfile import PlyData, PlyElement
-    v = PlyData.read(f'{run}/full/model.ply')['vertex'].data; sc = np.sort(np.exp(np.stack([v['scale_0'], v['scale_1'], v['scale_2']], 1)), 1)
-    room = float(np.linalg.norm(np.array(b[3:]) - np.array(b[:3]))) / s; bad = (sc[:, 2] > 8 * sc[:, 1]) & (sc[:, 2] > 0.01 * room)
+    v = PlyData.read(f'{run}/full/model.ply')['vertex'].data; bad = smear_mask(v, b, s)
     PlyData([PlyElement.describe(v[~bad], 'vertex')]).write(f'{tour}/clean.ply'); print(f'smears removed: {bad.sum()} of {len(v)}', flush=True)
     # colour: SOG's spherical-harmonics clustering takes hours on a CPU (150k splats: SH1 208 s, SH3 > 300 s, SH0 2 s), so the
     # default is PlayCanvas compressed PLY with SH band 1 (view-dependent colour, 25 bytes/splat, seconds); TOUR_FORMAT=sog gives
@@ -290,4 +302,4 @@ def build(run, tour, public, st='npx --no-install splat-transform'):
     return info
 
 if __name__ == '__main__':
-    {'plan': plan, 'build': build, 'floorplan': floorplan, 'collision': collision}[sys.argv[1]](*sys.argv[2:])
+    {'plan': plan, 'build': build, 'floorplan': floorplan, 'collision': collision, 'clean': clean}[sys.argv[1]](*sys.argv[2:])

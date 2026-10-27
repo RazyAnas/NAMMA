@@ -1,0 +1,39 @@
+"""Tour fidelity check on a GitHub runner, CPU only (.github/workflows/tour-fidelity.yml, settings in v3/FIDELITY.json): the run's
+trained model vs what the tour ships (smear filter, SH band cut, compressed PLY), each decoded back and rendered from held-out
+frames by final/tour_fidelity.py -> hf://datasets/<user>/namma-v3-out/fidelity/<time>/ (fidelity_report.json, fidelity_sheet.jpg)."""
+import json, os, shutil, subprocess, sys, time
+V = os.path.dirname(os.path.abspath(__file__)); FIN = os.path.join(os.path.dirname(V), 'final'); sys.path.insert(0, V); sys.path.insert(0, FIN)
+cfg = json.load(open(f'{V}/FIDELITY.json')); OUT = os.path.abspath('out'); T0 = time.time(); STAMP = time.strftime('%Y%m%d-%H%M')
+run = lambda c: subprocess.run(c, shell=True, check=True, executable='/bin/bash')
+
+def say(*a): print(f'[{(time.time() - T0) / 60:5.1f} min]', *a, flush=True)
+
+if not cfg.get('n'): say('FIDELITY.json n = 0: nothing to do'); sys.exit(0)
+tok = os.environ.get('HF_TOKEN'); assert tok, 'needs HF_TOKEN'
+from huggingface_hub import HfApi, snapshot_download
+api = HfApi(token=tok); user = api.whoami()['name']; repo = f'{user}/namma-v3-out'; R = cfg['run']
+d = snapshot_download(repo, repo_type='dataset', local_dir='dl', token=tok,
+                      allow_patterns=[f'{R}/full/model.ply', f'{R}/tour/plan.json', f'{R}/tour/tour.json', f'{R}/sparse/**'])
+mpu = json.load(open(f'{d}/{R}/tour/tour.json'))['metres_per_unit']
+T = os.path.abspath('work'); EX = f'{T}/gsplat/examples'; data = f'{T}/data'; os.makedirs(data, exist_ok=True); os.makedirs(OUT, exist_ok=True)
+run(f'git clone -q --depth 1 -b v1.5.3 https://github.com/nerfstudio-project/gsplat {T}/gsplat && touch {EX}/datasets/__init__.py')
+run('pip install -q torch --index-url https://download.pytorch.org/whl/cpu && pip install -q opencv-python-headless imageio tqdm plyfile scipy '
+    'typing_extensions "git+https://github.com/rmbrualla/pycolmap@cc7ea4b7301720ac29287dbe450952511b32125e" && sed -i '
+    '"s/np.uint64(-1)/np.uint64(np.iinfo(np.uint64).max)/" $(python -c "import importlib.util as u; print(u.find_spec(\'pycolmap\').submodule_search_locations[0])")/scene_manager.py')
+run(f'cd {T} && npm init -y >/dev/null && npm i -s --no-audit --no-fund @playcanvas/splat-transform@3.10.1 | tail -1'); st = f'{T}/node_modules/.bin/splat-transform -w -g cpu'
+shutil.copytree(f'{d}/{R}/sparse', f'{data}/sparse', dirs_exist_ok=True)
+import dl3dv, frames                                                                      # the run's frames, same names and order
+_, folder = dl3dv.fetch(cfg['scene'], f'{T}/ds', tok, cfg.get('dl3dv_res', 'images_2'))
+say('frames', frames.from_images(folder, f'{data}/images', int(cfg.get('nframes', 420)), int(cfg.get('long', 1440))))
+M = f'{T}/m'; os.makedirs(M, exist_ok=True); model = f'{d}/{R}/full/model.ply'
+run(f'python {FIN}/make_tour.py clean {d}/{R} {d}/{R}/tour {M}/clean.ply')
+variants = [('trained', model), ('smears_off', f'{M}/clean.ply')]; sizes = {'trained': os.path.getsize(model)}
+for name, sh in (('tour_sh1', 1), ('cply_sh3', 3), ('cply_sh0', 0)):                     # tour_sh1 = what the tour ships now
+    run(f'{st} {M}/clean.ply -H {sh} {M}/{name}.compressed.ply && {st} {M}/{name}.compressed.ply {M}/{name}.ply')
+    sizes[name] = os.path.getsize(f'{M}/{name}.compressed.ply'); variants.append((name, f'{M}/{name}.ply'))
+json.dump(sizes, open(f'{OUT}/sizes.json', 'w')); say('sizes MB', {k: round(v / 1e6, 1) for k, v in sizes.items()})
+r = subprocess.run(f'cd {EX} && PYTHONPATH={EX}:{FIN}:$PYTHONPATH python {FIN}/tour_fidelity.py {data} {OUT} {mpu} {cfg.get("px", 640)} {cfg.get("views", 20)} '
+                   + ' '.join(f'{n}={p}' for n, p in variants) + f' 2>&1 | tee {OUT}/fidelity.log', shell=True, executable='/bin/bash').returncode
+dst = f'fidelity/{STAMP}'; api.upload_folder(folder_path=OUT, path_in_repo=dst, repo_id=repo, repo_type='dataset')
+say(f'results: hf://datasets/{repo}/{dst}')
+if not os.path.exists(f'{OUT}/fidelity_report.json'): sys.exit('tour_fidelity.py failed')
