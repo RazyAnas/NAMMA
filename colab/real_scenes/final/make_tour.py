@@ -277,10 +277,12 @@ def build(run, tour, public, st='npx --no-install splat-transform'):
     v = PlyData.read(f'{run}/full/model.ply')['vertex'].data; bad = smear_mask(v, b, s)
     PlyData([PlyElement.describe(v[~bad], 'vertex')]).write(f'{tour}/clean.ply'); print(f'smears removed: {bad.sum()} of {len(v)}', flush=True)
     # colour: SOG's spherical-harmonics clustering takes hours on a CPU (150k splats: SH1 208 s, SH3 > 300 s, SH0 2 s), so the
-    # default is PlayCanvas compressed PLY with SH band 1 (view-dependent colour, 25 bytes/splat, seconds); TOUR_FORMAT=sog gives
-    # base colour only at ~11 bytes/splat. model.ply keeps all bands.
+    # tour is PlayCanvas compressed PLY. It keeps all 3 SH bands (view-dependent colour) by default: measured on run 4's held-out
+    # frames (final/tour_fidelity.py, fidelity/20261027-0745), SH band 1 lost 2.1 dB vs the trained model (wrong colours, hazy
+    # mirror and glass), all bands 0.08 dB; 91 MB instead of 37.5 MB for 1.5M splats. TOUR_SH=1 for a smaller file;
+    # TOUR_FORMAT=sog gives base colour only at ~11 bytes/splat (-2.8 dB).
     fmt = os.environ.get('TOUR_FORMAT', 'cply')
-    out, sh = (f'{tour}/scene.compressed.ply', 1) if fmt == 'cply' else (f'{tour}/scene.sog', 0)
+    out, sh = (f'{tour}/scene.compressed.ply', int(os.environ.get('TOUR_SH', 3))) if fmt == 'cply' else (f'{tour}/scene.sog', 0)
     cmd = (f'{st} -w -g cpu {tour}/clean.ply -H {sh} -r {E[0]:.6f},{E[1]:.6f},{E[2]:.6f} -t {t[0]:.6f},{t[1]:.6f},{t[2]:.6f} -s {s:.6f} '
            f'-B {",".join(f"{x:.4f}" for x in b)} -N {out}')
     print(cmd, flush=True); subprocess.run(cmd, shell=True, check=True); os.remove(f'{tour}/clean.ply')
@@ -297,7 +299,7 @@ def build(run, tour, public, st='npx --no-install splat-transform'):
                         "window.viewer = await createViewer({ container: document.body, settings, ...options });")
     if os.path.exists(f'{tour}/overlay.json'): html = html.replace('</body>', OVERLAY + '\n    </body>')
     open(f'{tour}/index.html', 'w').write(html)
-    info = json.load(open(f'{tour}/tour.json')); info.update(smears_removed=int(bad.sum()), collision='collisionUrl' in boot, scene_mb=round(os.path.getsize(out) / 1e6, 1), format=fmt)
+    info = json.load(open(f'{tour}/tour.json')); info.update(smears_removed=int(bad.sum()), collision='collisionUrl' in boot, scene_mb=round(os.path.getsize(out) / 1e6, 1), format=fmt, sh_bands=sh)
     json.dump(info, open(f'{tour}/tour.json', 'w'), indent=1); print('TOUR', json.dumps(info), flush=True)
     return info
 

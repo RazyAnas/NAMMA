@@ -16,6 +16,8 @@ Repo `github.com/RazyAnas/NAMMA` (public), branch **`claude/wonderful-cori-i3fn4
 - **Owner**: Raiyan Razi (they/them), GitHub `RazyAnas`, Kaggle `anasrazy`, Hugging Face `anasrazy`. Time zone IST.
 - **Rules** (keep them):
   - Don't ask questions, act. Short answers, plain words.
+  - **Focus is 3D quality** (owner, 27 Oct: "i never asked u for object detection"): the object layer (objects3d.py,
+    objects_refine.py) is stopped; work on how the room itself looks unless the owner asks otherwise.
   - Check every result yourself (QA sheet, metrics) before handing anything over. Never hand over unchecked models.
   - Measure with proof. Keep measured numbers and claims apart. Say plainly when something failed.
   - Give an expected finish time (IST) with every job.
@@ -328,3 +330,11 @@ The Claude cloud container **cannot reach kaggle.com** (proxy 403). GitHub's run
   `mcmc` strategy first (docs/KMYI_NOTES.md).
 - **Kwang Moo Yi's posts** (owner: "all the important tweets related to our problems"): `docs/KMYI_NOTES.md`, about 55 posts
   grouped by our problems, with a ranked list of what to try (1: gsplat's `mcmc` strategy, his own 3DGS-MCMC).
+- **CPU tools (27 Oct, no Kaggle GPU hours)**: `final/cpu_render.py` renders splats on a CPU with gsplat's math (analytic check
+  exact; run 5 full: 24.54 dB at 480 px vs gsplat 25.39 at full size). Floater pruning on trained models (`final/cleanup_cpu.py`,
+  dual-training agreement + neighbourhood shape) does nothing measurable (1.4k of 1.5M splats, +0.01 dB): the smudges are on the
+  surfaces, so they need training-time fixes (mcmc, geo prior).
+- **Tour fidelity (`final/tour_fidelity.py`, fidelity/20261027-0745, run 4, 20 held-out views at 640 px)**: trained 24.76 dB /
+  SSIM 0.936; smear filter -0.05 dB; **the tour as shipped (compressed PLY, SH band 1) -2.1 dB** (0.896; wrong colours, hazy
+  mirror/glass); compressed PLY with all SH bands -0.08 dB (91 MB vs 37.5 MB); SH 0 -2.8 dB. SOG with SH is hours on a CPU.
+  make_tour.build now keeps all SH bands (TOUR_SH=1 for the small file); run 4's tour rebuilt with `tour_publish.py rebuild`.

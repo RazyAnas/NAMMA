@@ -28,7 +28,7 @@ jobs:
       - name: Publish
         env:
           HF_TOKEN: ${{ secrets.HF_TOKEN || secrets.HUGGINGFACE_WRITE_TOKEN }}
-        run: python colab/real_scenes/v3/tour_publish.py $(python -c "import json;c=json.load(open('colab/real_scenes/v3/PUBLISH.json'));print(c['run'], *[k for k in ('floorplan', 'collision') if c.get(k)])")
+        run: python colab/real_scenes/v3/tour_publish.py $(python -c "import json;c=json.load(open('colab/real_scenes/v3/PUBLISH.json'));print(c['run'], *[k for k in ('floorplan', 'collision', 'rebuild') if c.get(k)])")
       - name: Screenshots
         env:
           HF_TOKEN: ${{ secrets.HF_TOKEN || secrets.HUGGINGFACE_WRITE_TOKEN }}
