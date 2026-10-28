@@ -110,7 +110,26 @@ class CameraRig(private val ctx: Context, private val small: Boolean, private va
         b.set(CaptureRequest.CONTROL_MODE, CaptureRequest.CONTROL_MODE_AUTO)
         val fps = chars.get(CameraCharacteristics.CONTROL_AE_AVAILABLE_TARGET_FPS_RANGES)?.firstOrNull { it.lower == 30 && it.upper == 30 }
         b.set(CaptureRequest.CONTROL_AE_TARGET_FPS_RANGE, fps ?: Range(15, 30))
-        b.set(CaptureRequest.CONTROL_VIDEO_STABILIZATION_MODE, CaptureRequest.CONTROL_VIDEO_STABILIZATION_MODE_OFF)
+        val stabilizationModes =
+            chars.get(
+                CameraCharacteristics.CONTROL_AVAILABLE_VIDEO_STABILIZATION_MODES
+            )
+        
+        val stabilizationMode =
+            if (
+                stabilizationModes?.contains(
+                    CaptureRequest.CONTROL_VIDEO_STABILIZATION_MODE_ON
+                ) == true
+            ) {
+                CaptureRequest.CONTROL_VIDEO_STABILIZATION_MODE_ON
+            } else {
+                CaptureRequest.CONTROL_VIDEO_STABILIZATION_MODE_OFF
+            }
+        
+        b.set(
+            CaptureRequest.CONTROL_VIDEO_STABILIZATION_MODE,
+            stabilizationMode
+        )
         b.set(CaptureRequest.CONTROL_SCENE_MODE, CaptureRequest.CONTROL_SCENE_MODE_DISABLED)            // no HDR scene mode
         if (Build.VERSION.SDK_INT >= 30 && zoom != 1f) b.set(CaptureRequest.CONTROL_ZOOM_RATIO, zoom)
         if (locked) {
