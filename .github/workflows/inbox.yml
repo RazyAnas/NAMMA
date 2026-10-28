@@ -23,6 +23,8 @@ jobs:
   run:
     runs-on: ubuntu-latest
     timeout-minutes: 358
+    env:
+      PICK: ""
     outputs:
       still_running: ${{ steps.go.outputs.still_running }}
       job: ${{ steps.pick.outputs.job }}
@@ -38,7 +40,7 @@ jobs:
           python-version: "3.11"
       - run: pip install -q kaggle==2.2.5 huggingface_hub pandas pillow
       - id: pick
-        run: python colab/real_scenes/v3/inbox.py pick ${{ github.job != 'run' && '--collect' || '' }}
+        run: python colab/real_scenes/v3/inbox.py pick $PICK
       - id: go
         if: steps.pick.outputs.action != 'wait'
         env:
@@ -57,6 +59,8 @@ jobs:
             out/*.log
           if-no-files-found: ignore
   collect1:
+    env:
+      PICK: --collect
     needs: run
     if: needs.run.outputs.still_running == 'true'
     runs-on: ubuntu-latest
@@ -65,6 +69,8 @@ jobs:
       still_running: ${{ steps.go.outputs.still_running }}
     steps: *steps
   collect2:
+    env:
+      PICK: --collect
     needs: collect1
     if: needs.collect1.outputs.still_running == 'true'
     runs-on: ubuntu-latest
