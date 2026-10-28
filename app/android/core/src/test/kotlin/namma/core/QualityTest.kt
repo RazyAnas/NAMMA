@@ -92,6 +92,13 @@ class QualityTest {
             val r = Quality.score(samples); val name = meta.name.removeSuffix(".json")
             println("== $name (${samples.size} frames): score ${r.score} ${r.verdict}, expected ${m.getString("expect")}\n${r.words()}\n${r.stats}")
             out.put(name, r.json())
+            fun q(v: List<Double>) = listOf(0.05, 0.25, 0.5, 0.75, 0.95).map { v.sorted()[(it * (v.size - 1)).toInt()] }.joinToString(" ") { "%.3g".format(it) }
+            val cm = samples.map { it.crisp }.sorted()[samples.size / 2]
+            println("   crisp q05..q95: ${q(samples.map { it.crisp })} | sharp: ${q(samples.map { it.sharp })} | shift: ${q(samples.map { it.shift })} | ncc: ${q(samples.map { it.ncc })} | texture: ${q(samples.map { it.texture })}")
+            for (k in listOf(0.5, 0.6, 0.7)) {
+                val runs = Quality.runs(BooleanArray(samples.size) { samples[it].crisp < k * cm }, 6)
+                println("   crisp < $k x median for >= 1.5 s: ${runs.sumOf { it.second - it.first + 1 } * 0.25} s in ${runs.size} stretches")
+            }
             val ok = when (m.getString("expect")) { "good" -> r.verdict == Quality.GOOD; "bad" -> r.verdict == Quality.BAD; else -> r.verdict != Quality.GOOD }
             if (!ok) bad++
         }

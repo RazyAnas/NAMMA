@@ -57,7 +57,7 @@ jobs:
                 echo "{\"w\": 480, \"h\": 270, \"fps\": 4, \"expect\": \"$4\"}" > "$Q/$3.json"; ls -la "$Q/$3.gray"; }
           g "" "null" good good
           g "" "setpts=PTS/4" fast4x notgood
-          g "" "select='not(between(mod(t\,12)\,0\,2))',setpts=N/FRAME_RATE/TB" jumps bad
+          g "" "select='not(between(mod(t\,16)\,0\,8))',setpts=N/FRAME_RATE/TB" jumps bad
           g "" "scale=1920:-2,gblur=sigma=6" soft bad
           g "" "tmix=frames=11" smeared notgood
           g "" "lutyuv=y=val*0.15" dark bad

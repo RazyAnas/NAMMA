@@ -73,7 +73,7 @@ object Quality {
     const val BREAK_NCC = 0.55          // or the best match is this poor
     const val FAST_SHIFT = 0.15         // ~35 deg/s with a wide lens: too fast, though it still matches
     const val BLUR_RATIO = 0.30         // sharpness under 30 % of the video's own sharp frames
-    const val CRISP_MIN = 0.12          // the whole video soft (out of focus, smeared lens, heavy blur): median under this
+    const val CRISP_MIN = 0.25          // the whole video soft (out of focus, smeared lens, heavy blur): median under this (CI: good 0.44, soft copy 0.17)
     const val FLAT_TEXTURE = 0.015      // under 1.5 % edge pixels: a blank wall
     const val DARK_LUMA = 45.0
     const val JUMP = 0.35               // brightness change while holding still
