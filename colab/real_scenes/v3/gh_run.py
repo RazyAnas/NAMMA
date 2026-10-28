@@ -70,8 +70,25 @@ else:
         else: say('dataset', DS, 'already on Kaggle')
         datasets, env['SOURCE'] = [DS], f'kaggle:{slug}'
     elif src.startswith('hf:'):                                                               # a video in a private HF dataset (the app's inbox):
-        repo_, path_ = src[3:].split(':', 1); job = os.environ.get('INBOX_JOB') or path_.split('/')[0]   # hf:<owner>/<repo>:<path>
-        slug = ('namma-in-' + ''.join(c for c in job.lower() if c.isalnum() or c == '-'))[:50]; DS = f'{KU}/{slug}'; info['inbox_job'] = job
+
+        repo_, path_ = src[3:].split(':', 1)
+
+        # Use the actual manifest filename as the job ID when INBOX_JOB is absent.
+        manifest_name = os.path.basename(path_.rstrip('/'))
+
+        if os.environ.get('INBOX_JOB'):
+            job = os.environ['INBOX_JOB']
+        elif manifest_name.endswith('.json'):
+            job = os.path.splitext(manifest_name)[0]
+        else:
+            job = path_.strip('/').split('/')[0]
+
+        slug = ('namma-in-' + ''.join(
+            c for c in job.lower() if c.isalnum() or c == '-'
+        ))[:50]
+        DS = f'{KU}/{slug}'
+        info['inbox_job'] = job
+
         rc, st = kg('datasets', 'status', DS, check=False)
         if rc or not st.strip().lower().endswith('ready'):
             from huggingface_hub import hf_hub_download
