@@ -46,6 +46,10 @@ class MainActivity : Activity() {
 
     override fun onPause() { visible = false; super.onPause() }
 
+    private fun quality(j: LocalJob): Pair<String, Int>? = try {
+        org.json.JSONObject(j.meta.readText()).optJSONObject("quality")?.let { it.getString("verdict") to it.getInt("score") }
+    } catch (e: Exception) { null }
+
     companion object { private var asked = false }                                     // open Settings by itself once
 
     private fun tick() { list.postDelayed({ if (visible) { render(); tick() } }, 2000) }        // upload progress
@@ -70,6 +74,7 @@ class MainActivity : Activity() {
                 else -> Status(j.stage ?: "uploaded", j.link, j.reason, j.updated, null).words
             }
             c.addView(Ui.text(this, state, 15f, if (j.stage == "failed") Ui.WARN else Ui.TEXT))
+            quality(j)?.let { (v, sc) -> c.addView(Ui.text(this, "Video check: $v ($sc/100)", 13f, if (v == "good") Ui.ACCENT else Ui.WARN)) }
             j.link?.let { l -> c.addView(Ui.wide(Ui.button(this, "Open the 3D tour") { startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(l))) }, this)) }
             if (j.upload != "sent" || j.stage in setOf("done", "failed")) c.addView(Ui.wide(Ui.button(this, "Delete from phone", Ui.CARD) {
                 AlertDialog.Builder(this).setMessage("Delete ${j.name} from this phone?" + if (j.upload != "sent") " It is not uploaded yet." else "")

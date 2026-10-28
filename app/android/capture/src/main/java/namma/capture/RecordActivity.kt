@@ -15,6 +15,8 @@ import android.hardware.SensorManager
 import android.os.Build
 import android.os.Bundle
 import android.os.Environment
+import android.os.Handler
+import android.os.HandlerThread
 import android.os.StatFs
 import android.os.SystemClock
 import android.os.VibrationEffect
@@ -33,13 +35,16 @@ import android.widget.TextView
 import namma.core.Coach
 import namma.core.Guide
 import namma.core.Jobs
+import namma.core.Quality
 import org.json.JSONArray
 import org.json.JSONObject
 import java.io.File
 import java.util.Locale
 
 /** Guided recording: checklist -> LOCK on the brightest wall -> record with pass prompts (lap, reverse lap, diagonals, doorway)
- *  and live cues from the gyroscope (turn speed), gravity (aim) and the preview picture (blur, darkness, light changes). */
+ *  and live cues from the gyroscope (turn speed), gravity (aim) and the preview picture (blur, darkness, light changes).
+ *  After STOP the video check (core Quality: tracking breaks, blur, blank walls, dark, light jumps, floor, length) says whether
+ *  the take is worth the GPU hours, before anything is uploaded. */
 class RecordActivity : Activity(), SensorEventListener {
     private lateinit var rig: CameraRig
     private lateinit var texture: TextureView
@@ -53,8 +58,15 @@ class RecordActivity : Activity(), SensorEventListener {
     private var startedAt = 0L; private var pass = 0; private var room = 1
     private val passLog = JSONArray()
     private var lastCueAt = 0L
-    private val frame = Bitmap.createBitmap(72, 128, Bitmap.Config.ARGB_8888)
-    private val px = IntArray(72 * 128); private val luma = IntArray(72 * 128)
+    private val fw = 270; private val fh = 480                                         // preview samples: 1/4 of 1080x1920
+    private val frame = Bitmap.createBitmap(fw, fh, Bitmap.Config.ARGB_8888)
+    private val px = IntArray(fw * fh)
+    private val worker = HandlerThread("check").apply { start() }
+    private val work = Handler(worker.looper)
+    @Volatile private var busy = false
+    private var extractor = Quality.Extractor()
+    private val samples = ArrayList<Quality.Sample>()
+    @Volatile private var turnSince = 0.0; @Volatile private var elevation = Double.NaN; private var lastGyro = 0L
     private var camReady = false
 
     override fun onCreate(b: Bundle?) {
@@ -147,6 +159,7 @@ class RecordActivity : Activity(), SensorEventListener {
         job = Jobs.newId(); file = File(dir, "$job.mp4")
         try { rig.start(file!!) } catch (e: Exception) { say("Could not start recording: ${e.message}", false); return }
         startedAt = SystemClock.elapsedRealtime(); pass = 0; room = 1
+        synchronized(samples) { samples.clear() }; extractor = Quality.Extractor(); turnSince = 0.0; lastGyro = 0L
         recBtn.text = "■  STOP"; lockBtn.alpha = 0.4f; nextBtn.visibility = View.VISIBLE
         showPass(); listen(true); tickUi()
     }
@@ -168,10 +181,15 @@ class RecordActivity : Activity(), SensorEventListener {
         if (!rig.recording) return
         val s = (SystemClock.elapsedRealtime() - startedAt) / 1000
         timer.text = "REC  %d:%02d   ·   turn %.0f°/s".format(s / 60, s % 60, coach.turnDegPerS)
-        if (texture.isAvailable) {                                                   // the preview picture: blur / dark / lights
-            texture.getBitmap(frame); frame.getPixels(px, 0, 72, 0, 0, 72, 128)
-            for (i in px.indices) { val c = px[i]; luma[i] = ((c shr 16 and 255) * 299 + (c shr 8 and 255) * 587 + (c and 255) * 114) / 1000 }
-            coach.frame(now(), Coach.mean(luma), Coach.sharpness(luma, 72, 128))?.let { show(it) }
+        if (texture.isAvailable && !busy) {                                          // the preview picture, 4 per second
+            texture.getBitmap(frame); frame.getPixels(px, 0, fw, 0, 0, fw, fh); busy = true
+            val t = (now() - startedAt) / 1000.0; val turn = turnSince; turnSince = 0.0; val el = elevation
+            val luma = IntArray(fw * fh) { val c = px[it]; ((c shr 16 and 255) * 299 + (c shr 8 and 255) * 587 + (c and 255) * 114) / 1000 }
+            work.post {                                                                  // sample + cues off the UI thread
+                val smp = extractor.add(t, luma, fw, fh, turn, el); synchronized(samples) { samples.add(smp) }
+                val c = coach.frame(now(), smp.luma, smp.sharp); busy = false
+                if (c != null) runOnUiThread { show(c) }
+            }
         }
         if (SystemClock.elapsedRealtime() - lastCueAt > 2500) cue.visibility = View.GONE
         timer.postDelayed({ tickUi() }, 250)
@@ -190,8 +208,11 @@ class RecordActivity : Activity(), SensorEventListener {
         if (!rig.recording) return
         val v = e.values
         val c = when (e.sensor.type) {
-            Sensor.TYPE_GYROSCOPE -> coach.gyro(now(), v[0], v[1], v[2])
-            else -> coach.gravity(now(), v[0], v[1], v[2])
+            Sensor.TYPE_GYROSCOPE -> {
+                val t = now(); if (lastGyro > 0) turnSince += Math.toDegrees(Math.sqrt((v[0] * v[0] + v[1] * v[1] + v[2] * v[2]).toDouble())) * (t - lastGyro) / 1000.0
+                lastGyro = t; coach.gyro(t, v[0], v[1], v[2])
+            }
+            else -> { elevation = Coach.elevation(v[0], v[1], v[2]); coach.gravity(now(), v[0], v[1], v[2]) }
         }
         c?.let { show(it) }
     }
@@ -216,20 +237,44 @@ class RecordActivity : Activity(), SensorEventListener {
         val f = file ?: return; val seconds = (SystemClock.elapsedRealtime() - startedAt) / 1000
         recBtn.text = "●  REC"; lockBtn.alpha = 1f; nextBtn.visibility = View.GONE; cue.visibility = View.GONE
         if (!f.exists() || f.length() < 100_000) { say("The recording is empty, try again", false); f.delete(); return }
-        val name = EditText(this).apply { setText("Room ${java.text.SimpleDateFormat("d MMM HH:mm", Locale.getDefault()).format(java.util.Date())}"); setSelectAllOnFocus(true) }
-        AlertDialog.Builder(this).setTitle("Name this recording (${seconds / 60} min ${seconds % 60} s)").setView(name).setCancelable(false)
-            .setPositiveButton("Upload") { _, _ -> save(f, name.text.toString().ifBlank { "Room" }, seconds) }
-            .setNegativeButton("Delete") { _, _ -> f.delete() }
-            .show()
+        work.post {                                                                      // after the last sample is in
+            val list = synchronized(samples) { ArrayList(samples) }; val q = Quality.score(list, rig.locked)
+            runOnUiThread { checked(f, seconds, q, list) }
+        }
     }
 
-    private fun save(f: File, name: String, seconds: Long) {
+    /** The video check's answer, then name + upload (or record again). A bad take is not uploaded unless asked for. */
+    private fun checked(f: File, seconds: Long, q: Quality.Report, list: List<Quality.Sample>) {
+        val word = when (q.verdict) { Quality.GOOD -> "Good"; Quality.RISKY -> "Risky"; else -> "Bad" }
+        val box = Ui.column(this, 20)
+        box.addView(Ui.text(this, "Video check: $word (${q.score}/100)", 20f, if (q.good) Ui.ACCENT else Ui.WARN, true))
+        box.addView(Ui.text(this, when (q.verdict) {
+            Quality.GOOD -> "This take should give a good 3D model."
+            Quality.RISKY -> "It may work, but parts of the model can come out broken or smeared."
+            else -> "This take will most likely give a bad model. Record again instead of spending GPU hours on it."
+        }, 15f))
+        box.addView(Ui.text(this, q.words(), 14f, Ui.DIM))
+        val name = EditText(this).apply { setText("Room ${java.text.SimpleDateFormat("d MMM HH:mm", Locale.getDefault()).format(java.util.Date())}"); setSelectAllOnFocus(true); setTextColor(Ui.TEXT) }
+        box.addView(Ui.text(this, "Name (${seconds / 60} min ${seconds % 60} s)", 14f, Ui.DIM)); box.addView(name)
+        val nm = { name.text.toString().ifBlank { "Room" } }
+        val d = AlertDialog.Builder(this).setView(ScrollView(this).apply { addView(box) }).setCancelable(false)
+        if (q.verdict == Quality.BAD) d.setPositiveButton("Record again") { _, _ -> f.delete(); say("Deleted. Go back to the entrance and tap REC when ready.", true, warn = false) }
+            .setNeutralButton("Upload anyway") { _, _ -> save(f, nm(), seconds, q, list, forced = true) }
+        else d.setPositiveButton("Upload") { _, _ -> save(f, nm(), seconds, q, list, forced = false) }
+            .setNeutralButton("Delete") { _, _ -> f.delete() }
+        d.show()
+    }
+
+    private fun save(f: File, name: String, seconds: Long, q: Quality.Report, list: List<Quality.Sample>, forced: Boolean) {
         val j = LocalJob(job, name, f.path, System.currentTimeMillis()).apply { total = f.length() }
         val meta = JSONObject().put("name", name).put("preset", "best").put("seconds", seconds).put("rooms", room)
             .put("device", "${Build.MANUFACTURER} ${Build.MODEL} (Android ${Build.VERSION.RELEASE})")
             .put("camera", JSONObject().put("lens", rig.lens).put("zoom", rig.zoom.toDouble()).put("width", rig.size.width).put("height", rig.size.height)
                 .put("fps", 30).put("bitrate", rig.bitrate).put("locked", rig.locked).put("exposure", rig.exposureInfo()).put("stabilisation", "off"))
             .put("passes", passLog).put("cues", JSONObject(coach.counts.mapKeys { it.key.name }.mapValues { it.value }))
+            .put("quality", q.json().put("uploaded_anyway", forced))
+            .put("quality_samples", JSONObject().put("columns", JSONArray(listOf("t", "sharp", "crisp", "luma", "texture", "shift", "ncc", "turn_deg", "elevation")))
+                .put("rows", JSONArray(list.map { it.json() })))
         j.meta.writeText(meta.toString(1))
         Store.add(this, j); UploadService.start(this); CheckJob.schedule(this)
         say("Saved. Uploading in the background; you can close the app.", true, warn = false)
@@ -246,5 +291,5 @@ class RecordActivity : Activity(), SensorEventListener {
         super.onPause()
     }
 
-    override fun onDestroy() { listen(false); rig.quit(); tts?.shutdown(); super.onDestroy() }
+    override fun onDestroy() { listen(false); rig.quit(); tts?.shutdown(); worker.quitSafely(); super.onDestroy() }
 }

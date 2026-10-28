@@ -8,6 +8,6 @@ dependencies {
 }
 tasks.test {
     useJUnitPlatform()
-    for (k in listOf("HF_TOKEN", "E2E_VIDEO", "GITHUB_TEST_TOKEN", "GITHUB_REPOSITORY", "UPLOAD_TEST_OUT")) environment(k, System.getenv(k) ?: "")
+    for (k in listOf("HF_TOKEN", "E2E_VIDEO", "GITHUB_TEST_TOKEN", "GITHUB_REPOSITORY", "UPLOAD_TEST_OUT", "QUALITY_DIR")) environment(k, System.getenv(k) ?: "")
     testLogging { events("passed", "skipped", "failed"); showStandardStreams = true; exceptionFormat = org.gradle.api.tasks.testing.logging.TestExceptionFormat.FULL }
 }
