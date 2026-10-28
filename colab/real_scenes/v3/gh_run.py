@@ -11,7 +11,8 @@ import glob, json, os, shutil, subprocess, sys, time
 V = os.path.dirname(os.path.abspath(__file__)); sys.path.insert(0, V)
 cfg = json.load(open(os.environ.get('RUN_JSON') or f'{V}/RUN.json'))                     # RUN_JSON: the inbox runner's settings
 import kaggle_io                                                                              # the Kaggle account is the token's own
-KU = kaggle_io.account(cfg); KID = f'{KU}/namma-v3'
+KU = kaggle_io.account(cfg); KID = f"{KU}/{cfg.get('kernel', 'namma-v3')}"                      # inbox jobs: their own kernel
+if os.environ.get('COLLECT'): cfg['collect'] = True                                       # the workflow's follow-up jobs
 OUT = os.path.abspath('out'); T0 = time.time(); RUN = time.strftime('%Y%m%d-%H%M')
 
 def say(*a): print(f'[{(time.time() - T0) / 60:5.1f} min]', *a, flush=True)
@@ -75,7 +76,10 @@ else:
         if rc or not st.strip().lower().endswith('ready'):
             from huggingface_hub import hf_hub_download
             os.makedirs('in', exist_ok=True); ext = os.path.splitext(path_)[1] or '.mp4'
-            shutil.copy(hf_hub_download(repo_, path_, repo_type='dataset', token=os.environ.get('HF_TOKEN'), local_dir='dl'), f'in/video{ext}')
+            if path_.endswith('.json'):                                                  # the app's parts -> one video
+                import inbox; m = inbox.assemble(repo_, path_, 'in/video', os.environ.get('HF_TOKEN')); ext = os.path.splitext(m.get('name', ''))[1] or '.mp4'
+                os.rename('in/video', f'in/video{ext}')
+            else: shutil.copy(hf_hub_download(repo_, path_, repo_type='dataset', token=os.environ.get('HF_TOKEN'), local_dir='dl'), f'in/video{ext}')
             say('video', path_, f"{os.path.getsize(f'in/video{ext}') / 1e6:.0f} MB")
             json.dump(dict(title=slug, id=DS, licenses=[dict(name='other')]), open('in/dataset-metadata.json', 'w'))
             say(kg('datasets', 'create', '-p', 'in', '-q')[1][-300:]); kaggle_io.wait_ready(DS, say)
@@ -86,7 +90,7 @@ else:
 
     # the Kaggle job = v3/run.py with these settings in front, plus the input dataset
     os.makedirs('kern', exist_ok=True)
-    meta = json.load(open(f'{V}/kernel-metadata.json')); meta.update(id=KID, dataset_sources=datasets)
+    meta = json.load(open(f'{V}/kernel-metadata.json')); meta.update(id=KID, title=KID.split('/')[1], dataset_sources=datasets)
     meta['kernel_sources'] = [k for k in meta.get('kernel_sources', []) if k.startswith(KU + '/')]   # another account's build cache: not usable
     json.dump(meta, open('kern/kernel-metadata.json', 'w'))
     code = open(f'{V}/run.py').read(); first = 'import glob, json, os, shutil, subprocess, sys, time\n'; assert first in code
@@ -103,6 +107,10 @@ while time.time() - T0 < 345 * 60:
     if 'error' in s or 'cancel' in s: break
     if 'complete' in s and (seen or time.time() - t_push > 900): break                    # (the previous version also reads 'complete')
 ok = 'complete' in s
+if 'running' in s or 'queued' in s:                     # longer than one GitHub job (6 h): the workflow's next job collects it
+    say('still running on Kaggle after', round((time.time() - T0) / 60), 'min: the next job collects it'); stage('training', note='still training')
+    if os.environ.get('GITHUB_OUTPUT'): open(os.environ['GITHUB_OUTPUT'], 'a').write('still_running=true\n')
+    sys.exit(0)
 
 os.makedirs(OUT, exist_ok=True); kg('kernels', 'output', KID, '-p', OUT, '-o', '--page-size', '200', check=False)
 json.dump(info, open(f'{OUT}/github_run.json', 'w'))
