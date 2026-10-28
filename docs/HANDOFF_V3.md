@@ -351,3 +351,42 @@ The Claude cloud container **cannot reach kaggle.com** (proxy 403). GitHub's run
   table; `WORLD_LOCAL=1` runs world_job.py on the CPU with stand-in models). Output per sample: world.glb, look-around viewer
   (drag = turn 360 degrees, WASD walk within walk_m, "Show generated" tints AI parts orange), world360.jpg, drones/*.jpg
   (render | painted per drone), world_sheet.jpg (real neighbouring frames | world) and report.json (PSNR/SSIM, times).
+- **28 Oct, PLAN A (owner: "we don't have time anymore"): run 6, then any video -> tour link with no edits, then an Android app.**
+  World generation from images / ordinary video is to be discussed after this. Plan B (worlds) and FlashWorld are paused
+  (`final/flashworld_job.py`, a Kaggle port, is written but has not run).
+  - **Run 6** (RUN.json n 13, pushed 10:43 IST, GitHub run 40636702454):
+    - run 4's recipe at more detail: the original phone video (900 sharpest frames), 1920 px, 40k steps, 3M cap;
+    - `full` = run 4 exactly, `prior` = + room prior (one per T4);
+    - mesh from the 3DGS model (run 5: 74 % observed vs 59 % for 2DGS);
+    - the tour is back to **SH1**: the owner rejected the 27 Oct SH3 rebuild of run 4 (dark walls and ceiling), even though SH3
+      measured +2 dB.
+    - It runs past GitHub's 345 min poll, so collect it with RUN.json `collect: true` + an n bump.
+    - Pick the winner on held-out exposure-fair PSNR/SSIM plus wall brightness vs the real frames, then set it as `best` in
+      `v3/PIPELINE.json`.
+  - **gh_run.py**:
+    - the Kaggle account comes from the token (`v3/kaggle_io.py`);
+    - it waits for the plain word 'ready' (run 6's first try pushed too early);
+    - new source `hf:<repo>:<path>` (a video, or the app's `video.json` parts);
+    - `kernel` setting: the inbox uses `namma-job`;
+    - `COLLECT=1`; a clean exit with `still_running` while Kaggle still trains;
+    - status hooks for the inbox.
+  - **Inbox pipeline**: `docs/VIDEO_TO_TOUR.md`, `v3/inbox.py`, `v3/PIPELINE.json`, `.github/workflows/inbox.yml`.
+    - Private HF dataset `namma-inbox`; trigger = a push to `v3/inbox/<job>.json`.
+    - There is no cron, because workflows on non-default branches start only from pushes.
+    - One Kaggle job at a time; follow-up jobs collect runs over 6 h.
+    - The first smoke run (no jobs) worked.
+  - **NAMMA Capture app** (`app/android/`):
+    - `core/`: plain Kotlin, tested on the JVM: resumable upload in 32 MB LFS parts, GitHub trigger, coach cues, guide texts.
+    - `capture/`: framework-only Android, no libraries.
+      - Recording: Camera2 widest lens, 1080p30, EIS off, AE/AWB/focus lock; checklist and pass prompts; voice and vibration
+        cues for turns over 35°/s, aim (floor / ceiling), blur, darkness and light jumps.
+      - Upload: foreground service plus a persisted 15-min JobScheduler job.
+      - Results: list with the tour link; the tokens are Keystore-encrypted.
+    - Local type-check: kotlinc against Robolectric's android-all 15 jar (scratchpad).
+    - CI (`android-app.yml`):
+      - a real interrupted + resumed upload to `namma-inbox-test`, then `inbox.assemble` checks that the joined file is
+        identical;
+      - GitHub API calls with GITHUB_TOKEN;
+      - signed APK; the key is kept in `namma-v3-out/app/`;
+      - APK -> `namma-v3-out/app/namma-capture-latest.apk`.
+    - `app/android/ci.json` `e2e: true` uploads a 25 s cut as a real `quick` inbox job (use it after run 6 frees Kaggle).

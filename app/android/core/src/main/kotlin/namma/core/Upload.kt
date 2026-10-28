@@ -64,6 +64,7 @@ class Upload(val video: File, val state: File, val job: String, private val part
             p.done = true; save(); progress(sent, total)
         }
         if (stop()) return false
+        if (hub.readText(repo, "$job/status.json") != null) { committed = true; save(); return true }   // committed before the app died
         val now = Jobs.isoNow()
         val manifest = JSONObject().put("name", video.name).put("size", total).put("sha256", sha256)
             .put("parts", JSONArray(parts.map { "$job/parts/${it.path}" }))

@@ -2,7 +2,7 @@
 # ("uploaded") in the private HF dataset <hf user>/namma-inbox, then pushes colab/real_scenes/v3/inbox/<job>.json to this branch.
 # This workflow: v3/inbox.py pick (oldest waiting job, only when no Kaggle job runs) -> gh_run.py (source hf:..., PIPELINE.json
 # preset) -> results + tour -> status.json 'done' with the link (private). Runs longer than one GitHub job (6 h) are collected by
-# the follow-up jobs. Links never appear in these logs. See docs/PIPELINE_API.md.
+# the follow-up jobs. Links never appear in these logs. See docs/VIDEO_TO_TOUR.md.
 name: inbox
 
 on:

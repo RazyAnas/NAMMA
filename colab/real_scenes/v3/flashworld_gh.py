@@ -58,7 +58,8 @@ import * as THREE from 'three'; import {SplatMesh, SparkControls} from '@sparkjs
 const info = await (await fetch('./world.json')).json();
 const scene = new THREE.Scene(); const camera = new THREE.PerspectiveCamera(info.fov_y, innerWidth / innerHeight, 0.01, 1000);
 const renderer = new THREE.WebGLRenderer({antialias: false}); renderer.setPixelRatio(Math.min(devicePixelRatio, 2)); renderer.setSize(innerWidth, innerHeight); document.body.appendChild(renderer.domElement);
-const world = new SplatMesh({url: './world.spz', onLoad: () => document.getElementById('load')?.remove()}); scene.add(world);
+if (info.start) { camera.position.fromArray(info.start.position); const q = info.start.quaternion; camera.quaternion.set(q[1], q[2], q[3], q[0]); }  // the photo's camera
+const world = new SplatMesh({url: './' + (info.file || 'world.spz'), onLoad: () => document.getElementById('load')?.remove()}); scene.add(world);
 const controls = new SparkControls({canvas: renderer.domElement});
 addEventListener('resize', () => { camera.aspect = innerWidth / innerHeight; camera.updateProjectionMatrix(); renderer.setSize(innerWidth, innerHeight); });
 renderer.setAnimationLoop(() => { controls.update(camera); renderer.render(scene, camera); });
