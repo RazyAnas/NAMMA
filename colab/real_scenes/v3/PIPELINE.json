@@ -1,10 +1,28 @@
 {
- "about": "Fixed settings for every video from the app's inbox (v3/inbox.py, .github/workflows/inbox.yml). best = run 6's recipe (run 4's, the owner's best, with more detail); quick = a short test run (end-to-end check, not for viewing).",
+ "about": "Fixed settings for every video from the app's inbox (v3/inbox.py, .github/workflows/inbox.yml). best = run 4's recipe exactly (the owner's best: ~420 frames, 1440 px, 30k steps, 1.5M splats); run 6 (900 frames, 1920 px, 40k, 3M) looked worse to the owner (28 Oct). quick = a short test run (end-to-end check, not for viewing).",
  "default": "best",
  "kernel": "namma-job",
- "other_kernels": ["namma-v3", "namma-world", "namma-flashworld"],
+ "other_kernels": [
+  "namma-v3",
+  "namma-world",
+  "namma-flashworld"
+ ],
  "presets": {
-  "best": {"env": {"STEPS": "40000", "NFRAMES": "900", "LONG": "1920", "VARIANTS": "[[\"full\", 40000, 3000000]]"}},
-  "quick": {"env": {"STEPS": "3000", "NFRAMES": "150", "LONG": "960", "VARIANTS": "[[\"full\", 3000, 300000]]"}}
+  "best": {
+   "env": {
+    "STEPS": "30000",
+    "NFRAMES": "420",
+    "LONG": "1440",
+    "VARIANTS": "[[\"full\", 30000, 1500000]]"
+   }
+  },
+  "quick": {
+   "env": {
+    "STEPS": "3000",
+    "NFRAMES": "150",
+    "LONG": "960",
+    "VARIANTS": "[[\"full\", 3000, 300000]]"
+   }
+  }
  }
 }

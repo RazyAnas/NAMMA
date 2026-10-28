@@ -390,3 +390,10 @@ The Claude cloud container **cannot reach kaggle.com** (proxy 403). GitHub's run
       - signed APK; the key is kept in `namma-v3-out/app/`;
       - APK -> `namma-v3-out/app/namma-capture-latest.apk`.
     - `app/android/ci.json` `e2e: true` uploads a 25 s cut as a real `quick` inbox job (use it after run 6 frees Kaggle).
+  - **Run 6 result (16:35 IST, `namma-v3-out/20261028-0513`)**:
+    - The camera solve was perfect: 900/900 frames, 1 model.
+    - Scores: full 28.02 dB / SSIM 0.899 (needles 8 %); prior 28.04 dB (needles 0 %). These are on a harder held-out set than run 4's.
+    - The tour looked **worse than run 4 to the owner**.
+    - Likely cause: 40k steps over 787 training views is about 51 steps per view, vs about 83 in run 4. The frames also come from the compressed video, not DL3DV's extracted frames.
+    - So the pipeline's `best` preset is back to run 4's recipe exactly: 420 frames, 1440 px, 30k steps, 1.5M splats.
+    - The run-4 SH1 tour (the excellent one) is still published: folder `20261026-0327-4d10a1bca1242609fa9a` in the Space.
