@@ -3,15 +3,24 @@ GitHub's runners can. input -> private Kaggle dataset (DL3DV frames are fetched 
 -> push the Kaggle job (v3/run.py) -> wait -> download its outputs -> private HF dataset <hf user>/namma-v3-out/<run> + metrics here.
 RUN.json: n         run counter: change it to start a run (0 = do nothing)
           collect   true: push nothing, just wait for the job already on Kaggle and collect its outputs
-          source    dl3dv:auto | dl3dv:<scene hash> | kaggle:<owner>/<dataset> (a video or frames already on Kaggle)
+          source    dl3dv:auto | dl3dv:<scene hash> | dl3dv-video:<hash> | kaggle:<owner>/<dataset> (a video or frames already
+                    on Kaggle) | hf:<owner>/<dataset>:<path of a video> (private HF dataset, e.g. the app's inbox)
           kaggle_user, env (overrides run.py settings, e.g. {"STEPS": "30000", "PREVIEW": "7000"})
 Secrets: KAGGLE_API_TOKEN (contents of ~/.kaggle/access_token), HF_TOKEN (write; "Agree" clicked on DL3DV/DL3DV-Benchmark)."""
 import glob, json, os, shutil, subprocess, sys, time
 V = os.path.dirname(os.path.abspath(__file__)); sys.path.insert(0, V)
-cfg = json.load(open(f'{V}/RUN.json')); KU = cfg.get('kaggle_user', 'anasrazy'); KID = f'{KU}/namma-v3'
+cfg = json.load(open(os.environ.get('RUN_JSON') or f'{V}/RUN.json'))                     # RUN_JSON: the inbox runner's settings
+import kaggle_io                                                                              # the Kaggle account is the token's own
+KU = kaggle_io.account(cfg); KID = f'{KU}/namma-v3'
 OUT = os.path.abspath('out'); T0 = time.time(); RUN = time.strftime('%Y%m%d-%H%M')
 
 def say(*a): print(f'[{(time.time() - T0) / 60:5.1f} min]', *a, flush=True)
+
+def stage(name, **kw):
+    """Progress for the app: <inbox>/<job>/status.json, only when started by the inbox runner (INBOX_JOB set)."""
+    if os.environ.get('INBOX_JOB'):
+        try: import inbox; inbox.set_status(os.environ['INBOX_JOB'], name, **kw)
+        except Exception as e: say('status update failed:', str(e)[:200])
 
 def kg(*args, check=True):
     r = subprocess.run(['kaggle', *args], capture_output=True, text=True); out = (r.stdout + r.stderr).strip()
@@ -41,11 +50,7 @@ else:
             for f in files: Image.open(f).convert('RGB').save(f'fr/{os.path.splitext(os.path.basename(f))[0]}.jpg', quality=95)
             shutil.make_archive('in/frames', 'zip', 'fr'); say(len(files), 'frames ->', f"{os.path.getsize('in/frames.zip') / 1e6:.0f} MB zip")
             json.dump(dict(title=slug, id=DS, licenses=[dict(name='other')]), open('in/dataset-metadata.json', 'w'))
-            say(kg('datasets', 'create', '-p', 'in', '-q')[1][-300:])
-            for _ in range(90):                                                                # wait until Kaggle has processed it
-                time.sleep(20); st = kg('datasets', 'status', DS, check=False)[1]
-                if 'ready' in st.lower() or 'error' in st.lower(): break
-            say('dataset', DS, st[-120:])
+            say(kg('datasets', 'create', '-p', 'in', '-q')[1][-300:]); kaggle_io.wait_ready(DS, say)
         else: say('dataset', DS, 'already on Kaggle')
         datasets, env['SOURCE'] = [DS], f'kaggle:{slug}'
     elif src.startswith('dl3dv-video:'):                                                       # the scene's original phone video:
@@ -60,12 +65,20 @@ else:
             subprocess.run('ffprobe -v error -show_entries stream=codec_name,width,height,r_frame_rate,nb_frames:format=duration '
                            '-of compact in/video.mp4', shell=True)
             json.dump(dict(title=slug, id=DS, licenses=[dict(name='other')]), open('in/dataset-metadata.json', 'w'))
-            say(kg('datasets', 'create', '-p', 'in', '-q')[1][-300:])
-            for _ in range(120):
-                time.sleep(20); st = kg('datasets', 'status', DS, check=False)[1]
-                if 'ready' in st.lower() or 'error' in st.lower(): break
-            say('dataset', DS, st[-120:])
+            say(kg('datasets', 'create', '-p', 'in', '-q')[1][-300:]); kaggle_io.wait_ready(DS, say)
         else: say('dataset', DS, 'already on Kaggle')
+        datasets, env['SOURCE'] = [DS], f'kaggle:{slug}'
+    elif src.startswith('hf:'):                                                               # a video in a private HF dataset (the app's inbox):
+        repo_, path_ = src[3:].split(':', 1); job = os.environ.get('INBOX_JOB') or path_.split('/')[0]   # hf:<owner>/<repo>:<path>
+        slug = ('namma-in-' + ''.join(c for c in job.lower() if c.isalnum() or c == '-'))[:50]; DS = f'{KU}/{slug}'; info['inbox_job'] = job
+        rc, st = kg('datasets', 'status', DS, check=False)
+        if rc or not st.strip().lower().endswith('ready'):
+            from huggingface_hub import hf_hub_download
+            os.makedirs('in', exist_ok=True); ext = os.path.splitext(path_)[1] or '.mp4'
+            shutil.copy(hf_hub_download(repo_, path_, repo_type='dataset', token=os.environ.get('HF_TOKEN'), local_dir='dl'), f'in/video{ext}')
+            say('video', path_, f"{os.path.getsize(f'in/video{ext}') / 1e6:.0f} MB")
+            json.dump(dict(title=slug, id=DS, licenses=[dict(name='other')]), open('in/dataset-metadata.json', 'w'))
+            say(kg('datasets', 'create', '-p', 'in', '-q')[1][-300:]); kaggle_io.wait_ready(DS, say)
         datasets, env['SOURCE'] = [DS], f'kaggle:{slug}'
     elif src.startswith('kaggle:'):
         datasets, env['SOURCE'] = [src[7:]], f'kaggle:{src[7:].split("/")[-1]}'
@@ -74,11 +87,12 @@ else:
     # the Kaggle job = v3/run.py with these settings in front, plus the input dataset
     os.makedirs('kern', exist_ok=True)
     meta = json.load(open(f'{V}/kernel-metadata.json')); meta.update(id=KID, dataset_sources=datasets)
+    meta['kernel_sources'] = [k for k in meta.get('kernel_sources', []) if k.startswith(KU + '/')]   # another account's build cache: not usable
     json.dump(meta, open('kern/kernel-metadata.json', 'w'))
     code = open(f'{V}/run.py').read(); first = 'import glob, json, os, shutil, subprocess, sys, time\n'; assert first in code
     code = code.replace(first, first + f'os.environ.update({json.dumps(env)})  # set by gh_run.py\n', 1)
     open('kern/run.py', 'w').write(code); say('job settings', env, 'inputs', datasets)
-    say(kg('kernels', 'push', '-p', 'kern')[1][-400:]); t_push = time.time()
+    say(kg('kernels', 'push', '-p', 'kern')[1][-400:]); t_push = time.time(); stage('training')
 
 seen, last, s = False, '', ''
 while time.time() - T0 < 345 * 60:
@@ -126,6 +140,7 @@ def tour_step():
     run(f'python {FIN}/make_tour.py build {OUT} {OUT}/tour {T}/node_modules/@playcanvas/supersplat-viewer/public {T}/node_modules/.bin/splat-transform')
     say('tour built:', json.load(open(f'{OUT}/tour/tour.json')))
 
+stage('publishing')
 try: tour_step()
 except Exception as e: say('tour failed:', str(e)[:400])
 tok = os.environ.get('HF_TOKEN')
@@ -134,13 +149,18 @@ if tok:
         from huggingface_hub import HfApi
         import tour_publish
         api = HfApi(token=tok); repo = f"{api.whoami()['name']}/namma-v3-out"; api.create_repo(repo, repo_type='dataset', private=True, exist_ok=True)
-        api.upload_folder(folder_path=OUT, path_in_repo=RUN, repo_id=repo, repo_type='dataset', ignore_patterns=[f'{n}/model.ply' for n in os.listdir(OUT) if n != 'full'] + ['images/*'])
+        api.upload_folder(folder_path=OUT, path_in_repo=RUN, repo_id=repo, repo_type='dataset', ignore_patterns=[f'{n}/model.ply' for n in os.listdir(OUT) if n not in ('full', 'prior')] + ['images/*'])
         say(f'results: https://huggingface.co/datasets/{repo}/tree/main/{RUN}')
         if os.path.exists(f'{OUT}/tour/tour.json'):                          # any built tour (scene.sog or scene.compressed.ply)
-            try: tour_publish.publish(api, repo.split('/')[0], repo, RUN, f'{OUT}/tour', say)
+            try:
+                tour_publish.publish(api, repo.split('/')[0], repo, RUN, f'{OUT}/tour', say)
+                if os.environ.get('INBOX_JOB'):                                               # the link, privately, for the app
+                    stage('done', run=RUN, link=open('tour_url.txt').read().strip())
             except Exception as e: say('tour publish failed:', str(e)[:300])
         if os.environ.get('GITHUB_STEP_SUMMARY'):
             open(os.environ['GITHUB_STEP_SUMMARY'], 'a').write(f'Results: https://huggingface.co/datasets/{repo}/tree/main/{RUN}\n')
     except Exception as e: say('HF upload failed:', str(e)[:300])
 if ok and not os.path.exists(f'{OUT}/full/metrics.json'): ok, s = False, 'complete, but no full model (metrics.json missing)'
+if not ok: stage('failed', reason=f'Kaggle job ended with: {s[-200:]}')
+elif os.environ.get('INBOX_JOB') and not os.path.exists('tour_url.txt'): stage('failed', reason='no tour was published (see the GitHub log)')
 sys.exit(0 if ok else f'Kaggle job ended with: {s[-200:]}')
