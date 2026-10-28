@@ -38,7 +38,7 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.11"
-      - run: pip install -q huggingface_hub
+      - run: pip install -q huggingface_hub imageio-ffmpeg && ln -s "$(python -c 'import imageio_ffmpeg;print(imageio_ffmpeg.get_ffmpeg_exe())')" /usr/local/bin/ffmpeg && ffmpeg -version | head -1
       - name: Real video for the video check (the hotel room that gave run 4) + worse copies
         env:
           QUALITY_DIR: ${{ github.workspace }}/quality
@@ -51,7 +51,7 @@ jobs:
           sub = next(k for k in [f'{i}K' for i in range(1, 12)] if api.file_exists(vr, f'{k}/{scene}/video.mp4', repo_type='dataset'))
           shutil.copy(hf_hub_download(vr, f'{sub}/{scene}/video.mp4', repo_type='dataset', token=os.environ['HF_TOKEN'], local_dir='dl'), 'full.mp4')
           PY
-          ffprobe -v error -show_entries stream=width,height,r_frame_rate:format=duration -of compact full.mp4
+          ffmpeg -hide_banner -i full.mp4 2>&1 | grep -E 'Duration|Video:' || true
           mkdir -p "$QUALITY_DIR"; Q="$QUALITY_DIR"
           g() { ffmpeg -v error -y $1 -i full.mp4 -vf "$2,fps=4,scale=480:270,format=gray" -f rawvideo -pix_fmt gray "$Q/$3.gray"
                 echo "{\"w\": 480, \"h\": 270, \"fps\": 4, \"expect\": \"$4\"}" > "$Q/$3.json"; ls -la "$Q/$3.gray"; }
