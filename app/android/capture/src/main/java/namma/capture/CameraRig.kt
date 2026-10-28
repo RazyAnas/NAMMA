@@ -11,6 +11,10 @@ import android.hardware.camera2.CaptureRequest
 import android.hardware.camera2.CaptureResult
 import android.hardware.camera2.TotalCaptureResult
 import android.media.MediaCodec
+import android.media.MediaCodecList
+import android.media.MediaFormat
+import android.hardware.camera2.CameraMetadata
+import namma.core.Exposure
 import android.media.MediaRecorder
 import android.os.Build
 import android.os.Handler
@@ -21,15 +25,16 @@ import android.view.Surface
 import java.io.File
 import kotlin.math.atan
 
-/** Camera2 + MediaRecorder with the capture rules built in: widest back lens (0.5x / 0.6x), 1080p at a fixed 30 fps, video
- *  stabilisation (EIS) off, no HDR, and after LOCK: exposure, white balance and focus fixed for the whole video. */
-class CameraRig(private val ctx: Context, private val onInfo: (String) -> Unit) {
+/** Camera2 + MediaRecorder with the capture rules built in: widest back lens (0.5x / 0.6x), 4K (1080p if asked) at a fixed
+ *  30 fps, HEVC at the encoder's top bitrate, video stabilisation (EIS) off, no HDR, landscape; after LOCK: a fast shutter
+ *  (1/500 s, ISO raised to match: noise is fine, blur is not), white balance and focus fixed for the whole video. */
+class CameraRig(private val ctx: Context, private val small: Boolean, private val onInfo: (String) -> Unit) {
     private val mgr = ctx.getSystemService(CameraManager::class.java)!!
     private val thread = HandlerThread("camera").apply { start() }
     private val handler = Handler(thread.looper)
     private var device: CameraDevice? = null
     private var session: CameraCaptureSession? = null
-    private var preview: Surface? = null
+    private var previewSurface: Surface? = null
     private val recSurface: Surface = MediaCodec.createPersistentInputSurface()
     private var recorder: MediaRecorder? = null
     @Volatile private var last: TotalCaptureResult? = null
@@ -41,7 +46,11 @@ class CameraRig(private val ctx: Context, private val onInfo: (String) -> Unit) 
     var fovDeg = 0.0; private set
     var locked = false; private set
     var recording = false; private set
-    val bitrate = 24_000_000
+    var bitrate = 24_000_000; private set
+    var hevc = false; private set
+    var hint = 0                                                                     // orientation hint, set by the screen
+    var manual: Exposure.Pick? = null; private set
+    val preview = Size(1920, 1080)
     var lens = ""; private set
 
     /** Widest back lens: a logical camera whose zoom goes below 1x (the ultra-wide behind it), else the back camera with the
@@ -61,8 +70,16 @@ class CameraRig(private val ctx: Context, private val onInfo: (String) -> Unit) 
         lens = if (zoom < 1f) "ultra-wide (${"%.1f".format(zoom)}x)" else "widest lens (${"%.0f".format(fovDeg)}°)"
         val map = chars.get(CameraCharacteristics.SCALER_STREAM_CONFIGURATION_MAP)!!
         val sizes = map.getOutputSizes(MediaRecorder::class.java).toList()
-        size = sizes.firstOrNull { it.width == 1920 && it.height == 1080 }
+        size = (if (small) null else sizes.firstOrNull { it.width == 3840 && it.height == 2160 })
+            ?: sizes.firstOrNull { it.width == 1920 && it.height == 1080 }
             ?: sizes.filter { it.width * 9 == it.height * 16 && it.width <= 1920 }.maxByOrNull { it.width } ?: sizes.maxByOrNull { it.width * it.height }!!
+        // HEVC if an encoder takes this size (half the storage of H.264 at the same quality), at its top bitrate (cap 100 Mbps)
+        fun cap(mime: String) = MediaCodecList(MediaCodecList.REGULAR_CODECS).codecInfos.filter { it.isEncoder && mime in it.supportedTypes }
+            .mapNotNull { runCatching { it.getCapabilitiesForType(mime).videoCapabilities }.getOrNull() }
+            .firstOrNull { it.isSizeSupported(size.width, size.height) }
+        val h = cap(MediaFormat.MIMETYPE_VIDEO_HEVC); val a = cap(MediaFormat.MIMETYPE_VIDEO_AVC)
+        hevc = h != null
+        bitrate = minOf(100_000_000, (h ?: a)?.bitrateRange?.upper ?: 40_000_000)
     }
 
     val sensorOrientation get() = chars.get(CameraCharacteristics.SENSOR_ORIENTATION) ?: 90
@@ -80,7 +97,7 @@ class CameraRig(private val ctx: Context, private val onInfo: (String) -> Unit) 
     @Suppress("DEPRECATION")
     private fun startSession(texture: SurfaceTexture, ready: () -> Unit) {
         recorder(File(ctx.cacheDir, "probe.mp4")).apply { prepare(); release() }             // sizes the persistent surface
-        texture.setDefaultBufferSize(size.width, size.height); val p = Surface(texture); preview = p
+        texture.setDefaultBufferSize(preview.width, preview.height); val p = Surface(texture); previewSurface = p
         device!!.createCaptureSession(listOf(p, recSurface), object : CameraCaptureSession.StateCallback() {
             override fun onConfigured(s: CameraCaptureSession) { session = s; repeat(); ready() }
             override fun onConfigureFailed(s: CameraCaptureSession) { onInfo("This phone refused the camera setup") }
@@ -89,7 +106,7 @@ class CameraRig(private val ctx: Context, private val onInfo: (String) -> Unit) 
 
     private fun request(): CaptureRequest {
         val b = device!!.createCaptureRequest(CameraDevice.TEMPLATE_RECORD)
-        b.addTarget(preview!!); if (recording) b.addTarget(recSurface)
+        b.addTarget(previewSurface!!); if (recording) b.addTarget(recSurface)
         b.set(CaptureRequest.CONTROL_MODE, CaptureRequest.CONTROL_MODE_AUTO)
         val fps = chars.get(CameraCharacteristics.CONTROL_AE_AVAILABLE_TARGET_FPS_RANGES)?.firstOrNull { it.lower == 30 && it.upper == 30 }
         b.set(CaptureRequest.CONTROL_AE_TARGET_FPS_RANGE, fps ?: Range(15, 30))
@@ -97,7 +114,13 @@ class CameraRig(private val ctx: Context, private val onInfo: (String) -> Unit) 
         b.set(CaptureRequest.CONTROL_SCENE_MODE, CaptureRequest.CONTROL_SCENE_MODE_DISABLED)            // no HDR scene mode
         if (Build.VERSION.SDK_INT >= 30 && zoom != 1f) b.set(CaptureRequest.CONTROL_ZOOM_RATIO, zoom)
         if (locked) {
-            b.set(CaptureRequest.CONTROL_AE_LOCK, true); b.set(CaptureRequest.CONTROL_AWB_LOCK, true)
+            b.set(CaptureRequest.CONTROL_AWB_LOCK, true)
+            val m = manual
+            if (m != null) {                                                       // manual: the fast shutter picked at LOCK
+                b.set(CaptureRequest.CONTROL_AE_MODE, CaptureRequest.CONTROL_AE_MODE_OFF)
+                b.set(CaptureRequest.SENSOR_EXPOSURE_TIME, m.ns); b.set(CaptureRequest.SENSOR_SENSITIVITY, m.iso)
+                b.set(CaptureRequest.SENSOR_FRAME_DURATION, 33_333_333L)
+            } else b.set(CaptureRequest.CONTROL_AE_LOCK, true)
             val minFocus = chars.get(CameraCharacteristics.LENS_INFO_MINIMUM_FOCUS_DISTANCE) ?: 0f
             val fd = lockedFocus
             if (minFocus > 0f && fd != null) { b.set(CaptureRequest.CONTROL_AF_MODE, CaptureRequest.CONTROL_AF_MODE_OFF); b.set(CaptureRequest.LENS_FOCUS_DISTANCE, fd) }
@@ -114,12 +137,20 @@ class CameraRig(private val ctx: Context, private val onInfo: (String) -> Unit) 
     }
 
     /** Fix exposure, white balance and focus as they are now (the user points at the brightest wall first). */
-    fun lock(on: Boolean) {
+    fun lock(on: Boolean): Exposure.Pick? {
         lockedFocus = if (on) last?.get(CaptureResult.LENS_FOCUS_DISTANCE) else null
+        manual = null
+        val canManual = chars.get(CameraCharacteristics.REQUEST_AVAILABLE_CAPABILITIES)?.contains(CameraMetadata.REQUEST_AVAILABLE_CAPABILITIES_MANUAL_SENSOR) == true
+        val ns = last?.get(CaptureResult.SENSOR_EXPOSURE_TIME); val iso = last?.get(CaptureResult.SENSOR_SENSITIVITY)
+        val isoR = chars.get(CameraCharacteristics.SENSOR_INFO_SENSITIVITY_RANGE); val nsR = chars.get(CameraCharacteristics.SENSOR_INFO_EXPOSURE_TIME_RANGE)
+        if (on && canManual && ns != null && iso != null && isoR != null && nsR != null)
+            manual = Exposure.pick(ns, iso, isoR.lower, isoR.upper, nsR.lower, minOf(nsR.upper, 33_333_333L))
         locked = on; handler.post { repeat() }
+        return manual
     }
 
     fun exposureInfo(): String {
+        manual?.let { return it.words }
         val r = last ?: return ""
         val t = r.get(CaptureResult.SENSOR_EXPOSURE_TIME)?.let { "1/${(1e9 / it).toInt()} s" } ?: "?"
         return "$t, ISO ${r.get(CaptureResult.SENSOR_SENSITIVITY) ?: "?"}"
@@ -131,8 +162,8 @@ class CameraRig(private val ctx: Context, private val onInfo: (String) -> Unit) 
         m.setOutputFormat(MediaRecorder.OutputFormat.MPEG_4)
         m.setOutputFile(file.path)
         m.setVideoEncodingBitRate(bitrate); m.setVideoFrameRate(30); m.setVideoSize(size.width, size.height)
-        m.setVideoEncoder(MediaRecorder.VideoEncoder.H264)
-        m.setOrientationHint(sensorOrientation)                                   // portrait (the activity is locked to it)
+        m.setVideoEncoder(if (hevc) MediaRecorder.VideoEncoder.HEVC else MediaRecorder.VideoEncoder.H264)
+        m.setOrientationHint(hint)                                                // landscape (the screen sets it from its rotation)
         m.setInputSurface(recSurface)
         return m
     }
@@ -149,7 +180,7 @@ class CameraRig(private val ctx: Context, private val onInfo: (String) -> Unit) 
     }
 
     fun close() {
-        stop(); locked = false; lockedFocus = null; session?.close(); session = null; device?.close(); device = null; preview?.release(); preview = null
+        stop(); locked = false; lockedFocus = null; manual = null; session?.close(); session = null; device?.close(); device = null; previewSurface?.release(); previewSurface = null
     }
 
     fun quit() { close(); recSurface.release(); thread.quitSafely() }

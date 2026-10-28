@@ -14,6 +14,7 @@ class Coach(private val cooldownMs: Long = 6_000) {
         BLUR("Slow down: the picture is blurry"),
         DARK("Too dark: switch more lights on"),
         LIGHTS("Keep the same lights"),
+        PAN("Walk, don't just turn: zoom with your feet"),
     }
 
     val counts = mutableMapOf<Cue, Int>()                      // how often each cue fired (saved in meta.json)
@@ -24,6 +25,10 @@ class Coach(private val cooldownMs: Long = 6_000) {
     private val lumaHistory = ArrayDeque<Pair<Long, Double>>()
 
     val turnDegPerS get() = turnRate
+    var hasSteps = false                                       // a step sensor is there (else no pan cue)
+    private var lastStep = 0L; private var turnSince = -1L
+
+    fun step(tMs: Long) { lastStep = tMs }
 
     private fun fire(c: Cue, t: Long): Cue? {
         if (t - (lastSaid[c] ?: -cooldownMs) < cooldownMs) return null
@@ -36,6 +41,10 @@ class Coach(private val cooldownMs: Long = 6_000) {
         val dt = if (lastGyroT == 0L) 0.0 else (tMs - lastGyroT) / 1000.0; lastGyroT = tMs
         val a = (dt / 0.3).coerceIn(0.0, 1.0); turnRate += a * (deg - turnRate)
         if (turnRate > TURN_MAX) { if (fastSince < 0) fastSince = tMs; if (tMs - fastSince >= 500) return fire(Cue.TURN, tMs) } else fastSince = -1
+        if (hasSteps && turnRate > PAN_DEG) {                                         // turning on the spot: no parallax
+            if (turnSince < 0) turnSince = tMs
+            if (tMs - turnSince >= 3000 && tMs - lastStep > 3000) return fire(Cue.PAN, tMs)
+        } else turnSince = -1
         return null
     }
 
@@ -59,6 +68,7 @@ class Coach(private val cooldownMs: Long = 6_000) {
 
     companion object {
         const val TURN_MAX = 35.0
+        const val PAN_DEG = 15.0
         const val FLOOR_DEG = 25.0
         const val CEILING_DEG = 30.0
         const val DARK_LUMA = 45.0

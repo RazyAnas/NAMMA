@@ -48,3 +48,27 @@ class CoachTest {
         assertEquals("Ready", Status.parse("""{"stage":"done","link":"x"}""")!!.words)
     }
 }
+
+class CaptureRulesTest {
+    @Test fun fastShutterKeepsBrightness() {
+        val bright = Exposure.pick(10_000_000L, 100, 50, 3200, 10_000L, 100_000_000L)      // 1/100 s ISO 100 -> 1/500 ISO 500
+        assertEquals(Exposure.TARGET_NS, bright.ns); assertEquals(500, bright.iso); assertEquals(null, bright.warn)
+        val dim = Exposure.pick(33_000_000L, 800, 50, 3200, 10_000L, 100_000_000L)         // 1/30 ISO 800: too dark for 1/500
+        assertEquals(Exposure.LIMIT_NS, dim.ns); assertEquals(3200, dim.iso); assertTrue(dim.warn != null)
+        val ok = Exposure.pick(1_000_000L, 64, 50, 3200, 10_000L, 100_000_000L)            // already faster than 1/500: kept
+        assertEquals(1_000_000L, ok.ns); assertEquals(64, ok.iso)
+    }
+
+    @Test fun panningWithoutStepsIsCaught() {
+        val c = Coach(); c.hasSteps = true; var t = 0L
+        val cues = (0 until 250).mapNotNull { t += 20; c.gyro(t, 0f, Math.toRadians(25.0).toFloat(), 0f) }   // 5 s turning, no steps
+        assertTrue(Coach.Cue.PAN in cues, "$cues")
+        val c2 = Coach(); c2.hasSteps = true; t = 0L
+        val cues2 = (0 until 250).mapNotNull { t += 20; if (t % 600 == 0L) c2.step(t); c2.gyro(t, 0f, Math.toRadians(25.0).toFloat(), 0f) }
+        assertTrue(Coach.Cue.PAN !in cues2, "walking while turning is fine: $cues2")
+        // the video check: 40 s standing and turning vs walking
+        fun take(stepsPer: Double) = (0 until 400).map { Quality.Sample(it * 0.25, 500.0, 0.45, 120.0, 0.4, 0.03, 0.95, 6.0, 0.0, stepsPer) }
+        val pan = Quality.score(take(0.0)); assertEquals(Quality.BAD, pan.verdict); assertTrue(pan.words().contains("pan"), pan.words())
+        val walk = Quality.score(take(0.25)); assertEquals(Quality.GOOD, walk.verdict, walk.words())
+    }
+}

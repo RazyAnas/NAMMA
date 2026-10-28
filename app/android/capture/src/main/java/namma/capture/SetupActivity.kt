@@ -32,6 +32,11 @@ class SetupActivity : Activity() {
         root.addView(gh)
         root.addView(Ui.wide(Ui.button(this, "Make a token on github.com", Ui.CARD) { open("https://github.com/settings/personal-access-tokens/new") }, this))
 
+        root.addView(Ui.wide(android.widget.CheckBox(this).apply {
+            text = "Smaller files: record 1080p instead of 4K (for slow uploads)"; setTextColor(Ui.TEXT)
+            isChecked = Store.prefs(this@SetupActivity).getBoolean("small", false)
+            setOnCheckedChangeListener { _, on -> Store.prefs(this@SetupActivity).edit().putBoolean("small", on).apply() }
+        }, this, 20))
         val msg = Ui.text(this, "", 15f)
         root.addView(Ui.wide(Ui.button(this, "Check and save") {
             val h = hf.text.toString().trim().ifEmpty { s.hf ?: "" }; val g = gh.text.toString().trim().ifEmpty { s.github ?: "" }

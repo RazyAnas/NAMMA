@@ -24,6 +24,9 @@ import android.os.Vibrator
 import android.speech.tts.TextToSpeech
 import android.view.Gravity
 import android.view.TextureView
+import android.view.Surface
+import android.graphics.Matrix
+import android.graphics.RectF
 import android.view.View
 import android.view.WindowManager
 import android.widget.CheckBox
@@ -58,7 +61,7 @@ class RecordActivity : Activity(), SensorEventListener {
     private var startedAt = 0L; private var pass = 0; private var room = 1
     private val passLog = JSONArray()
     private var lastCueAt = 0L
-    private val fw = 270; private val fh = 480                                         // preview samples: 1/4 of 1080x1920
+    private val fw = 480; private val fh = 270                                         // preview samples: 1/4 of 1920x1080 (landscape)
     private val frame = Bitmap.createBitmap(fw, fh, Bitmap.Config.ARGB_8888)
     private val px = IntArray(fw * fh)
     private val worker = HandlerThread("check").apply { start() }
@@ -67,57 +70,77 @@ class RecordActivity : Activity(), SensorEventListener {
     private var extractor = Quality.Extractor()
     private val samples = ArrayList<Quality.Sample>()
     @Volatile private var turnSince = 0.0; @Volatile private var elevation = Double.NaN; private var lastGyro = 0L
+    @Volatile private var stepsSince = 0.0; private var stepSensor = false; private var totalSteps = 0
     private var camReady = false
 
     override fun onCreate(b: Bundle?) {
         super.onCreate(b)
         window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
-        rig = CameraRig(this) { m -> runOnUiThread { say(m, speak = false) } }
+        rig = CameraRig(this, Store.prefs(this).getBoolean("small", false)) { m -> runOnUiThread { say(m, speak = false) } }
         tts = TextToSpeech(this) { if (it == TextToSpeech.SUCCESS) tts?.language = Locale.UK }
         build()
-        if (checkSelfPermission(Manifest.permission.CAMERA) != PackageManager.PERMISSION_GRANTED) requestPermissions(arrayOf(Manifest.permission.CAMERA), 1)
+        val need = listOfNotNull(Manifest.permission.CAMERA, if (Build.VERSION.SDK_INT >= 29) Manifest.permission.ACTIVITY_RECOGNITION else null)
+            .filter { checkSelfPermission(it) != PackageManager.PERMISSION_GRANTED }
+        if (need.isNotEmpty()) requestPermissions(need.toTypedArray(), 1)
     }
 
     override fun onRequestPermissionsResult(code: Int, perms: Array<out String>, res: IntArray) {
-        if (res.firstOrNull() == PackageManager.PERMISSION_GRANTED) openCamera() else { say("The camera permission is needed", false); finish() }
+        if (checkSelfPermission(Manifest.permission.CAMERA) == PackageManager.PERMISSION_GRANTED) openCamera() else { say("The camera permission is needed", false); finish() }
     }
 
     private fun build() {
         val root = FrameLayout(this).apply { setBackgroundColor(Color.BLACK) }
-        val w = resources.displayMetrics.widthPixels
+        val dm = resources.displayMetrics; val sw = maxOf(dm.widthPixels, dm.heightPixels); val sh = minOf(dm.widthPixels, dm.heightPixels)
+        val pw = minOf(sw, sh * 16 / 9); val ph = pw * 9 / 16                         // landscape 16:9 preview, centred
         texture = TextureView(this)
-        root.addView(texture, FrameLayout.LayoutParams(w, w * 16 / 9, Gravity.TOP))         // 1080p portrait: 9:16
+        root.addView(texture, FrameLayout.LayoutParams(pw, ph, Gravity.CENTER))
         texture.surfaceTextureListener = object : TextureView.SurfaceTextureListener {
             override fun onSurfaceTextureAvailable(s: SurfaceTexture, a: Int, b: Int) = openCamera()
-            override fun onSurfaceTextureSizeChanged(s: SurfaceTexture, a: Int, b: Int) {}
+            override fun onSurfaceTextureSizeChanged(s: SurfaceTexture, a: Int, b: Int) = fitPreview()
             override fun onSurfaceTextureDestroyed(s: SurfaceTexture) = true
             override fun onSurfaceTextureUpdated(s: SurfaceTexture) {}
         }
 
-        val top = Ui.column(this, 12).apply { setBackgroundColor(0x99000000.toInt()) }
-        passTitle = Ui.text(this, "Before you start", 20f, bold = true); timer = Ui.text(this, "", 15f, Ui.DIM)
+        val top = Ui.column(this, 8).apply { setBackgroundColor(0x99000000.toInt()) }
+        passTitle = Ui.text(this, "Before you start", 18f, bold = true); timer = Ui.text(this, "", 14f, Ui.DIM)
         top.addView(passTitle); top.addView(timer)
-        root.addView(top, FrameLayout.LayoutParams(-1, -2, Gravity.TOP))
+        root.addView(top, FrameLayout.LayoutParams(sw * 62 / 100, -2, Gravity.TOP or Gravity.START))
 
-        cue = Ui.text(this, "", 24f, Color.WHITE, true).apply {
-            gravity = Gravity.CENTER; setBackgroundColor(0xCCE5484D.toInt()); visibility = View.GONE; setPadding(24, 24, 24, 24)
+        cue = Ui.text(this, "", 22f, Color.WHITE, true).apply {
+            gravity = Gravity.CENTER; setBackgroundColor(0xCCE5484D.toInt()); visibility = View.GONE; setPadding(24, 16, 24, 16)
         }
-        root.addView(cue, FrameLayout.LayoutParams(-1, -2, Gravity.CENTER))
+        root.addView(cue, FrameLayout.LayoutParams(sw * 60 / 100, -2, Gravity.CENTER))
 
-        val bottom = Ui.column(this, 12).apply { setBackgroundColor(0x99000000.toInt()) }
-        tip = Ui.text(this, Guide.LOCK, 15f); info = Ui.text(this, "", 12f, Ui.DIM)
+        val bottom = Ui.column(this, 8).apply { setBackgroundColor(0x99000000.toInt()) }
+        tip = Ui.text(this, Guide.LOCK, 13f); info = Ui.text(this, "", 11f, Ui.DIM)
         bottom.addView(tip); bottom.addView(info)
-        val row = Ui.row(this)
+        root.addView(bottom, FrameLayout.LayoutParams(sw * 70 / 100, -2, Gravity.BOTTOM or Gravity.START))
+
+        val col = Ui.column(this, 8).apply { gravity = Gravity.CENTER }                // buttons on the right, under the thumb
         lockBtn = Ui.button(this, "LOCK", Ui.CARD) { toggleLock() }
         recBtn = Ui.button(this, "●  REC", Ui.WARN) { if (rig.recording) stopRec() else startRec() }
         nextBtn = Ui.button(this, "Next ▶", Ui.ACCENT) { nextPass() }
-        for (v in listOf(lockBtn, recBtn, nextBtn)) row.addView(v, LinearLayout.LayoutParams(0, -2, 1f).apply { setMargins(6, 6, 6, 6) })
-        bottom.addView(row)
-        root.addView(bottom, FrameLayout.LayoutParams(-1, -2, Gravity.BOTTOM))
+        for (v in listOf(lockBtn, recBtn, nextBtn)) col.addView(v, LinearLayout.LayoutParams(Ui.dp(this, 120), -2).apply { setMargins(0, 8, 0, 8) })
+        root.addView(col, FrameLayout.LayoutParams(-2, -1, Gravity.END))
         recBtn.isEnabled = false; recBtn.alpha = 0.4f; nextBtn.visibility = View.GONE
 
         checklist = makeChecklist(); root.addView(checklist, FrameLayout.LayoutParams(-1, -1))
         setContentView(root)
+    }
+
+    @Suppress("DEPRECATION")
+    private fun rotationDeg() = when (windowManager.defaultDisplay.rotation) { Surface.ROTATION_90 -> 90; Surface.ROTATION_180 -> 180; Surface.ROTATION_270 -> 270; else -> 0 }
+
+    /** Camera buffers come in sensor orientation; turn and scale them to fill the landscape view (as Camera2Basic does). */
+    private fun fitPreview() {
+        val vw = texture.width.toFloat(); val vh = texture.height.toFloat(); if (vw == 0f) return
+        val bw = rig.preview.width.toFloat(); val bh = rig.preview.height.toFloat(); val rot = rotationDeg()
+        val m = Matrix(); val view = RectF(0f, 0f, vw, vh); val buf = RectF(0f, 0f, bh, bw); val cx = view.centerX(); val cy = view.centerY()
+        if (rot == 90 || rot == 270) {
+            buf.offset(cx - buf.centerX(), cy - buf.centerY()); m.setRectToRect(view, buf, Matrix.ScaleToFit.FILL)
+            val k = maxOf(vh / bh, vw / bw); m.postScale(k, k, cx, cy); m.postRotate((rot - 180).toFloat(), cx, cy)
+        } else if (rot == 180) m.postRotate(180f, cx, cy)
+        texture.setTransform(m)
     }
 
     private fun makeChecklist(): View {
@@ -140,16 +163,22 @@ class RecordActivity : Activity(), SensorEventListener {
         if (camReady || checkSelfPermission(Manifest.permission.CAMERA) != PackageManager.PERMISSION_GRANTED) return
         val st = texture.surfaceTexture ?: return
         camReady = true
-        try { rig.open(st) { runOnUiThread { info.text = "${rig.lens} · ${rig.size.width}x${rig.size.height} · 30 fps · stabilisation off" } } }
+        try { rig.open(st) { runOnUiThread {
+            rig.hint = (rig.sensorOrientation - rotationDeg() + 360) % 360; fitPreview()
+            info.text = "${rig.lens} · ${rig.size.width}x${rig.size.height} ${if (rig.hevc) "HEVC" else "H.264"} ${rig.bitrate / 1_000_000} Mbps · 30 fps · stabilisation off"
+        } } }
         catch (e: Exception) { camReady = false; say("Camera: ${e.message}", false) }
     }
 
     private fun toggleLock() {
         if (rig.recording) { say("The lock stays on while recording", false); return }
-        rig.lock(!rig.locked)
+        val pick = rig.lock(!rig.locked)
         (lockBtn as android.widget.Button).text = if (rig.locked) "UNLOCK" else "LOCK"
         recBtn.isEnabled = rig.locked; recBtn.alpha = if (rig.locked) 1f else 0.4f
-        if (rig.locked) { tip.text = "Locked (${rig.exposureInfo()}). Go to the entrance, then tap REC."; say("Locked. Go to the entrance, then tap record.", true, warn = false) }
+        if (rig.locked) {
+            tip.text = "Locked: ${rig.exposureInfo()}${if (pick == null) " (this phone has no manual shutter: exposure locked as is)" else ""}. Go to the entrance, then tap REC."
+            pick?.warn?.let { say(it, true) } ?: say("Locked. Go to the entrance, then tap record.", true, warn = false)
+        }
         else tip.text = Guide.LOCK
     }
 
@@ -159,7 +188,7 @@ class RecordActivity : Activity(), SensorEventListener {
         job = Jobs.newId(); file = File(dir, "$job.mp4")
         try { rig.start(file!!) } catch (e: Exception) { say("Could not start recording: ${e.message}", false); return }
         startedAt = SystemClock.elapsedRealtime(); pass = 0; room = 1
-        synchronized(samples) { samples.clear() }; extractor = Quality.Extractor(); turnSince = 0.0; lastGyro = 0L
+        synchronized(samples) { samples.clear() }; extractor = Quality.Extractor(); turnSince = 0.0; lastGyro = 0L; stepsSince = 0.0; totalSteps = 0
         recBtn.text = "■  STOP"; lockBtn.alpha = 0.4f; nextBtn.visibility = View.VISIBLE
         showPass(); listen(true); tickUi()
     }
@@ -184,9 +213,10 @@ class RecordActivity : Activity(), SensorEventListener {
         if (texture.isAvailable && !busy) {                                          // the preview picture, 4 per second
             texture.getBitmap(frame); frame.getPixels(px, 0, fw, 0, 0, fw, fh); busy = true
             val t = (now() - startedAt) / 1000.0; val turn = turnSince; turnSince = 0.0; val el = elevation
+            val st = if (stepSensor) stepsSince.also { stepsSince = 0.0 } else Double.NaN
             val luma = IntArray(fw * fh) { val c = px[it]; ((c shr 16 and 255) * 299 + (c shr 8 and 255) * 587 + (c and 255) * 114) / 1000 }
             work.post {                                                                  // sample + cues off the UI thread
-                val smp = extractor.add(t, luma, fw, fh, turn, el); synchronized(samples) { samples.add(smp) }
+                val smp = extractor.add(t, luma, fw, fh, turn, el, st); synchronized(samples) { samples.add(smp) }
                 val c = coach.frame(now(), smp.luma, smp.sharp); busy = false
                 if (c != null) runOnUiThread { show(c) }
             }
@@ -201,6 +231,9 @@ class RecordActivity : Activity(), SensorEventListener {
         val sm = getSystemService(SensorManager::class.java)!!
         if (!on) { sm.unregisterListener(this); return }
         sm.getDefaultSensor(Sensor.TYPE_GYROSCOPE)?.let { sm.registerListener(this, it, SensorManager.SENSOR_DELAY_GAME) }
+        val stepOk = Build.VERSION.SDK_INT < 29 || checkSelfPermission(Manifest.permission.ACTIVITY_RECOGNITION) == PackageManager.PERMISSION_GRANTED
+        stepSensor = stepOk && sm.getDefaultSensor(Sensor.TYPE_STEP_DETECTOR)?.let { sm.registerListener(this, it, SensorManager.SENSOR_DELAY_FASTEST) } == true
+        coach.hasSteps = stepSensor
         (sm.getDefaultSensor(Sensor.TYPE_GRAVITY) ?: sm.getDefaultSensor(Sensor.TYPE_ACCELEROMETER))?.let { sm.registerListener(this, it, SensorManager.SENSOR_DELAY_UI) }
     }
 
@@ -212,6 +245,7 @@ class RecordActivity : Activity(), SensorEventListener {
                 val t = now(); if (lastGyro > 0) turnSince += Math.toDegrees(Math.sqrt((v[0] * v[0] + v[1] * v[1] + v[2] * v[2]).toDouble())) * (t - lastGyro) / 1000.0
                 lastGyro = t; coach.gyro(t, v[0], v[1], v[2])
             }
+            Sensor.TYPE_STEP_DETECTOR -> { stepsSince += 1.0; totalSteps++; coach.step(now()); null }
             else -> { elevation = Coach.elevation(v[0], v[1], v[2]); coach.gravity(now(), v[0], v[1], v[2]) }
         }
         c?.let { show(it) }
@@ -270,7 +304,9 @@ class RecordActivity : Activity(), SensorEventListener {
         val meta = JSONObject().put("name", name).put("preset", "best").put("seconds", seconds).put("rooms", room)
             .put("device", "${Build.MANUFACTURER} ${Build.MODEL} (Android ${Build.VERSION.RELEASE})")
             .put("camera", JSONObject().put("lens", rig.lens).put("zoom", rig.zoom.toDouble()).put("width", rig.size.width).put("height", rig.size.height)
-                .put("fps", 30).put("bitrate", rig.bitrate).put("locked", rig.locked).put("exposure", rig.exposureInfo()).put("stabilisation", "off"))
+                .put("fps", 30).put("bitrate", rig.bitrate).put("codec", if (rig.hevc) "hevc" else "h264").put("locked", rig.locked)
+                .put("exposure", rig.exposureInfo()).put("manual_shutter", rig.manual != null).put("stabilisation", "off").put("orientation", "landscape"))
+            .put("steps", if (stepSensor) totalSteps else null)
             .put("passes", passLog).put("cues", JSONObject(coach.counts.mapKeys { it.key.name }.mapValues { it.value }))
             .put("quality", q.json().put("uploaded_anyway", forced))
             .put("quality_samples", JSONObject().put("columns", JSONArray(listOf("t", "sharp", "crisp", "luma", "texture", "shift", "ncc", "turn_deg", "elevation")))

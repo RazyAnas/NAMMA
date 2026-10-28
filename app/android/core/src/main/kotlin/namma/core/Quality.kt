@@ -26,9 +26,10 @@ object Quality {
         val ncc: Double,        // how well the previous sample matches at that movement (1 = same picture)
         val turnDeg: Double,    // gyro: degrees turned since the previous sample (NaN: no gyro, e.g. a test video)
         val elevation: Double,  // gyro: degrees the camera points above the horizon (NaN: unknown)
+        val steps: Double = Double.NaN,  // steps taken since the previous sample (NaN: no step sensor, e.g. a test video)
     ) {
         fun json(): JSONArray = JSONArray(listOf(r(t, 2), r(sharp, 1), r(crisp, 3), r(luma, 1), r(texture, 4), r(shift, 3), r(ncc, 3),
-            if (turnDeg.isNaN()) null else r(turnDeg, 1), if (elevation.isNaN()) null else r(elevation, 1)))
+            if (turnDeg.isNaN()) null else r(turnDeg, 1), if (elevation.isNaN()) null else r(elevation, 1), if (steps.isNaN()) null else steps))
         private fun r(v: Double, d: Int) = Math.round(v * Math.pow(10.0, d.toDouble())) / Math.pow(10.0, d.toDouble())
     }
 
@@ -36,7 +37,7 @@ object Quality {
     class Extractor {
         private var prev: IntArray? = null; private var pw = 0; private var ph = 0
 
-        fun add(t: Double, luma: IntArray, w: Int, h: Int, turnDeg: Double = Double.NaN, elevation: Double = Double.NaN): Sample {
+        fun add(t: Double, luma: IntArray, w: Int, h: Int, turnDeg: Double = Double.NaN, elevation: Double = Double.NaN, steps: Double = Double.NaN): Sample {
             val c = min(w, h) * 6 / 10; val x0 = (w - c) / 2; val y0 = (h - c) / 2
             val sharp = laplacianVar(luma, w, x0, y0, c, c)
             val half = down(luma, w, h, 2); val half2 = laplacianVar(half, w / 2, x0 / 2, y0 / 2, c / 2, c / 2)
@@ -52,7 +53,7 @@ object Quality {
             val p = prev
             if (p != null && pw == sw && ph == sh) { val m = match(p, small, sw, sh); shift = m.first; ncc = m.second }
             prev = small; pw = sw; ph = sh
-            return Sample(t, sharp, crisp, sum.toDouble() / luma.size, edges.toDouble() / ((sw - 2) * (sh - 2)), shift, ncc, turnDeg, elevation)
+            return Sample(t, sharp, crisp, sum.toDouble() / luma.size, edges.toDouble() / ((sw - 2) * (sh - 2)), shift, ncc, turnDeg, elevation, steps)
         }
     }
 
@@ -128,6 +129,21 @@ object Quality {
             a > DARK_LUMA && samples[it].shift < 0.05 && abs(b - a) / a > JUMP }
         if (jumps.isNotEmpty()) add("The light changed ${jumps.size} time(s): keep the same lights on the whole time", samples[jumps[0]].t, min(20, 5 * jumps.size))
 
+        // walk, don't pan (step sensor + gyro only): turning with no step within 1 s gives no parallax
+        var panSec = 0.0; var turnSec = 0.0; var totalSteps = Double.NaN
+        if (samples.count { !it.steps.isNaN() && !it.turnDeg.isNaN() } > n / 2) {
+            val pre = DoubleArray(n + 1); for (i in 0 until n) pre[i + 1] = pre[i] + (samples[i].steps.takeIf { !it.isNaN() } ?: 0.0)
+            val k = max(1, (1.0 / dt).toInt())
+            for (i in 0 until n) {
+                val s = samples[i]; if (s.turnDeg.isNaN() || s.turnDeg / dt < Coach.PAN_DEG) continue
+                turnSec += dt; if (pre[min(n, i + k + 1)] - pre[max(0, i - k)] == 0.0) panSec += dt
+            }
+            totalSteps = pre[n]
+            if (panSec >= 3) add("Turned on the spot for ${panSec.toInt()} s without walking: walk, don't pan", null, min(30, (2 * panSec).toInt()))
+            if (panSec > 10 && panSec > 0.3 * turnSec) hard = true
+            if (dur >= 30 && totalSteps / dur < 0.4) add("Barely walked (${totalSteps.toInt()} steps in ${dur.toInt()} s): walk around the room", null, 25)
+        }
+
         // floor filling the picture (gyro only)
         val el = samples.filter { !it.elevation.isNaN() }
         if (el.size > n / 2) {
@@ -135,7 +151,7 @@ object Quality {
             if (floor > 0.2) add("Aimed at the floor ${(100 * floor).toInt()} % of the time: aim at eye level", null, min(25, (60 * floor).toInt()))
         }
         return finish(reasons, hard, samples, dur, JSONObject().put("breaks", breaks.size).put("fast_s", fastSec).put("blurry_s", blurSec)
-            .put("blank_s", flatSec).put("crisp_median", crispMed).put("dark_frac", darkFrac).put("light_jumps", jumps.size).put("sharp_ref", ref))
+            .put("pan_s", panSec).put("turn_s", turnSec).put("steps", if (totalSteps.isNaN()) null else totalSteps).put("blank_s", flatSec).put("crisp_median", crispMed).put("dark_frac", darkFrac).put("light_jumps", jumps.size).put("sharp_ref", ref))
     }
 
     private fun finish(reasons: List<Reason>, hard: Boolean, samples: List<Sample>, dur: Double, stats: JSONObject = JSONObject()): Report {
