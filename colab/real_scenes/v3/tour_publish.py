@@ -7,7 +7,7 @@ Used by gh_run.py after a run, and on its own (.github/workflows/tour-publish.ym
   dataset; 'floorplan': redraw floorplan.png from the run's model first (final/make_tour.py floorplan) and save it back there;
   'collision': rebuild collision.glb = room box + simplified mesh furniture; 'rebuild': convert the run's model.ply into the tour's
   scene file again with the current make_tour.build settings, e.g. all SH bands)"""
-import os, re, secrets, sys
+import os, re, secrets, shutil, sys
 
 
 def prune(api, sp, results_repo, url_path, say=print):
@@ -91,12 +91,13 @@ if __name__ == '__main__':
     if rb:                                                                                # scene file again from the model (current settings)
         import subprocess; W = os.path.abspath('st')
         subprocess.run(f'mkdir -p {W} && cd {W} && npm init -y >/dev/null && npm i -s --no-audit --no-fund playcanvas@2.23.2 '
-                       '@playcanvas/supersplat-viewer@1.37.0 @playcanvas/splat-transform@3.10.1', shell=True, check=True)
+                       '@playcanvas/supersplat-viewer@1.41.0 @playcanvas/splat-transform@3.10.3', shell=True, check=True)   # 1.41: streamed LOD
         for f in ('scene.compressed.ply', 'scene.sog'):
             if os.path.exists(f'{tour}/{f}'): os.remove(f'{tour}/{f}')
+        shutil.rmtree(f'{tour}/lod', ignore_errors=True)
         print('rebuilt:', make_tour.build(os.path.join(d, run), tour, f'{W}/node_modules/@playcanvas/supersplat-viewer/public',
                                           f'{W}/node_modules/.bin/splat-transform'), flush=True)
-        api.upload_folder(folder_path=tour, path_in_repo=f'{run}/tour', repo_id=repo, repo_type='dataset')
-    publish(api, user, repo, run, tour)
+        api.upload_folder(folder_path=tour, path_in_repo=f"{run}/{os.environ.get('TOUR_DST', 'tour')}", repo_id=repo, repo_type='dataset')
+    publish(api, user, repo, run, tour, url_path=f"{run}/{os.environ.get('TOUR_URL_NAME', 'tour_url.txt')}")   # a new name keeps the old link
     if os.environ.get('INBOX_JOB'):                                                       # finish an app job whose publish failed
         import inbox; inbox.set_status(os.environ['INBOX_JOB'], 'done', run=run, link=open('tour_url.txt').read().strip())

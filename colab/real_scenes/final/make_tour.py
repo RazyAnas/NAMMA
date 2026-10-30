@@ -290,11 +290,25 @@ def build(run, tour, public, st='npx --no-install splat-transform'):
     # 30 Oct, measured in the real conversion on run 4 and run 6 held-out photos: all 3 bands -0.02 dB vs the trained model, band 1
     # only -2.2 / -2.4 dB. The "dark walls" of 27 Oct came from the room crop and smear filter (both gone), so all bands is the default.
     out, sh = (f'{tour}/scene.compressed.ply', int(os.environ.get('TOUR_SH', 3))) if fmt == 'cply' else (f'{tour}/scene.sog', 0)
+    if fmt == 'lod':                     # 30 Oct, whole-house plan: Streamed SOG = the same model at several levels of detail in spatial
+        sh = int(os.environ.get('TOUR_SH', 3)); out = f'{tour}/lod/lod-meta.json'   # chunks; the viewer opens on a coarse whole and
+        shutil.rmtree(f'{tour}/lod', ignore_errors=True); os.makedirs(f'{tour}/lod')   # streams full detail near the camera
     cmd = (f'{st} -w -g cpu {tour}/clean.ply -H {sh} -r {E[0]:.6f},{E[1]:.6f},{E[2]:.6f} -t {t[0]:.6f},{t[1]:.6f},{t[2]:.6f} -s {s:.6f} '
+           + (f'-B {",".join(f"{x:.4f}" for x in b)} ' if os.environ.get('TOUR_CROP') == '1' else '')
+           + ('-F ' if os.environ.get('TOUR_FLOATERS') == '1' else '') + f'-N {tour}/full_t.ply' if fmt == 'lod' else
+           f'{st} -w -g cpu {tour}/clean.ply -H {sh} -r {E[0]:.6f},{E[1]:.6f},{E[2]:.6f} -t {t[0]:.6f},{t[1]:.6f},{t[2]:.6f} -s {s:.6f} '
            + (f'-B {",".join(f"{x:.4f}" for x in b)} ' if os.environ.get('TOUR_CROP') == '1' else '')
            + ('-F ' if os.environ.get('TOUR_FLOATERS') == '1' else '') + f'-N {out}')
     print(cmd, flush=True); subprocess.run(cmd, shell=True, check=True); os.remove(f'{tour}/clean.ply')
-    boot = dict(contentUrl='./' + os.path.basename(out), settingsUrl='./settings.json')
+    if fmt == 'lod':                                                       # levels: 100 % (LOD 0), then decimated copies
+        lv = [x for x in os.environ.get('TOUR_LOD_LEVELS', '30,10,3').split(',') if x]; parts = [f'{tour}/full_t.ply -l 0']
+        for k, pct in enumerate(lv):
+            c = f'{st} -w {tour}/full_t.ply -d {pct}% {tour}/lod{k + 1}.ply'; print(c, flush=True); subprocess.run(c, shell=True, check=True)
+            parts.append(f'{tour}/lod{k + 1}.ply -l {k + 1}')
+        c = f'{st} -w -g cpu ' + ' '.join(parts) + f' -H {sh} {out}'; print(c, flush=True); subprocess.run(c, shell=True, check=True)
+        for f in [f'{tour}/full_t.ply'] + [f'{tour}/lod{k + 1}.ply' for k in range(len(lv))]: os.remove(f)
+        subprocess.run(f'{st} --info {out} | head -20', shell=True)
+    boot = dict(contentUrl='./' + os.path.relpath(out, tour), settingsUrl='./settings.json')
     # collision for walk mode: the room mesh (mesh_tsdf.py, room coordinates before scaling) if there is one, else the room box
     collision(run, tour)
     if os.path.exists(f'{tour}/collision.glb'): boot['collisionUrl'] = './collision.glb'
@@ -304,13 +318,14 @@ def build(run, tour, public, st='npx --no-install splat-transform'):
     html = open(f'{public}/index.html').read(); a = html.index('id="sse-bootstrap">') + len('id="sse-bootstrap">'); c = html.index('</script>', a)
     html = (html[:a] + '\n' + json.dumps(boot) + '\n        ' + html[c:]).replace('<title>SuperSplat Viewer</title>', '<title>NAMMA 3D tour</title>')
     nsp = len(v) - int(bad.sum()); bud = max(4, int(np.ceil(nsp / 1e6)) + 1)                 # the viewer's splat budget, millions
-    html = html.replace('<head>', '<head>\n    <script>(function(){var q=new URLSearchParams(location.search);if(!q.has("budget"))q.set("budget","%d");'
-                        'if(!q.has("hpr"))q.set("hpr","1");history.replaceState(null,"",location.pathname+"?"+q.toString()+location.hash);})();</script>' % bud, 1)
+    if fmt != 'lod':                                    # streamed LOD: the viewer picks its own budget for the device
+        html = html.replace('<head>', '<head>\n    <script>(function(){var q=new URLSearchParams(location.search);if(!q.has("budget"))q.set("budget","%d");'
+                            'if(!q.has("hpr"))q.set("hpr","1");history.replaceState(null,"",location.pathname+"?"+q.toString()+location.hash);})();</script>' % bud, 1)
     html = html.replace("createViewer({ container: document.body, settings, ...options });",
                         "window.viewer = await createViewer({ container: document.body, settings, ...options });")
     if os.path.exists(f'{tour}/overlay.json'): html = html.replace('</body>', OVERLAY + '\n    </body>')
     open(f'{tour}/index.html', 'w').write(html)
-    info = json.load(open(f'{tour}/tour.json')); info.update(smears_removed=int(bad.sum()), collision='collisionUrl' in boot, scene_mb=round(os.path.getsize(out) / 1e6, 1), format=fmt, sh_bands=sh)
+    info = json.load(open(f'{tour}/tour.json')); info.update(smears_removed=int(bad.sum()), collision='collisionUrl' in boot, scene_mb=round((sum(os.path.getsize(os.path.join(dp, f)) for dp, _, fs in os.walk(os.path.dirname(out)) for f in fs) if fmt == 'lod' else os.path.getsize(out)) / 1e6, 1), format=fmt, sh_bands=sh)
     json.dump(info, open(f'{tour}/tour.json', 'w'), indent=1); print('TOUR', json.dumps(info), flush=True)
     return info
 

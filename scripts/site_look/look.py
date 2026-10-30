@@ -9,7 +9,7 @@ urls = [u.strip() for u in open(os.path.join(os.path.dirname(__file__), 'URLS.tx
 log = {}; SECRET = None
 if os.environ.get('TOUR_RUN'):           # our own tour: link read from the private results dataset, never printed (public logs)
     from huggingface_hub import hf_hub_download
-    t = open(hf_hub_download('anasrazy/namma-v3-out', f"{os.environ['TOUR_RUN']}/tour_url.txt", repo_type='dataset', token=os.environ['HF_TOKEN'])).read().strip()
+    t = open(hf_hub_download('anasrazy/namma-v3-out', f"{os.environ['TOUR_RUN']}/{os.environ.get('TOUR_URL_NAME') or 'tour_url.txt'}", repo_type='dataset', token=os.environ['HF_TOKEN'])).read().strip()
     SECRET = t.split('/')[-2]; urls = ['tour ' + t + '?webgl']
 hide = lambda x: x.replace(SECRET, '<folder>') if SECRET else x
 
