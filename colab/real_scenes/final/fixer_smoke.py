@@ -27,6 +27,8 @@ try:
     _load = torch.load; torch.load = lambda *a, **k: _load(*a, **{**k, 'weights_only': False})       # NVIDIA's own checkpoint
     from unittest.mock import MagicMock
     STUB = ('qwen_vl_utils', 'decord', 'retinaface', 'modelscope', 'better_profanity', 'mediapy', 'webdataset', 'boto3', 'natten')
+    for m_ in ('imaginaire.models.vlm_qwen', 'imaginaire.networks.qwen2_5_vl'):    # Qwen text encoder (needs flash-attn 2): never used
+        sys.modules[m_] = MagicMock(__path__=[], __spec__=None)
     for _ in range(25):                          # parts never used here (text encoder, guardrails, data loaders): stand-ins if missing
         try: import cosmos_predict2.pipelines.text2image as t2i; break
         except ModuleNotFoundError as e:

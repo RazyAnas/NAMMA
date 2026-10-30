@@ -43,8 +43,12 @@ for i, j in enumerate(np.linspace(0, len(C) - 1, int(cfg.get('views', 10)) + 2).
     c = C[j].copy(); side = (1 if i % 2 else -1) * float(cfg.get('side_m', 1.0)) / mpu        # off the walk, like the tour viewer goes
     c[:3, 3] += c[:3, 0] * side + up * 0.15 / mpu; c[:3, :3] = turn((-1 if i % 2 else 1) * (25 + 25 * (i % 3) / 2)) @ c[:3, :3]
     views.append((f'off{i}', c))
-for n, c in views:
-    im = cpu_render.render(s, c, K, W, H); Image.fromarray((im.clamp(0, 1) * 255).byte().numpy()).save(f'{IN}/{n}.png')
+if cfg.get('reuse'):                                          # renders of an earlier attempt (same run and views): skip 10 min of CPU
+    snapshot_download(repo, repo_type='dataset', local_dir='prev', token=tok, allow_patterns=[f"{cfg['reuse']}/renders/*"])
+    for n, _ in views: shutil.copy(f"prev/{cfg['reuse']}/renders/{n}.png", f'{IN}/{n}.png')
+else:
+    for n, c in views:
+        im = cpu_render.render(s, c, K, W, H); Image.fromarray((im.clamp(0, 1) * 255).byte().numpy()).save(f'{IN}/{n}.png')
 real_imgs = {f'held{i}': (img.clamp(0, 1) * 255).byte().numpy() for i, (img, _) in enumerate(real)}
 say('rendered', len(views), 'views')
 
