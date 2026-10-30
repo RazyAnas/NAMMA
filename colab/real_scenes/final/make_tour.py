@@ -305,7 +305,7 @@ def build(run, tour, public, st='npx --no-install splat-transform'):
         for k, pct in enumerate(lv):
             c = f'{st} -w -g cpu {tour}/full_t.ply -d {pct}% {tour}/lod{k + 1}.ply'; print(c, flush=True); subprocess.run(c, shell=True, check=True)
             parts.append(f'{tour}/lod{k + 1}.ply -l {k + 1}')
-        c = f'{st} -w -g cpu ' + ' '.join(parts) + f" -H {sh} -i {os.environ.get('TOUR_SH_ITER', '1')} {out}"   # SH palette: 0.5 ms/splat at 1 iteration (10: hours on a CPU)
+        c = f'{st} -w -g cpu ' + ' '.join(parts) + f" -H {sh} -i {os.environ.get('TOUR_SH_ITER', '1')} --lod-chunk-count {os.environ.get('TOUR_LOD_CHUNK_K', '16')} {out}"   # small chunks: SH palette <= chunk size (512K chunks with a 64K palette ran > 1.5 h)
         print(c, flush=True); subprocess.run(c, shell=True, check=True)
         assert os.path.exists(out) and len(os.listdir(os.path.dirname(out))) > 1, 'streamed LOD not written'
         for f in [f'{tour}/full_t.ply'] + [f'{tour}/lod{k + 1}.ply' for k in range(len(lv))]: os.remove(f)
