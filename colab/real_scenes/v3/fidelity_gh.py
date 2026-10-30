@@ -43,9 +43,9 @@ if cfg.get('solidify'):                                           # no-training 
     S = f'{OUT}/solidify'
     run(f'cd {EX} && PYTHONPATH={EX}:{FIN}:$PYTHONPATH python {FIN}/solidify.py {data} {model} {M} {cfg.get("solid_px", 480)} {cfg.get("solid_step", 3)} 2>&1 | tee {OUT}/solidify.log')
     shutil.copy(f'{M}/solidify.json', OUT)
-    variants += [('clean', f'{M}/clean.ply'), ('clean_sh1', f'{M}/clean_sh1.ply'), ('clean_sh1_flat', f'{M}/clean_sh1_flat.ply')]
-    shipped('ship_clean_sh1', f'{M}/clean_sh1.ply', 1); shipped('ship_clean_sh1_flat', f'{M}/clean_sh1_flat.ply', 1)
-    for f in ('clean_sh1', 'clean_sh1_flat'):                     # kept for building the tour from the winner
+    variants += [('clean', f'{M}/clean.ply')]
+    shipped('ship_clean_sh3', f'{M}/clean.ply', 3)                # what the tour ships from now: cleaned, all colour bands
+    for f in ('clean',):                                          # the winner (run 4: no loss, 27 % fewer splats): the tour is built from it
         api.upload_file(path_or_fileobj=f'{M}/{f}.ply', path_in_repo=f'{R}/solid/{f}.ply', repo_id=repo, repo_type='dataset')
 else:
     run(f'python {FIN}/make_tour.py clean {d}/{R} {d}/{R}/tour {M}/clean.ply')

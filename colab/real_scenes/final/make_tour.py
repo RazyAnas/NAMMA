@@ -278,7 +278,7 @@ def build(run, tour, public, st='npx --no-install splat-transform'):
     #    the walls (a mirror is a second room behind it, a window shows the outside): TOUR_CROP=1 to use it again.
     # Only invalid splats go (-N). TOUR_FLOATERS=1 adds splat-transform's voxel floater filter (-F).
     from plyfile import PlyData, PlyElement
-    v = PlyData.read(f'{run}/full/model.ply')['vertex'].data
+    v = PlyData.read(f"{run}/{os.environ.get('TOUR_MODEL', 'full/model.ply')}")['vertex'].data   # TOUR_MODEL=solid/clean.ply: cleaned
     bad = smear_mask(v, b, s) if os.environ.get('TOUR_SMEAR') == '1' else np.zeros(len(v), bool)
     PlyData([PlyElement.describe(v[~bad], 'vertex')]).write(f'{tour}/clean.ply'); print(f'smears removed: {bad.sum()} of {len(v)}', flush=True)
     # colour: SOG's spherical-harmonics clustering takes hours on a CPU (150k splats: SH1 208 s, SH3 > 300 s, SH0 2 s), so the

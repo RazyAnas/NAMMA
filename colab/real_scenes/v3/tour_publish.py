@@ -42,6 +42,7 @@ if __name__ == '__main__':
         sys.exit(0)
     fp, co, rb = 'floorplan' in sys.argv[2:], 'collision' in sys.argv[2:], 'rebuild' in sys.argv[2:]
     extra = ([f'{run}/full/{x}' for x in ('model.ply', 'level.json', 'nav.json')] if fp or rb else []) + ([f'{run}/mesh/mesh.glb'] if co or rb else [])
+    if rb and os.environ.get('TOUR_MODEL'): extra.append(f"{run}/{os.environ['TOUR_MODEL']}")
     d = snapshot_download(repo, repo_type='dataset', allow_patterns=[f'{run}/tour/*', f'{run}/tour/**'] + extra, local_dir='pub', token=tok)
     tour = os.path.join(d, run, 'tour'); assert os.path.exists(f'{tour}/index.html'), f'no built tour in {repo}/{run}/tour'
     if fp or co or rb: sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', 'final')); import make_tour
