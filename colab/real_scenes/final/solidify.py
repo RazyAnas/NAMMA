@@ -166,6 +166,8 @@ def main(data, ply, out, long=480, step=3):
     v = PlyData.read(ply)['vertex'].data
     rep = dict(splats=n, views=len(train), px=[W, H], never_seen=int((~keep).sum()), kept=int(keep.sum()))
     write(v, keep, f'{out}/clean.ply'); say('clean:', rep)
+    if os.environ.get('SOLID_ONLY_CLEAN') == '1':                                                 # the pipeline only ships clean.ply
+        json.dump(rep, open(f'{out}/solidify.json', 'w'), indent=1); return
     sh1 = refit_sh1(s['sh'][keep], wsum[keep], dsum[keep]); write(v, keep, f'{out}/clean_sh1.ply', sh1=sh1); say('SH1 refit done')
     pts = p.points; lo, hi = np.percentile(pts, 3, 0), np.percentile(pts, 97, 0); pad = 0.12 * (hi - lo)   # the room (as make_tour)
     X = s['means'][keep].numpy(); inside = np.all((X > lo - pad) & (X < hi + pad), 1)

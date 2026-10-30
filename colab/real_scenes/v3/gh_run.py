@@ -172,6 +172,11 @@ def tour_step():
         sys.path.insert(0, FIN); import frames
         frames.from_images(max(cnt, key=cnt.get), f'{data}/images', int(env_.get('NFRAMES', 300)), int(env_.get('LONG', 1280)))
     run(f'python {FIN}/make_tour.py plan {T}/gsplat/examples {data} {OUT} {OUT}/tour')
+    # clean-up without training (final/solidify.py): drop splats no training view shows (run 4: 27 %, run 6: 59 %, both 0.00 dB)
+    try:
+        run(f'cd {T}/gsplat/examples && SOLID_ONLY_CLEAN=1 PYTHONPATH={T}/gsplat/examples:{FIN}:$PYTHONPATH python {FIN}/solidify.py {data} {OUT}/full/model.ply {OUT}/solid 480 3')
+        os.environ['TOUR_MODEL'] = 'solid/clean.ply'
+    except Exception as e: say('clean-up failed, the tour uses the trained model as is:', str(e)[:200])
     run(f'python {FIN}/make_tour.py build {OUT} {OUT}/tour {T}/node_modules/@playcanvas/supersplat-viewer/public {T}/node_modules/.bin/splat-transform')
     say('tour built:', json.load(open(f'{OUT}/tour/tour.json')))
 

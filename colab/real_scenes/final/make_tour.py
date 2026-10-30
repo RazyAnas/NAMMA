@@ -287,7 +287,9 @@ def build(run, tour, public, st='npx --no-install splat-transform'):
     # (27 Oct rebuild: dark walls and ceiling in the viewer), so SH1 stays the default; TOUR_SH=3 for all bands (91 MB vs 37.5 MB
     # for 1.5M splats). TOUR_FORMAT=sog gives base colour only at ~11 bytes/splat (-2.8 dB).
     fmt = os.environ.get('TOUR_FORMAT', 'cply')
-    out, sh = (f'{tour}/scene.compressed.ply', int(os.environ.get('TOUR_SH', 1))) if fmt == 'cply' else (f'{tour}/scene.sog', 0)
+    # 30 Oct, measured in the real conversion on run 4 and run 6 held-out photos: all 3 bands -0.02 dB vs the trained model, band 1
+    # only -2.2 / -2.4 dB. The "dark walls" of 27 Oct came from the room crop and smear filter (both gone), so all bands is the default.
+    out, sh = (f'{tour}/scene.compressed.ply', int(os.environ.get('TOUR_SH', 3))) if fmt == 'cply' else (f'{tour}/scene.sog', 0)
     cmd = (f'{st} -w -g cpu {tour}/clean.ply -H {sh} -r {E[0]:.6f},{E[1]:.6f},{E[2]:.6f} -t {t[0]:.6f},{t[1]:.6f},{t[2]:.6f} -s {s:.6f} '
            + (f'-B {",".join(f"{x:.4f}" for x in b)} ' if os.environ.get('TOUR_CROP') == '1' else '')
            + ('-F ' if os.environ.get('TOUR_FLOATERS') == '1' else '') + f'-N {out}')
