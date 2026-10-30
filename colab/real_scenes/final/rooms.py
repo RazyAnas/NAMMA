@@ -50,7 +50,7 @@ def covis_rooms(C, obs, npts, min_cams=40, resolution=1.0, seed=0):
     return lab
 
 
-def split(names, C, R, P, obs, merge_thr=0.35):
+def split(names, C, R, P, obs, merge_thr=0.2):   # doors measured 0.00-0.15, pieces of one room 0.2-0.35 (30 Oct)
     """Fine split from everything standing (walls and furniture: watershed of free space), then neighbouring pieces are merged
     while their cameras see the same 3D points (co-visibility between them / within them > merge_thr). A sofa splits a room but
     both sides see the same walls; a doorway cuts what the two sides see."""
