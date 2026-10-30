@@ -29,7 +29,7 @@ jobs:
         env:
           HF_TOKEN: ${{ secrets.HF_TOKEN || secrets.HUGGINGFACE_WRITE_TOKEN }}
         run: |
-          eval "$(python -c "import json;c=json.load(open('colab/real_scenes/v3/PUBLISH.json'));print(f'export TOUR_MODEL={c[\"model\"]}' if c.get('model') else '');print(f'export TOUR_SH={c[\"sh\"]}' if 'sh' in c else '')")"
+          eval "$(python -c "import json;c=json.load(open('colab/real_scenes/v3/PUBLISH.json'));print(f'export TOUR_MODEL={c[\"model\"]}' if c.get('model') else '');print(f'export TOUR_SH={c[\"sh\"]}' if 'sh' in c else '');print(f'export INBOX_JOB={c[\"inbox_job\"]}' if c.get('inbox_job') else '');print('export TOUR_PRUNE=1' if c.get('prune') else '');print('export TOUR_KEEP=' + ','.join(c.get('keep', [])))")"
           python colab/real_scenes/v3/tour_publish.py $(python -c "import json;c=json.load(open('colab/real_scenes/v3/PUBLISH.json'));print(c['run'], *[k for k in ('floorplan', 'collision', 'rebuild') if c.get(k)])")
       - name: Screenshots
         env:
