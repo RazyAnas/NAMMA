@@ -1,5 +1,5 @@
 {
- "n": 3,
+ "n": 4,
  "scenes": [
   {"name": "zipnerf-berlin", "repo": "nvs-bench/zipnerf", "sparse": "berlin/sparse/0", "images": "berlin/images"},
   {"name": "zipnerf-alameda", "repo": "nvs-bench/zipnerf", "sparse": "alameda/sparse/0", "images": "alameda/images"},

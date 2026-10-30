@@ -1,7 +1,7 @@
 """Split a whole-home capture into rooms from its SfM model alone (CPU; per-room plan of 30 Oct, docs/HANDOFF_V3.md):
-  1 walls = cells with points from near the floor to near the ceiling (furniture only fills the low part; v1 counted all
-    points and split single rooms, v2 = co-visibility communities split the Berlin living room and mixed hall and bathroom)
-  2 rooms = watershed of the free space's distance-to-wall map, pieces joined where the opening is wider than a door
+  1 fine pieces = watershed of the free space between everything standing (walls and furniture)
+  2 neighbouring pieces merged while their cameras see the same 3D points (v1 split by walls only: one room became 3; v2 =
+    co-visibility communities alone: mixed hall and bathroom; v3 = full-height walls only: plain white walls have too few points)
   3 each camera -> the room it stands in; 'extra' cameras = other rooms' cameras that see > 30 % of their points in it
   (covis_rooms: the co-visibility communities, kept for checks)
 Writes rooms.json (rooms with outline in SfM coordinates, area, cameras, doors) and rooms.png (coloured plan, path, doors).
@@ -50,10 +50,10 @@ def covis_rooms(C, obs, npts, min_cams=40, resolution=1.0, seed=0):
     return lab
 
 
-def split(names, C, R, P, obs, door_max=DOOR_MAX):
-    """Rooms from walls: a wall cell has points from near the floor up to near the ceiling (most of 8 height bins filled in its
-    3x3 neighbourhood); furniture only fills the low bins. Free space (seen floor area, walked path) minus walls -> watershed of
-    the distance-to-wall map seeded at wide spots -> neighbours joined where their opening is wider than a door."""
+def split(names, C, R, P, obs, merge_thr=0.35):
+    """Fine split from everything standing (walls and furniture: watershed of free space), then neighbouring pieces are merged
+    while their cameras see the same 3D points (co-visibility between them / within them > merge_thr). A sofa splits a room but
+    both sides see the same walls; a doorway cuts what the two sides see."""
     from scipy import ndimage
     from skimage.segmentation import watershed
     from skimage.feature import peak_local_max
@@ -68,10 +68,9 @@ def split(names, C, R, P, obs, door_max=DOOR_MAX):
     p2, c2 = to2(P), to2(C); hm = (hp - floor) * scale; inb = seenp & (hm > -0.2) & (hm < Hm + 0.2)
     lo = np.percentile(np.r_[p2[inb], c2], 0.5, 0) - 1; hi = np.percentile(np.r_[p2[inb], c2], 99.5, 0) + 1
     shape = np.ceil((hi - lo) / CELL).astype(int); cell = lambda q: np.clip(((q - lo) / CELL).astype(int), 0, shape - 1)
-    NB = 8; band = inb & (hm > 0.1) & (hm < Hm - 0.1); hb = np.clip(((hm[band] - 0.1) / (Hm - 0.2) * NB).astype(int), 0, NB - 1)
-    occ = np.zeros(tuple(shape) + (NB,), bool); cb = cell(p2[band]); occ[cb[:, 0], cb[:, 1], hb] = True
-    occ = ndimage.maximum_filter(occ, size=(3, 3, 1)); wallm = occ.sum(-1) >= 6
-    wallm = ndimage.binary_opening(wallm, structure=np.ones((2, 2)))           # lone specks are not walls
+    band = inb & (hm > 0.3) & (hm < Hm - 0.3)                                   # fine split: anything standing (walls AND furniture)
+    wall = np.zeros(shape, np.int32); np.add.at(wall, tuple(cell(p2[band]).T), 1)
+    wallm = ndimage.binary_closing(wall >= (max(3, np.percentile(wall[wall > 0], 60)) if (wall > 0).any() else 3), iterations=1)
     pts = np.zeros(shape, bool); pts[tuple(cell(p2[inb]).T)] = True
     walked = np.zeros(shape, bool); walked[tuple(cell(c2).T)] = True
     foot = ndimage.binary_fill_holes(ndimage.binary_closing(pts | walked, iterations=8))
@@ -83,15 +82,25 @@ def split(names, C, R, P, obs, door_max=DOOR_MAX):
     mk = np.zeros(shape, np.int32)
     for i, (a_, b_) in enumerate(pk): mk[a_, b_] = i + 1
     reg = watershed(-dist, mk, mask=free)
-    while True:                                                 # join pieces whose opening is wider than a door, or that are tiny
-        best = None
+    # merge: pieces whose cameras see the same things (a sofa splits a room; a doorway cuts what both sides see)
+    from scipy import sparse
+    rows = np.concatenate([np.full(len(o), i) for i, o in enumerate(obs)])
+    Am = sparse.csr_matrix((np.ones(len(rows), np.float32), (rows, np.concatenate(obs))), shape=(len(obs), len(P)))
+    nn = np.asarray(Am.sum(1)).ravel() + 1; S = (Am @ Am.T).toarray() / np.sqrt(np.outer(nn, nn))
+    ci = cell(c2)
+    def affinity(a_, b_):
+        ia, ib = np.nonzero(reg[ci[:, 0], ci[:, 1]] == a_)[0], np.nonzero(reg[ci[:, 0], ci[:, 1]] == b_)[0]
+        if not len(ia) or not len(ib): return None
+        inter = S[np.ix_(ia, ib)].mean(); ia_ = S[np.ix_(ia, ia)].mean(); ib_ = S[np.ix_(ib, ib)].mean()
+        return inter / np.sqrt(ia_ * ib_ + 1e-12)
+    while True:
+        best, bv = None, merge_thr
         for a_ in [x for x in np.unique(reg) if x]:
             ma = reg == a_; ring = ndimage.binary_dilation(ma) & ~ma & (reg > 0)
             for b_ in np.unique(reg[ring]):
-                w = (ring & (reg == b_)).sum() * CELL; area = ma.sum() * CELL ** 2
-                if w > door_max or area < 2.5:
-                    best = (a_, b_); break
-            if best: break
+                af = affinity(a_, b_)
+                if af is None: af = 1.0 if (ma.sum() < (reg == b_).sum()) else 0.0           # a piece nobody stood in: absorb
+                if af > bv: best, bv = (a_, b_), af
         if not best: break
         reg[reg == best[0]] = best[1]
     ci = cell(c2); camroom = reg[ci[:, 0], ci[:, 1]]
@@ -111,7 +120,9 @@ def split(names, C, R, P, obs, door_max=DOOR_MAX):
             if j == i: continue
             sh = ndimage.binary_dilation(m, iterations=2) & (reg == j)
             if sh.sum():
-                cen = np.argwhere(sh).mean(0) * CELL + lo; doors.append(dict(to=j, centre=(cen / scale).tolist(), width_m=round(float(sh.sum() * CELL / 2), 2)))
+                ia, ib = np.nonzero(camroom == i)[0], np.nonzero(camroom == j)[0]
+                cv = S[np.ix_(ia, ib)].mean() / np.sqrt(S[np.ix_(ia, ia)].mean() * S[np.ix_(ib, ib)].mean() + 1e-12) if len(ia) and len(ib) else 0
+                cen = np.argwhere(sh).mean(0) * CELL + lo; doors.append(dict(to=j, centre=(cen / scale).tolist(), width_m=round(float(sh.sum() * CELL / 2), 2), covis=round(float(cv), 3)))
         own = np.nonzero(camroom == i)[0]; mine = prow == i
         share = np.array([mine[o].mean() if len(o) else 0 for o in obs])        # other rooms' cameras that see a lot of this room
         extra = np.nonzero((camroom != i) & (share > 0.3))[0]

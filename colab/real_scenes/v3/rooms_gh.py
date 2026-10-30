@@ -18,7 +18,7 @@ for sc in cfg['scenes']:                                     # {name, repo, spar
     names, C, R, P, obs = rooms.load(f"{sp}/{sc['sparse']}"); meta, rs, order, (reg, wallm, c2, lo) = rooms.split(names, C, R, P, obs)
     json.dump(dict(meta, order=order, rooms=rs), open(f'{out}/rooms.json', 'w')); rooms.draw(f'{out}/rooms.png', reg, wallm, c2, lo, rs)
     print(sc['name'], len(C), 'cameras', len(P), 'points ->', len(rs), 'rooms in', round(time.time() - t), 's:',
-          [(r['id'], r['area_m2'], len(r['cameras']), [d['to'] for d in r['doors']]) for r in rs], flush=True)
+          [(r['id'], r['area_m2'], len(r['cameras']), [(d['to'], d['covis']) for d in r['doors']]) for r in rs], flush=True)
     if sc.get('images'):                                     # 4 photos per room, so the split can be checked by eye
         for r in rs:
             pick = [r['cameras'][int(k)] for k in np.linspace(0, len(r['cameras']) - 1, 4)] if r['cameras'] else []
