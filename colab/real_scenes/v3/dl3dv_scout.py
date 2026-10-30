@@ -12,19 +12,27 @@ rows = list(csv.DictReader(io.StringIO(urllib.request.urlopen('https://raw.githu
 rows = sorted([r for r in rows if r['duration'] and r['batch'] != 'problem' and float(r['duration']) >= cfg.get('min_s', 150)], key=lambda r: -float(r['duration']))
 print(len(rows), 'videos', flush=True); W, H = 240, 135; found = []
 
+def signed(url):                                         # the Hub answers with a redirect to a signed CDN URL: seek on that, no auth header
+    import requests
+    r = requests.get(url, headers={'Authorization': f'Bearer {tok}', 'Range': 'bytes=0-0'}, timeout=60); r.close()
+    return r.url                                          # final URL after redirects (requests drops the auth header off-host)
+
+ERR = []
 def grab(url, t):
-    r = subprocess.run([FF, '-loglevel', 'error', '-headers', f'Authorization: Bearer {tok}\r\n', '-ss', f'{t:.1f}', '-i', url, '-frames:v', '1',
+    r = subprocess.run([FF, '-loglevel', 'error', '-ss', f'{t:.1f}', '-i', url, '-frames:v', '1',
                         '-vf', f'scale={W}:{H}', '-f', 'image2pipe', '-vcodec', 'png', '-'], capture_output=True, timeout=120)
+    if not r.stdout and len(ERR) < 5: ERR.append(r.stderr.decode(errors='ignore')[-300:]); print('ffmpeg:', ERR[-1], flush=True)
     return Image.open(io.BytesIO(r.stdout)).convert('RGB') if r.stdout else Image.new('RGB', (W, H), (60, 0, 0))
 
 sheet, n = None, 0
 for i, r in enumerate(rows):
     url = f"https://huggingface.co/datasets/DL3DV/DL3DV-ALL-video/resolve/main/{r['batch']}/{r['hash']}/video.mp4"; d = float(r['duration'])
-    try: ims = [grab(url, d * f) for f in (0.05, 0.27, 0.5, 0.73, 0.95)]
+    try: u = signed(url); ims = [grab(u, d * f) for f in (0.05, 0.27, 0.5, 0.73, 0.95)]
     except Exception as e: print('skip', r['hash'][:10], e, flush=True); continue
     if sheet is None: sheet = Image.new('RGB', (W * 5, (H + 18) * 10), 'black')
     y = n * (H + 18); ImageDraw.Draw(sheet).text((4, y + 2), f"#{i}  {r['batch']}/{r['hash']}  {d:.0f}s", fill='yellow')
     for k, im in enumerate(ims): sheet.paste(im, (k * W, y + 18))
+    if i == 2 and len(ERR) >= 5: sys.exit('frames failing: ' + ERR[0])
     found.append(dict(i=i, batch=r['batch'], hash=r['hash'], seconds=round(d))); n += 1
     if n == 10: sheet.save(f'{OUT}/sheet_{i // 10:03d}.jpg', quality=85); sheet, n = None, 0; print('sheet', i // 10, flush=True)
 if sheet is not None: sheet.save(f'{OUT}/sheet_{len(rows) // 10:03d}.jpg', quality=85)

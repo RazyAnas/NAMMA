@@ -15,7 +15,7 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.11"
-      - run: pip install -q huggingface_hub imageio-ffmpeg pillow
+      - run: pip install -q huggingface_hub imageio-ffmpeg pillow requests
       - env:
           HF_TOKEN: ${{ secrets.HF_TOKEN || secrets.HUGGINGFACE_WRITE_TOKEN }}
         run: python colab/real_scenes/v3/dl3dv_scout.py
