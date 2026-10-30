@@ -73,8 +73,10 @@ else:
             sub = next(k for k in [f'{i}K' for i in range(1, 12)] if api.file_exists(vr, f'{k}/{scene}/video.mp4', repo_type='dataset'))
             os.makedirs('in', exist_ok=True)
             shutil.move(hf_hub_download(vr, f'{sub}/{scene}/video.mp4', repo_type='dataset', token=tok, local_dir='dl'), 'in/video.mp4')   # move, not copy: an 8 GB video twice fills the runner
-            subprocess.run('ffprobe -v error -show_entries stream=codec_name,width,height,r_frame_rate,nb_frames:format=duration '
-                           '-of compact in/video.mp4', shell=True)
+            pr = subprocess.run('ffprobe -v error -show_entries stream=codec_name,width,height,r_frame_rate,nb_frames:format=duration,size '
+                                '-of json in/video.mp4', shell=True, capture_output=True, text=True); print(pr.stdout[-1500:], flush=True)
+            try: info['ffprobe'] = json.loads(pr.stdout)
+            except Exception: pass
             json.dump(dict(title=slug, id=DS, licenses=[dict(name='other')]), open('in/dataset-metadata.json', 'w'))
             say(kg('datasets', 'create', '-p', 'in', '-q')[1][-300:]); kaggle_io.wait_ready(DS, say)
         else: say('dataset', DS, 'already on Kaggle')
@@ -141,7 +143,7 @@ if 'running' in s or 'queued' in s:                     # longer than one GitHub
 
 os.makedirs(OUT, exist_ok=True); kg('kernels', 'output', KID, '-p', OUT, '-o', '--page-size', '200', check=False)
 json.dump(info, open(f'{OUT}/github_run.json', 'w'))
-for f in ['sfm_report.json', 'v3_summary.json', 'preview/metrics.json', 'full/metrics.json']:
+for f in ['sfm_report.json', 'precheck.json', 'v3_summary.json', 'preview/metrics.json', 'full/metrics.json']:
     if os.path.exists(f'{OUT}/{f}'): print(f'==== {f}\n' + open(f'{OUT}/{f}').read(), flush=True)
 for lg in glob.glob(f'{OUT}/*.log'): print(f'==== {os.path.basename(lg)} (last 120 lines)\n' + ''.join(open(lg, errors='ignore').readlines()[-120:]), flush=True)
 say('files:', sorted(os.path.relpath(f, OUT) for f in glob.glob(f'{OUT}/**/*', recursive=True) if os.path.isfile(f)))
@@ -201,7 +203,9 @@ if tok:
         if os.environ.get('GITHUB_STEP_SUMMARY'):
             open(os.environ['GITHUB_STEP_SUMMARY'], 'a').write(f'Results: https://huggingface.co/datasets/{repo}/tree/main/{RUN}\n')
     except Exception as e: say('HF upload failed:', str(e)[:300])
-if ok and not os.path.exists(f'{OUT}/full/metrics.json'): ok, s = False, 'complete, but no full model (metrics.json missing)'
+if cfg.get('env', {}).get('PREP_ONLY') == '1':                                       # whole-house pre-check: no model expected
+    if ok and not os.path.exists(f'{OUT}/precheck.json'): ok, s = False, 'complete, but no precheck.json'
+elif ok and not os.path.exists(f'{OUT}/full/metrics.json'): ok, s = False, 'complete, but no full model (metrics.json missing)'
 if not ok: stage('failed', reason=f'Kaggle job ended with: {s[-200:]}')
 elif os.environ.get('INBOX_JOB') and not os.path.exists('tour_url.txt'): stage('failed', reason='no tour was published (see the GitHub log)')
 sys.exit(0 if ok else f'Kaggle job ended with: {s[-200:]}')

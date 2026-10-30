@@ -16,7 +16,8 @@
 import glob, json, os, shutil, subprocess, sys, time
 T0 = time.time(); W = '/kaggle/temp/v3'; O = '/kaggle/working'; os.makedirs(W, exist_ok=True)
 SOURCE = os.environ.get('SOURCE', 'dl3dv:auto')
-NFRAMES, LONG = int(os.environ.get('NFRAMES', 300)), int(os.environ.get('LONG', 1280))   # what a T4 trains in ~1 h
+NF = os.environ.get('NFRAMES', '300'); NFRAMES, LONG = (int(NF) if NF.isdigit() else 300), int(os.environ.get('LONG', 1280))   # what a T4 trains in ~1 h
+PREP_ONLY = os.environ.get('PREP_ONLY') == '1'                                            # whole-house pre-check: frames, cameras, gate; no training
 FULL, PREVIEW = int(os.environ.get('STEPS', 30000)), int(os.environ.get('PREVIEW', 7000))
 CAP_FULL, CAP_PREVIEW = 1_500_000, 1_000_000                                               # MCMC splat budget
 # models to train, [name, steps, splat cap(, '2dgs')]; the first two run at once on the two T4s, the rest after. 'full' is the
@@ -115,12 +116,24 @@ def attached(name):
 # 1 frames
 import frames
 src = source(); say('source', src)
+VTOT = 0
+
+def plan_frames(v):
+    """NFRAMES=auto: run 4's density (411 frames from 7398 video frames, one per 18) for any video length."""
+    global NFRAMES, VTOT
+    import cv2; VTOT = int(cv2.VideoCapture(v).get(cv2.CAP_PROP_FRAME_COUNT))
+    if NF.startswith('auto') and VTOT > 0: NFRAMES = max(50, round(VTOT * 411 / 7398))
+    say('video frames', VTOT, '-> frames to extract', NFRAMES)
+
+t_fr = time.time()
+if not os.path.isdir(src): plan_frames(src)
 n = frames.from_images(src, f'{D}/images', NFRAMES, LONG) if os.path.isdir(src) else frames.from_video(src, f'{D}/images', NFRAMES, LONG)
 if n < 20 and not os.path.isdir(src):                                                       # e.g. 4K HEVC OpenCV cannot decode:
     say('only', n, 'frames decoded; converting the video with ffmpeg first')                 # H.264 at the training size
     sh(f'ffmpeg -v error -y -i "{src}" -vf "scale=\'if(gt(iw,ih),{LONG},-2)\':\'if(gt(iw,ih),-2,{LONG})\'" -c:v libx264 -crf 14 -preset veryfast {W}/video.mp4')
-    shutil.rmtree(f'{D}/images', ignore_errors=True); n = frames.from_video(f'{W}/video.mp4', f'{D}/images', NFRAMES, LONG)
+    plan_frames(f'{W}/video.mp4'); shutil.rmtree(f'{D}/images', ignore_errors=True); n = frames.from_video(f'{W}/video.mp4', f'{D}/images', NFRAMES, LONG)
 say(n, 'frames ->', f'{D}/images'); assert n >= 20, f'only {n} frames from {src}'
+t_sfm = time.time(); frames_min = round((t_sfm - t_fr) / 60, 1)
 
 # 2 cameras (same hloc venv that solved 574/578 frames of the 22 Oct video)
 E = f'{W}/sfmenv/bin/python'; P = f'--python {E}'
@@ -131,6 +144,7 @@ sh(f'pip -q install uv 2>&1 | tail -1; unset UV_SYSTEM_PYTHON UV_PYTHON PIP_TARG
 sh(f'{E} -c "import hloc, lightglue, pycolmap; print(\'hloc ok, pycolmap\', pycolmap.__version__)"', check=True)
 sh(f'cd {W} && {E} {F}/sfm_hloc.py {D}/images {W}/sfm 10 15 SIMPLE_RADIAL 2>&1 | grep -v "it/s" | grep -v "s/it" | tail -25')
 assert os.path.exists(f'{W}/sfm/sfm/images.bin'), 'camera solve failed: no COLMAP model (see the hloc log above)'
+sfm_min = round((time.time() - t_sfm) / 60, 1)
 rep = json.load(open(f'{W}/sfm/sfm_report.json')); shutil.copy(f'{W}/sfm/sfm_report.json', O); push(f'{O}/sfm_report.json', 'sfm_report.json')
 if rep['registered'] < 0.85 * rep['frames'] or rep['models'] > 1:
     say(f"WARNING: only {rep['registered']} of {rep['frames']} frames in the main model ({rep['models']} models): the capture broke "
@@ -168,6 +182,17 @@ if any(len(v) > 3 and 'geo' in v[3] for v in VARIANTS):                         
     sh('nvidia-smi --query-gpu=memory.used --format=csv')
 import torch
 NGPU = torch.cuda.device_count(); say('GPUs:', NGPU)
+
+if PREP_ONLY:                                    # plan of 30 Oct: prove a whole-house run fits before any splat training (final/precheck.py)
+    tim = dict(frames=n, frames_planned=NFRAMES, video_frames=VTOT, frames_min=frames_min, sfm_min=sfm_min,
+               hours_before_precheck=round((time.time() - T0) / 3600, 3))
+    sh(f"cd {EX} && PYTHONPATH={EX}:{F}:$PYTHONPATH python {F}/precheck.py {EX} {D} {W} {O} '{json.dumps(tim)}' {PP}")
+    shutil.copytree(f'{D}/sparse', f'{O}/sparse', dirs_exist_ok=True); shutil.copytree(f'{D}/images', f'{O}/images', dirs_exist_ok=True)
+    for b in glob.glob(f'{W}/bench_*.log'): shutil.copy(b, O)
+    for f in ('precheck.json', 'rooms.json', 'rooms.png', 'chunks.json'):
+        if os.path.exists(f'{O}/{f}'): push(f'{O}/{f}', f)
+    assert os.path.exists(f'{O}/precheck.json'), 'pre-check failed (see its log above)'
+    say('PRE-CHECK DONE', json.load(open(f'{O}/precheck.json')).get('decision')); raise SystemExit(0)
 
 def start(name, steps, cap, gpu, kind='gs'):
     res = f'{W}/{name}'

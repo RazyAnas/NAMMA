@@ -1,15 +1,13 @@
 {
- "n": 13,
+ "n": 14,
  "collect": false,
- "source": "dl3dv-video:389a460ca1995e0658e85fe8e6b520b4e88b370cd6710dfe728b1564bba31aee",
+ "source": "dl3dv-video:d961728dc5b54ceb70018b4d433041737a51957ebe9f90747097b777c0879f73",
  "env": {
-  "STEPS": "40000",
-  "NFRAMES": "900",
-  "LONG": "1920",
-  "VARIANTS": "[[\"full\", 40000, 3000000], [\"prior\", 40000, 3000000, \"prior\"]]"
+  "PREP_ONLY": "1",
+  "NFRAMES": "auto",
+  "LONG": "1440"
  },
- "scene": "DL3DV-Benchmark #44, Hotels-Motels: hotel room, the original phone video (DL3DV/DL3DV-ALL-video)",
+ "scene": "DL3DV-ALL-video 10K/d961728d...: whole house, 17 min, 8 GB (test video, non-commercial data, testing only)",
  "how": "change n (and source) and push to start a run: .github/workflows/namma-v3.yml -> gh_run.py",
- "note": "run 6: run 4's recipe (the owner's best) with more detail: the original video (900 sharpest frames instead of DL3DV's 411), 1920 px, 3M splats, 40k steps; A/B: full = run 4 exactly, prior = + room prior (run 5: same score, no needles). Mesh from full 3DGS (run 5: 74 % observed vs 59 % for 2DGS). Tour SH1 (the 27 Oct SH3 rebuild of run 4 gave dark walls, rejected).",
- "dl3dv_res": "images_2"
+ "note": "whole-house PRE-CHECK (plan of 30 Oct): frames at run 4's density, cameras, rooms -> chunks, 2 GPU benchmarks (one model on both T4s vs one chunk per T4), gate -> precheck.json. No splat training."
 }
