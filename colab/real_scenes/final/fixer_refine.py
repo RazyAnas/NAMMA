@@ -98,12 +98,14 @@ try:
 
     @torch.no_grad()
     def heldout():                                       # PSNR exposure-fair (per-image affine colour fit) + raw colour error (dE)
-        ps, de = [], []
+        ps, de, ss = [], [], []
         for i in ho:
             r = render(C[i], Kt, Wt, Ht)[0][..., :3].clamp(0, 1).reshape(-1, 3); g = imgs[i].to(dev).reshape(-1, 3)
             A = torch.cat([r, torch.ones_like(r[:, :1])], 1); M = torch.linalg.lstsq(A, g).solution
             ps.append(float(-10 * torch.log10(((A @ M).clamp(0, 1) - g).pow(2).mean()))); de.append(float((lab(r) - lab(g)).norm(dim=-1).mean()))
-        return dict(psnr=round(float(np.mean(ps)), 3), dE=round(float(np.mean(de)), 2))
+            y = lambda x: (x.reshape(Ht, Wt, 3) @ torch.tensor([0.299, 0.587, 0.114], device=dev))[..., None].repeat(1, 1, 3)   # brightness only:
+            ss.append(float(ssim(y((A @ M).clamp(0, 1)), y(g)).mean()))                                                      # detail, not colour
+        return dict(psnr=round(float(np.mean(ps)), 3), dE=round(float(np.mean(de)), 2), ssim_luma=round(float(np.mean(ss)), 4))
 
     REP['heldout_before'] = heldout(); say('held-out before', REP['heldout_before']); save()
 
