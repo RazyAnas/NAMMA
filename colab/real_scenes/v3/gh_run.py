@@ -72,7 +72,7 @@ else:
             tok = os.environ.get('HF_TOKEN'); vr = 'DL3DV/DL3DV-ALL-video'; api = HfApi(token=tok)
             sub = next(k for k in [f'{i}K' for i in range(1, 12)] if api.file_exists(vr, f'{k}/{scene}/video.mp4', repo_type='dataset'))
             os.makedirs('in', exist_ok=True)
-            shutil.copy(hf_hub_download(vr, f'{sub}/{scene}/video.mp4', repo_type='dataset', token=tok, local_dir='dl'), 'in/video.mp4')
+            shutil.move(hf_hub_download(vr, f'{sub}/{scene}/video.mp4', repo_type='dataset', token=tok, local_dir='dl'), 'in/video.mp4')   # move, not copy: an 8 GB video twice fills the runner
             subprocess.run('ffprobe -v error -show_entries stream=codec_name,width,height,r_frame_rate,nb_frames:format=duration '
                            '-of compact in/video.mp4', shell=True)
             json.dump(dict(title=slug, id=DS, licenses=[dict(name='other')]), open('in/dataset-metadata.json', 'w'))
@@ -106,7 +106,7 @@ else:
             if path_.endswith('.json'):                                                  # the app's parts -> one video
                 import inbox; m = inbox.assemble(repo_, path_, 'in/video', os.environ.get('HF_TOKEN')); ext = os.path.splitext(m.get('name', ''))[1] or '.mp4'
                 os.rename('in/video', f'in/video{ext}')
-            else: shutil.copy(hf_hub_download(repo_, path_, repo_type='dataset', token=os.environ.get('HF_TOKEN'), local_dir='dl'), f'in/video{ext}')
+            else: shutil.move(hf_hub_download(repo_, path_, repo_type='dataset', token=os.environ.get('HF_TOKEN'), local_dir='dl'), f'in/video{ext}')
             say('video', path_, f"{os.path.getsize(f'in/video{ext}') / 1e6:.0f} MB")
             json.dump(dict(title=slug, id=DS, licenses=[dict(name='other')]), open('in/dataset-metadata.json', 'w'))
             say(kg('datasets', 'create', '-p', 'in', '-q')[1][-300:]); kaggle_io.wait_ready(DS, say)
