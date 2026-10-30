@@ -1,5 +1,5 @@
 {
- "n": 8,
+ "n": 9,
  "run": "20261026-0327",
  "scene": "389a460ca1995e0658e85fe8e6b520b4e88b370cd6710dfe728b1564bba31aee",
  "dl3dv_res": "images_2",
@@ -12,6 +12,16 @@
   "bfloat16"
  ],
  "first_only": false,
- "how": "NVIDIA Fixer smoke test on run 4 (v3/fixer_gh.py -> Kaggle final/fixer_smoke.py): change n and push",
- "reuse": "fixer/20261030-0947"
+ "how": "mode refine: run 4 + Fixer views + video colours (v3/fixer_gh.py -> Kaggle final/fixer_refine.py); mode smoke: Fixer on renders only",
+ "reuse": "fixer/20261030-0947",
+ "mode": "refine",
+ "minutes": 240,
+ "rounds": 3,
+ "steps": 2000,
+ "lambda": 0.3,
+ "thr": 0.08,
+ "per_cam": 3,
+ "lr_scale": 0.3,
+ "train_long": 960,
+ "needle_ratio": 4
 }

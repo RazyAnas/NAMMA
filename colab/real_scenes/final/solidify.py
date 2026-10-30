@@ -135,6 +135,17 @@ def mat_to_quat(R):
     return q / np.linalg.norm(q, axis=1, keepdims=True)
 
 
+def unneedle(log_scales, inside, ratio=4.0):
+    """Needle splats (longest axis > ratio x the middle one) inside the room: longest axis capped at ratio x the middle.
+    Trained from one side only, they point along the line of sight: head-on (as filmed) they look the same, from the side they
+    were the streaks (owner's cupboard by the bathroom, 30 Oct). Walls/floors are thin discs (two long axes): untouched.
+    Returns new log scales and how many splats changed."""
+    s = np.asarray(log_scales, np.float64).copy(); o = np.argsort(s, 1); mid = np.take_along_axis(s, o[:, 1:2], 1)[:, 0]
+    big = o[:, 2]; cap = mid + np.log(ratio); sel = inside & (s[np.arange(len(s)), big] > cap)
+    s[np.nonzero(sel)[0], big[sel]] = cap[sel]
+    return s.astype(np.float32), int(sel.sum())
+
+
 def write(v, keep, path, sh1=None, quats=None, scales=None):
     from plyfile import PlyData, PlyElement
     o = v[keep].copy()

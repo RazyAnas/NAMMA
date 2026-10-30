@@ -57,6 +57,82 @@ ku = kaggle_io.account(cfg); ds, kid = f'{ku}/namma-fixer-in', f'{ku}/namma-fixe
 buf = io.BytesIO()
 with tarfile.open(fileobj=buf, mode='w:gz') as tf: tf.add(f'{FIN}/fixer_shim', arcname='.')
 jcfg = dict(cfg, shim=base64.b64encode(buf.getvalue()).decode())
+
+
+def lab(x):                                                                  # sRGB 0..1 [...,3] -> CIE Lab (D65)
+    x = np.where(x > 0.04045, ((x + 0.055) / 1.055) ** 2.4, x / 12.92) @ np.array([[0.4124, 0.3576, 0.1805], [0.2126, 0.7152, 0.0722], [0.0193, 0.1192, 0.9505]]).T
+    x = x / np.array([0.95047, 1.0, 1.08883]); f = np.where(x > 0.008856, np.cbrt(x), 7.787 * x + 16 / 116)
+    return np.stack([116 * f[..., 1] - 16, 500 * (f[..., 0] - f[..., 1]), 200 * (f[..., 1] - f[..., 2])], -1)
+
+
+def recolour(data, out_dir):
+    """Run 4's frames (DL3DV's images_2) -> the colours of the scene's original phone video (what run 6 learned from): match each
+    frame to its video frame (normalised grey thumbnails), fit one 2nd-order colour polynomial on blurred low-res pairs (clipped
+    pixels left out, worst 10 % residuals dropped twice), apply it to every frame. Returns the fit's numbers."""
+    import cv2
+    from huggingface_hub import hf_hub_download
+    vr = 'DL3DV/DL3DV-ALL-video'; sub = next(k for k in [f'{i}K' for i in range(1, 12)] if api.file_exists(vr, f"{k}/{cfg['scene']}/video.mp4", repo_type='dataset'))
+    vid = hf_hub_download(vr, f"{sub}/{cfg['scene']}/video.mp4", repo_type='dataset', token=tok, local_dir=f'{T}/vid')
+    cap = cv2.VideoCapture(vid); vth, vsm = [], []
+    while True:
+        ok, f = cap.read()
+        if not ok: break
+        f = cv2.cvtColor(f, cv2.COLOR_BGR2RGB); vsm.append(cv2.resize(f, (320, 180), interpolation=cv2.INTER_AREA))
+        g = cv2.cvtColor(cv2.resize(f, (64, 36), interpolation=cv2.INTER_AREA), cv2.COLOR_RGB2GRAY).astype(np.float32); vth.append((g - g.mean()) / (g.std() + 1e-6))
+    vth = np.stack(vth); say('video frames', len(vth))
+    fr = sorted(os.listdir(f'{data}/images')); pairs = []; feats = lambda x: np.c_[x, x ** 2, x[:, [0]] * x[:, [1]], x[:, [0]] * x[:, [2]], x[:, [1]] * x[:, [2]], np.ones(len(x))]
+    for n in fr:
+        im = np.asarray(Image.open(f'{data}/images/{n}').convert('RGB')); g = cv2.cvtColor(cv2.resize(im, (64, 36), interpolation=cv2.INTER_AREA), cv2.COLOR_RGB2GRAY).astype(np.float32)
+        g = (g - g.mean()) / (g.std() + 1e-6); j = int(np.argmin(((vth - g) ** 2).mean((1, 2))))
+        a = cv2.GaussianBlur(cv2.resize(im, (320, 180), interpolation=cv2.INTER_AREA), (0, 0), 2).reshape(-1, 3) / 255.; b = cv2.GaussianBlur(vsm[j], (0, 0), 2).reshape(-1, 3) / 255.
+        keep = (a.max(1) < 0.97) & (a.min(1) > 0.03) & (b.max(1) < 0.97) & (b.min(1) > 0.03); idx = np.random.default_rng(len(pairs)).choice(np.nonzero(keep)[0], min(1500, keep.sum()), replace=False)
+        pairs.append((a[idx], b[idx], float(((vth[j] - g) ** 2).mean())))
+    A = np.concatenate([p[0] for p in pairs]); B = np.concatenate([p[1] for p in pairs]); m = np.ones(len(A), bool)
+    for _ in range(3):
+        M = np.linalg.lstsq(feats(A[m]), B[m], rcond=None)[0]; res = np.abs(feats(A) @ M - B).max(1); m = res < np.quantile(res[m], 0.9)
+    de0 = float(np.linalg.norm(lab(A) - lab(B), axis=1).mean()); de1 = float(np.linalg.norm(lab(np.clip(feats(A) @ M, 0, 1)) - lab(B), axis=1).mean())
+    os.makedirs(f'{out_dir}/images', exist_ok=True)
+    for n in fr:
+        im = np.asarray(Image.open(f'{data}/images/{n}').convert('RGB')).reshape(-1, 3) / 255.
+        Image.fromarray((np.clip(feats(im) @ M, 0, 1) * 255 + 0.5).astype(np.uint8).reshape(*np.asarray(Image.open(f'{data}/images/{n}')).shape[:2], 3)).save(f'{out_dir}/images/{n}', quality=95)
+    os.remove(vid); return dict(video_frames=len(vth), match_err_median=round(float(np.median([p[2] for p in pairs])), 3), deltaE_before=round(de0, 2), deltaE_after=round(de1, 2))
+
+
+if cfg.get('mode') == 'refine':                                                   # plan of 30 Oct: Fixer views + video colours -> refined run 4
+    rc = f'{T}/data_rc'; shutil.copytree(f'{data}/sparse', f'{rc}/sparse', dirs_exist_ok=True)
+    rep = dict(recolour=recolour(data, rc)); say('recolour', rep['recolour'])
+    shutil.make_archive(f'{IN}/frames', 'zip', rc, 'images'); shutil.make_archive(f'{IN}/sparse', 'zip', data, 'sparse')
+    shutil.copy(f'{d}/{R}/solid/clean.ply', f'{IN}/clean.ply')
+    os.makedirs(f'{T}/before', exist_ok=True)
+    for f in os.listdir(IN):
+        if f.endswith('.png'): shutil.move(f'{IN}/{f}', f'{T}/before/{f}')
+    kaggle_io.push_dataset(IN, ds, 'namma-fixer-in', f'{R} refine {STAMP}', say)
+    kaggle_io.push_kernel(kid, 'namma-fixer', f'{FIN}/fixer_refine.py', dict(jcfg, mpu=mpu), [ds], say,
+                          first='import base64, gc, glob, io, json, os, shutil, subprocess, sys, time\n')
+    st = kaggle_io.wait_kernel(kid, OUT, say, minutes=int(cfg.get('minutes', 300)))
+    if os.path.exists(f'{OUT}/refine_report.json'): rep['kaggle'] = json.load(open(f'{OUT}/refine_report.json'))
+    if os.path.exists(f'{OUT}/refine.log'): print(''.join(open(f'{OUT}/refine.log', errors='ignore').readlines()[-80:]), flush=True)
+    ok = os.path.exists(f'{OUT}/refined.ply'); say('kaggle', st[-80:], json.dumps(rep)[:1500])
+    if ok:                                                                        # proof: real photos (video colours), off-path sheet
+        for name, dd in (('video_colours', rc), ('images_2_colours', data)):
+            subprocess.run(f'cd {EX} && PYTHONPATH={EX}:{FIN}:$PYTHONPATH python {FIN}/tour_fidelity.py {dd} {OUT}/fid_{name} {mpu} 640 12 '
+                           f'clean={d}/{R}/solid/clean.ply refined={OUT}/refined.ply 2>&1 | tail -5', shell=True, executable='/bin/bash')
+            if os.path.exists(f'{OUT}/fid_{name}/fidelity_report.json'): rep[f'fidelity_{name}'] = json.load(open(f'{OUT}/fid_{name}/fidelity_report.json'))
+        ref = cpu_render.load_ply(f'{OUT}/refined.ply'); tw = 512; th = round(H * tw / W); rows = []
+        for n, c in views:
+            a = Image.open(f'{T}/before/{n}.png')                                   # the cleaned model (smoke-test renders)
+            b = Image.fromarray((cpu_render.render(ref, c, K, W, H).clamp(0, 1) * 255).byte().numpy())
+            r = Image.new('RGB', (tw * 3, th)); r.paste(Image.fromarray(real_imgs[n]).resize((tw, th)) if n in real_imgs else Image.new('RGB', (tw, th)), (0, 0))
+            r.paste(a.resize((tw, th)), (tw, 0)); r.paste(b.resize((tw, th)), (2 * tw, 0)); rows.append(r); b.save(f'{OUT}/after_{n}.png')
+        sheet = Image.new('RGB', (tw * 3, th * len(rows)))
+        for i, r in enumerate(rows): sheet.paste(r, (0, i * th))
+        sheet.save(f'{OUT}/refine_sheet.jpg', quality=88)
+        api.upload_file(path_or_fileobj=f'{OUT}/refined.ply', path_in_repo=f'{R}/fixer/model.ply', repo_id=repo, repo_type='dataset')
+        os.remove(f'{OUT}/refined.ply')
+    json.dump(rep, open(f'{OUT}/refine_summary.json', 'w'), indent=1, default=float)
+    dst = f'fixer/{STAMP}-refine'; api.upload_folder(folder_path=OUT, path_in_repo=dst, repo_id=repo, repo_type='dataset')
+    say(f'results: hf://datasets/{repo}/{dst}'); sys.exit(0 if ok else 'refinement failed (see refine.log)')
+
 kaggle_io.push_dataset(IN, ds, 'namma-fixer-in', f'{R} {STAMP}', say)
 kaggle_io.push_kernel(kid, 'namma-fixer', f'{FIN}/fixer_smoke.py', jcfg, [ds], say)
 st = kaggle_io.wait_kernel(kid, OUT, say, minutes=int(cfg.get('minutes', 120)))
