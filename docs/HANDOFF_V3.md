@@ -408,3 +408,10 @@ The Claude cloud container **cannot reach kaggle.com** (proxy 403). GitHub's run
   centre room full. At most current + one neighbour full (~150 MB). Minimap shows rooms; tap = fly there.
 - Whole-house test video (DL3DV, 17 min, 8 GB): 10K/d961728dc5b54ceb70018b4d433041737a51957ebe9f90747097b777c0879f73.
   Big-video path checked (move not copy on the runner, runner disk freed). Owner: do not start it until per-room is built.
+- **Per-room step 1 done (30 Oct): `final/rooms.py`** (CPU, SfM only; check job `v3/rooms_gh.py` + `rooms.yml`, results
+  `namma-v3-out/rooms/20261030-1139/`). Fine split = watershed of free space between everything standing, then neighbours merged
+  while their cameras see the same points (co-visibility ratio > 0.2; measured doorways 0.00-0.15, pieces of one room 0.2-0.35).
+  Checked by eye on photos: Zip-NeRF Berlin -> 6 = living room, study, bedroom, kitchen, bedroom 2, hall+bathroom (bathroom
+  not split from the hall); run 4 hotel -> 2 (main 28 m2 + 9 m2 entry/bath); Alameda -> 7 (two low-camera pieces to check).
+  Failed attempts (kept in git): walls from all points (split single rooms), co-visibility communities alone (mixed rooms),
+  full-height walls only (white walls have too few SfM points).
