@@ -305,7 +305,7 @@ def build(run, tour, public, st='npx --no-install splat-transform'):
         for k, pct in enumerate(lv):
             c = f'{st} -w -g cpu {tour}/full_t.ply -d {pct}% {tour}/lod{k + 1}.ply'; print(c, flush=True); subprocess.run(c, shell=True, check=True)
             parts.append(f'{tour}/lod{k + 1}.ply -l {k + 1}')
-        c = f'{st} -w -g cpu ' + ' '.join(parts) + f' -H {sh} {out}'; print(c, flush=True); subprocess.run(c, shell=True, check=True)
+        c = f'{st} -w -g cpu ' + ' '.join(parts) + f" -H {sh} -i {os.environ.get('TOUR_SH_ITER', '5')} {out}"   # SH clustering: >55 min at 10 iterations on a 4-core CPU; print(c, flush=True); subprocess.run(c, shell=True, check=True)
         for f in [f'{tour}/full_t.ply'] + [f'{tour}/lod{k + 1}.ply' for k in range(len(lv))]: os.remove(f)
         subprocess.run(f'{st} --info {out} | head -20', shell=True)
     boot = dict(contentUrl='./' + os.path.relpath(out, tour), settingsUrl='./settings.json')
