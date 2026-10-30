@@ -1,6 +1,6 @@
 {
  "run": "20261026-0327",
- "rebuild": true,
+ "rebuild": false,
  "model": "fixer/model.ply",
  "sh": 3,
  "format": "lod",
@@ -18,6 +18,8 @@
   "20261027-1849-world-03dd8b50eb66892b7e3b",
   "20261027-1849-world-b16e6e0adb2f8007740e"
  ],
- "note": "run 4 refined v2 (Fixer views + phone-video colours, fixer/20261030-1339-refine) as a streamed tour with full load; new link tour_refined_url.txt",
- "n": 21
+ "note": "page-only update of the refined v2 tour (same link): device quality defaults + 3D view hidden until loaded",
+ "n": 22,
+ "head": true,
+ "folder": "20261026-0327-75b48f1185fc24a35eca"
 }
