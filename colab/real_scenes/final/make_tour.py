@@ -271,10 +271,15 @@ def clean(run, tour, out):
 def build(run, tour, public, st='npx --no-install splat-transform'):
     """plan.json + settings.json (from plan) + the model -> a static tour folder."""
     pl = json.load(open(f'{tour}/plan.json')); E, t, b, s = pl['rotate'], pl['translate'], pl['box'], pl.get('scale', 1.0)
-    # smears out: splats long in ONE direction (longest > 8x middle axis) that are also big (> 1 % of the room) are the spiky
-    # streaks seen off the walk (run 3: 16 % needles); thin flat discs on surfaces stay
+    # The tour must show what the trained model.ply shows (owner, 30 Oct: floor, ceiling and wall patches were missing, black
+    # patches). Two of our own steps deleted real structure, so both are now off by default:
+    #  - the smear filter (big elongated splats are also how plain walls/ceilings are made): TOUR_SMEAR=1 to use it again;
+    #  - the room-box crop (-B): the SfM box ended below the ceiling and cut floor/walls, and it also deleted what lies beyond
+    #    the walls (a mirror is a second room behind it, a window shows the outside): TOUR_CROP=1 to use it again.
+    # Only invalid splats go (-N). TOUR_FLOATERS=1 adds splat-transform's voxel floater filter (-F).
     from plyfile import PlyData, PlyElement
-    v = PlyData.read(f'{run}/full/model.ply')['vertex'].data; bad = smear_mask(v, b, s)
+    v = PlyData.read(f'{run}/full/model.ply')['vertex'].data
+    bad = smear_mask(v, b, s) if os.environ.get('TOUR_SMEAR') == '1' else np.zeros(len(v), bool)
     PlyData([PlyElement.describe(v[~bad], 'vertex')]).write(f'{tour}/clean.ply'); print(f'smears removed: {bad.sum()} of {len(v)}', flush=True)
     # colour: SOG's spherical-harmonics clustering takes hours on a CPU (150k splats: SH1 208 s, SH3 > 300 s, SH0 2 s), so the
     # tour is PlayCanvas compressed PLY with SH band 1 (view-dependent colour). Measured on run 4's held-out frames
@@ -284,7 +289,8 @@ def build(run, tour, public, st='npx --no-install splat-transform'):
     fmt = os.environ.get('TOUR_FORMAT', 'cply')
     out, sh = (f'{tour}/scene.compressed.ply', int(os.environ.get('TOUR_SH', 1))) if fmt == 'cply' else (f'{tour}/scene.sog', 0)
     cmd = (f'{st} -w -g cpu {tour}/clean.ply -H {sh} -r {E[0]:.6f},{E[1]:.6f},{E[2]:.6f} -t {t[0]:.6f},{t[1]:.6f},{t[2]:.6f} -s {s:.6f} '
-           f'-B {",".join(f"{x:.4f}" for x in b)} -N {out}')
+           + (f'-B {",".join(f"{x:.4f}" for x in b)} ' if os.environ.get('TOUR_CROP') == '1' else '')
+           + ('-F ' if os.environ.get('TOUR_FLOATERS') == '1' else '') + f'-N {out}')
     print(cmd, flush=True); subprocess.run(cmd, shell=True, check=True); os.remove(f'{tour}/clean.ply')
     boot = dict(contentUrl='./' + os.path.basename(out), settingsUrl='./settings.json')
     # collision for walk mode: the room mesh (mesh_tsdf.py, room coordinates before scaling) if there is one, else the room box
@@ -295,6 +301,9 @@ def build(run, tour, public, st='npx --no-install splat-transform'):
     assert 'WALK_MIN_HORIZONTAL_RANGE = 5' in js; open(f'{tour}/index.js', 'w').write(js.replace('WALK_MIN_HORIZONTAL_RANGE = 5', 'WALK_MIN_HORIZONTAL_RANGE = 2'))
     html = open(f'{public}/index.html').read(); a = html.index('id="sse-bootstrap">') + len('id="sse-bootstrap">'); c = html.index('</script>', a)
     html = (html[:a] + '\n' + json.dumps(boot) + '\n        ' + html[c:]).replace('<title>SuperSplat Viewer</title>', '<title>NAMMA 3D tour</title>')
+    nsp = len(v) - int(bad.sum()); bud = max(4, int(np.ceil(nsp / 1e6)) + 1)                 # the viewer's splat budget, millions
+    html = html.replace('<head>', '<head>\n    <script>(function(){var q=new URLSearchParams(location.search);if(!q.has("budget"))q.set("budget","%d");'
+                        'if(!q.has("hpr"))q.set("hpr","1");history.replaceState(null,"",location.pathname+"?"+q.toString()+location.hash);})();</script>' % bud, 1)
     html = html.replace("createViewer({ container: document.body, settings, ...options });",
                         "window.viewer = await createViewer({ container: document.body, settings, ...options });")
     if os.path.exists(f'{tour}/overlay.json'): html = html.replace('</body>', OVERLAY + '\n    </body>')
