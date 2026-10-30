@@ -29,6 +29,7 @@ def read_json(api, repo, path):
 def set_status(job, stage, **kw):
     """Update <job>/status.json (keeps the stage history). kw: run, link, reason, note."""
     api, repo = hub(); st = read_json(api, repo, f'{job}/status.json'); now = time.strftime('%Y-%m-%dT%H:%M:%SZ', time.gmtime())
+    if stage != 'failed': st.pop('reason', None)                                     # an old failure reason must not outlive a retry
     st.update(kw, stage=stage, updated=now); st.setdefault('history', []).append([now, stage])
     api.upload_file(path_or_fileobj=json.dumps(st, indent=1).encode(), path_in_repo=f'{job}/status.json', repo_id=repo,
                     repo_type='dataset', commit_message=f'{job}: {stage}')
