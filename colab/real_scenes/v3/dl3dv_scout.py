@@ -7,7 +7,7 @@ import imageio_ffmpeg
 from PIL import Image, ImageDraw
 V = os.path.dirname(os.path.abspath(__file__)); cfg = json.load(open(f'{V}/SCOUT.json'))
 if not cfg.get('n'): sys.exit(0)
-tok = os.environ['HF_TOKEN']; FF = imageio_ffmpeg.get_ffmpeg_exe(); OUT = 'scout'; os.makedirs(OUT, exist_ok=True)
+tok = os.environ['HF_TOKEN']; FF = 'ffmpeg' if subprocess.run('command -v ffmpeg', shell=True).returncode == 0 else imageio_ffmpeg.get_ffmpeg_exe(); OUT = 'scout'; os.makedirs(OUT, exist_ok=True)
 rows = list(csv.DictReader(io.StringIO(urllib.request.urlopen('https://raw.githubusercontent.com/DL3DV-10K/Dataset/main/cache/DL3DV-valid.csv').read().decode())))
 rows = sorted([r for r in rows if r['duration'] and r['batch'] != 'problem' and float(r['duration']) >= cfg.get('min_s', 150)], key=lambda r: -float(r['duration']))
 print(len(rows), 'videos', flush=True); W, H = 240, 135; found = []
@@ -15,13 +15,14 @@ print(len(rows), 'videos', flush=True); W, H = 240, 135; found = []
 def signed(url):                                         # the Hub answers with a redirect to a signed CDN URL: seek on that, no auth header
     import requests
     r = requests.get(url, headers={'Authorization': f'Bearer {tok}', 'Range': 'bytes=0-0'}, timeout=60); r.close()
+    if len(ERR) < 2: print('url', r.status_code, r.url.split('?')[0][:80], flush=True)
     return r.url                                          # final URL after redirects (requests drops the auth header off-host)
 
 ERR = []
 def grab(url, t):
-    r = subprocess.run([FF, '-loglevel', 'error', '-ss', f'{t:.1f}', '-i', url, '-frames:v', '1',
+    r = subprocess.run([FF, '-nostdin', '-loglevel', 'warning', '-ss', f'{t:.1f}', '-i', url, '-frames:v', '1',
                         '-vf', f'scale={W}:{H}', '-f', 'image2pipe', '-vcodec', 'png', '-'], capture_output=True, timeout=120)
-    if not r.stdout and len(ERR) < 5: ERR.append(r.stderr.decode(errors='ignore')[-300:]); print('ffmpeg:', ERR[-1], flush=True)
+    if not r.stdout and len(ERR) < 5: ERR.append(f'rc {r.returncode}: ' + r.stderr.decode(errors='ignore')[-400:]); print('ffmpeg:', ERR[-1], flush=True)
     return Image.open(io.BytesIO(r.stdout)).convert('RGB') if r.stdout else Image.new('RGB', (W, H), (60, 0, 0))
 
 sheet, n = None, 0
