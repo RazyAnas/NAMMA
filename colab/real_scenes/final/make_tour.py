@@ -9,7 +9,7 @@ while cameras/hotspots are written in room coordinates R p + t (measured with a 
 Two steps (the camera reader needs gsplat's examples + torch, the converter needs Node):
   python make_tour.py plan  <examples dir> <data dir (images/ + sparse/0)> <run out dir (full/, mesh/)> <tour dir>
   python make_tour.py build <run out dir> <tour dir> <viewer public dir> [splat-transform command]"""
-import json, os, shutil, subprocess, sys, numpy as np
+import json, os, re, shutil, subprocess, sys, numpy as np
 F = np.diag([-1., -1, 1])
 
 # Floor plan minimap (live position dot, clickable spots) + strip of real-photo thumbnails; clicking goes to that spot.
@@ -268,6 +268,22 @@ def clean(run, tour, out):
     bad = smear_mask(v, pl['box'], pl.get('scale', 1.0)); PlyData([PlyElement.describe(v[~bad], 'vertex')]).write(out)
     print(f'smears removed: {bad.sum()} of {len(v)}', flush=True)
 
+def head(html, fmt, bud=4):
+    """The viewer start options, put first in <head>. Also used to update a published tour's page (tour_publish.py head)."""
+    html = re.sub(r'\n    <script>\(function\(\)\{var q=new URLSearchParams.*?</script>', '', html, count=1)   # an earlier version
+    # streamed LOD: no fixed budget (the viewer sizes it for the device), but 'fullload': the loading screen stays until full
+    # detail is in, so nobody sees a blurry room first (owner, 30 Oct: "load full room at once ... else people think it's bad")
+    pre = 'if(!q.has("fullload"))q.set("fullload","1");' if fmt == 'lod' else 'if(!q.has("budget"))q.set("budget","%d");' % bud
+    # Quality slider defaults per device. The viewer's own phone default is Performance (1 M splats at half resolution: blurry).
+    # Laptop: High (8 M splats), phone: Default (2 M, full resolution); Performance Mode off. Written once (marker key), so a
+    # visitor's own slider choice is kept afterwards.
+    pre += ('try{if(localStorage.getItem("nammaQ")!=="1"){var m=/Mobi|Android|iPhone|iPad/.test(navigator.userAgent)||'
+            '(navigator.maxTouchPoints>1&&/Macintosh/.test(navigator.userAgent));localStorage.setItem("quality",m?"default":"high");'
+            'localStorage.setItem("performanceMode","false");localStorage.setItem("nammaQ","1");}}catch(e){}')
+    return html.replace('<head>', '<head>\n    <script>(function(){var q=new URLSearchParams(location.search);' + pre +
+                        'if(!q.has("hpr"))q.set("hpr","1");history.replaceState(null,"",location.pathname+"?"+q.toString()+location.hash);})();</script>', 1)
+
+
 def build(run, tour, public, st='npx --no-install splat-transform'):
     """plan.json + settings.json (from plan) + the model -> a static tour folder."""
     pl = json.load(open(f'{tour}/plan.json')); E, t, b, s = pl['rotate'], pl['translate'], pl['box'], pl.get('scale', 1.0)
@@ -320,11 +336,7 @@ def build(run, tour, public, st='npx --no-install splat-transform'):
     html = open(f'{public}/index.html').read(); a = html.index('id="sse-bootstrap">') + len('id="sse-bootstrap">'); c = html.index('</script>', a)
     html = (html[:a] + '\n' + json.dumps(boot) + '\n        ' + html[c:]).replace('<title>SuperSplat Viewer</title>', '<title>NAMMA 3D tour</title>')
     nsp = len(v) - int(bad.sum()); bud = max(4, int(np.ceil(nsp / 1e6)) + 1)                 # the viewer's splat budget, millions
-    # streamed LOD: no fixed budget (the viewer sizes it for the device), but 'fullload': the loading screen stays until full
-    # detail is in, so nobody sees a blurry room first (owner, 30 Oct: "load full room at once ... else people think it's bad")
-    pre = 'if(!q.has("fullload"))q.set("fullload","1");' if fmt == 'lod' else 'if(!q.has("budget"))q.set("budget","%d");' % bud
-    html = html.replace('<head>', '<head>\n    <script>(function(){var q=new URLSearchParams(location.search);' + pre +
-                        'if(!q.has("hpr"))q.set("hpr","1");history.replaceState(null,"",location.pathname+"?"+q.toString()+location.hash);})();</script>', 1)
+    html = head(html, fmt, bud)
     html = html.replace("createViewer({ container: document.body, settings, ...options });",
                         "window.viewer = await createViewer({ container: document.body, settings, ...options });")
     if os.path.exists(f'{tour}/overlay.json'): html = html.replace('</body>', OVERLAY + '\n    </body>')

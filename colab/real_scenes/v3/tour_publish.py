@@ -6,7 +6,8 @@ Used by gh_run.py after a run, and on its own (.github/workflows/tour-publish.ym
   python tour_publish.py <run, e.g. 20261026-0309 | world/<time> | flashworld/<time>> [floorplan] [collision]   (HF_TOKEN in the environment; tour taken from the results
   dataset; 'floorplan': redraw floorplan.png from the run's model first (final/make_tour.py floorplan) and save it back there;
   'collision': rebuild collision.glb = room box + simplified mesh furniture; 'rebuild': convert the run's model.ply into the tour's
-  scene file again with the current make_tour.build settings, e.g. all SH bands)"""
+  scene file again with the current make_tour.build settings, e.g. all SH bands; 'head': only rewrite the stored tour's page
+  (<run>/TOUR_DST) with the current viewer start options, make_tour.head)"""
 import os, re, secrets, shutil, sys
 
 
@@ -76,12 +77,14 @@ if __name__ == '__main__':
             publish(api, user, repo, run.split('/')[-1] + '-world', pg, url_path=f'{run}/{"tour_url.txt" if k == 0 else f"tour{k + 1}_url.txt"}')
             print('published', os.path.basename(pg), 'as', 'tour_url.txt' if k == 0 else f'tour{k + 1}_url.txt', flush=True)
         sys.exit(0)
-    fp, co, rb = 'floorplan' in sys.argv[2:], 'collision' in sys.argv[2:], 'rebuild' in sys.argv[2:]
+    fp, co, rb, hd = ('floorplan' in sys.argv[2:], 'collision' in sys.argv[2:], 'rebuild' in sys.argv[2:],
+                      'head' in sys.argv[2:])
     extra = ([f'{run}/full/{x}' for x in ('model.ply', 'level.json', 'nav.json')] if fp or rb else []) + ([f'{run}/mesh/mesh.glb'] if co or rb else [])
     if rb and os.environ.get('TOUR_MODEL'): extra.append(f"{run}/{os.environ['TOUR_MODEL']}")
-    d = snapshot_download(repo, repo_type='dataset', allow_patterns=[f'{run}/tour/*', f'{run}/tour/**'] + extra, local_dir='pub', token=tok)
-    tour = os.path.join(d, run, 'tour'); assert os.path.exists(f'{tour}/index.html'), f'no built tour in {repo}/{run}/tour'
-    if fp or co or rb: sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', 'final')); import make_tour
+    src = os.environ.get('TOUR_DST', 'tour') if hd and not rb else 'tour'                # 'head': the stored tour it updates
+    d = snapshot_download(repo, repo_type='dataset', allow_patterns=[f'{run}/{src}/*', f'{run}/{src}/**'] + extra, local_dir='pub', token=tok)
+    tour = os.path.join(d, run, src); assert os.path.exists(f'{tour}/index.html'), f'no built tour in {repo}/{run}/{src}'
+    if fp or co or rb or hd: sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', 'final')); import make_tour
     if fp:
         print('floor plan redrawn:', make_tour.floorplan(os.path.join(d, run), tour), flush=True)
         api.upload_file(path_or_fileobj=f'{tour}/floorplan.png', path_in_repo=f'{run}/tour/floorplan.png', repo_id=repo, repo_type='dataset')
@@ -98,6 +101,11 @@ if __name__ == '__main__':
         print('rebuilt:', make_tour.build(os.path.join(d, run), tour, f'{W}/node_modules/@playcanvas/supersplat-viewer/public',
                                           f'{W}/node_modules/.bin/splat-transform'), flush=True)
         api.upload_folder(folder_path=tour, path_in_repo=f"{run}/{os.environ.get('TOUR_DST', 'tour')}", repo_id=repo, repo_type='dataset')
+    if hd and not rb:                                                                     # page only: current viewer start options
+        h = open(f'{tour}/index.html').read(); b = re.search(r'q\.set\("budget","(\d+)"\)', h)
+        open(f'{tour}/index.html', 'w').write(make_tour.head(h, 'lod' if os.path.isdir(f'{tour}/lod') else 'sog', int(b.group(1)) if b else 4))
+        print('page start options updated', flush=True)
+        api.upload_file(path_or_fileobj=f'{tour}/index.html', path_in_repo=f'{run}/{src}/index.html', repo_id=repo, repo_type='dataset')
     publish(api, user, repo, run, tour, url_path=f"{run}/{os.environ.get('TOUR_URL_NAME', 'tour_url.txt')}")   # a new name keeps the old link
     if os.environ.get('INBOX_JOB'):                                                       # finish an app job whose publish failed
         import inbox; inbox.set_status(os.environ['INBOX_JOB'], 'done', run=run, link=open('tour_url.txt').read().strip())
