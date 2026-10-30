@@ -303,7 +303,7 @@ def build(run, tour, public, st='npx --no-install splat-transform'):
     if fmt == 'lod':                                                       # levels: 100 % (LOD 0), then decimated copies
         lv = [x for x in os.environ.get('TOUR_LOD_LEVELS', '30,10,3').split(',') if x]; parts = [f'{tour}/full_t.ply -l 0']
         for k, pct in enumerate(lv):
-            c = f'{st} -w {tour}/full_t.ply -d {pct}% {tour}/lod{k + 1}.ply'; print(c, flush=True); subprocess.run(c, shell=True, check=True)
+            c = f'{st} -w -g cpu {tour}/full_t.ply -d {pct}% {tour}/lod{k + 1}.ply'; print(c, flush=True); subprocess.run(c, shell=True, check=True)
             parts.append(f'{tour}/lod{k + 1}.ply -l {k + 1}')
         c = f'{st} -w -g cpu ' + ' '.join(parts) + f' -H {sh} {out}'; print(c, flush=True); subprocess.run(c, shell=True, check=True)
         for f in [f'{tour}/full_t.ply'] + [f'{tour}/lod{k + 1}.ply' for k in range(len(lv))]: os.remove(f)
