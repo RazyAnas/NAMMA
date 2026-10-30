@@ -35,13 +35,14 @@ try:
             if not (e.name or '').split('.')[0] in STUB: raise
             say('stand-in for', e.name); sys.modules[e.name] = MagicMock(__path__=[], __spec__=None)
             for k in [k for k in sys.modules if k.startswith(('cosmos_predict2', 'imaginaire'))]: sys.modules.pop(k)
-    orig = t2i.Text2ImagePipeline.from_config.__func__
+    FC = t2i.Text2ImagePipeline.__dict__['from_config']; orig = FC.__func__                    # a staticmethod or classmethod
     torch.set_grad_enabled(False)
     ins = sorted(glob.glob('/kaggle/input/*/*.png')); say(len(ins), 'views')
     for prec in cfg.get('precisions', ['bfloat16', 'float16', 'float32']):
         DT = getattr(torch, prec)
         try:
-            t2i.Text2ImagePipeline.from_config = classmethod(lambda cls, *a, **k: orig(cls, *a, **{**k, 'torch_dtype': DT}))
+            t2i.Text2ImagePipeline.from_config = (staticmethod(lambda *a, **k: orig(*a, **{**k, 'torch_dtype': DT})) if isinstance(FC, staticmethod)
+                                                  else classmethod(lambda cls, *a, **k: orig(cls, *a, **{**k, 'torch_dtype': DT})))
             import pix2pix_turbo_nocond_cosmos_base_faster_tokenizer as fx
             fx.config.precision = prec
             m = fx.Pix2Pix_Turbo(pretrained_path=f'{X}/models/pretrained/pretrained_fixer.pkl', timestep=int(cfg.get('timestep', 250)),
