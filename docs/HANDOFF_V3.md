@@ -397,3 +397,14 @@ The Claude cloud container **cannot reach kaggle.com** (proxy 403). GitHub's run
     - Likely cause: 40k steps over 787 training views is about 51 steps per view, vs about 83 in run 4. The frames also come from the compressed video, not DL3DV's extracted frames.
     - So the pipeline's `best` preset is back to run 4's recipe exactly: 420 frames, 1440 px, 30k steps, 1.5M splats.
     - The run-4 SH1 tour (the excellent one) is still published: folder `20261026-0327-4d10a1bca1242609fa9a` in the Space.
+
+## Per-room whole-house viewer (agreed with the owner, 30 Oct; not built yet)
+- One shared camera map for the whole house; walk split into rooms (camera path + floor-plan doorways); one model per room,
+  two rooms at a time on Kaggle's 2 T4s.
+- Each room ships a full model (~40-80 MB) and a light preview (~10 % splats, 3-8 MB). The tour **opens inside the starting room**
+  (full), previews of all other rooms load at once; ~1.5 m before a doorway the next room's full model prefetches; crossing the
+  doorway fades preview -> full in ~0.5 s (blurry-then-sharp only if the download is late); the left room drops back to its
+  preview after a few seconds (no flicker in doorways). Rooms overlap ~0.5 m at doors and blend. Drone/overview: all previews,
+  centre room full. At most current + one neighbour full (~150 MB). Minimap shows rooms; tap = fly there.
+- Whole-house test video (DL3DV, 17 min, 8 GB): 10K/d961728dc5b54ceb70018b4d433041737a51957ebe9f90747097b777c0879f73.
+  Big-video path checked (move not copy on the runner, runner disk freed). Owner: do not start it until per-room is built.
