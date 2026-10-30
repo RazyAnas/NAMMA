@@ -99,14 +99,17 @@ def recolour(data, out_dir):
 
 
 if cfg.get('mode') == 'refine':                                                   # plan of 30 Oct: Fixer views + video colours -> refined run 4
-    rc = f'{T}/data_rc'; shutil.copytree(f'{data}/sparse', f'{rc}/sparse', dirs_exist_ok=True)
-    rep = dict(recolour=recolour(data, rc)); say('recolour', rep['recolour'])
-    shutil.make_archive(f'{IN}/frames', 'zip', rc, 'images'); shutil.make_archive(f'{IN}/sparse', 'zip', data, 'sparse')
-    shutil.copy(f'{d}/{R}/solid/clean.ply', f'{IN}/clean.ply')
-    os.makedirs(f'{T}/before', exist_ok=True)
+    rc = f'{T}/data_rc'; os.makedirs(f'{T}/before', exist_ok=True)
     for f in os.listdir(IN):
         if f.endswith('.png'): shutil.move(f'{IN}/{f}', f'{T}/before/{f}')
-    kaggle_io.push_dataset(IN, ds, 'namma-fixer-in', f'{R} refine {STAMP}', say)
+    if cfg.get('reuse_dataset'):                                                  # namma-fixer-in already holds this run's inputs
+        rep = dict(recolour='reused (namma-fixer-in as uploaded before)'); rc = None
+    else:
+        shutil.copytree(f'{data}/sparse', f'{rc}/sparse', dirs_exist_ok=True)
+        rep = dict(recolour=recolour(data, rc)); say('recolour', rep['recolour'])
+        shutil.make_archive(f'{IN}/frames', 'zip', rc, 'images'); shutil.make_archive(f'{IN}/sparse', 'zip', data, 'sparse')
+        shutil.copy(f'{d}/{R}/solid/clean.ply', f'{IN}/clean.ply')
+        kaggle_io.push_dataset(IN, ds, 'namma-fixer-in', f'{R} refine {STAMP}', say)
     kaggle_io.push_kernel(kid, 'namma-fixer', f'{FIN}/fixer_refine.py', dict(jcfg, mpu=mpu), [ds], say,
                           first='import base64, gc, glob, io, json, os, shutil, subprocess, sys, time\n')
     st = kaggle_io.wait_kernel(kid, OUT, say, minutes=int(cfg.get('minutes', 300)))
@@ -114,7 +117,7 @@ if cfg.get('mode') == 'refine':                                                 
     if os.path.exists(f'{OUT}/refine.log'): print(''.join(open(f'{OUT}/refine.log', errors='ignore').readlines()[-80:]), flush=True)
     ok = os.path.exists(f'{OUT}/refined.ply'); say('kaggle', st[-80:], json.dumps(rep)[:1500])
     if ok:                                                                        # proof: real photos (video colours), off-path sheet
-        for name, dd in (('video_colours', rc), ('images_2_colours', data)):
+        for name, dd in [x for x in (('video_colours', rc), ('images_2_colours', data)) if x[1]]:
             subprocess.run(f'cd {EX} && PYTHONPATH={EX}:{FIN}:$PYTHONPATH python {FIN}/tour_fidelity.py {dd} {OUT}/fid_{name} {mpu} 640 12 '
                            f'clean={d}/{R}/solid/clean.ply refined={OUT}/refined.ply 2>&1 | tail -5', shell=True, executable='/bin/bash')
             if os.path.exists(f'{OUT}/fid_{name}/fidelity_report.json'): rep[f'fidelity_{name}'] = json.load(open(f'{OUT}/fid_{name}/fidelity_report.json'))

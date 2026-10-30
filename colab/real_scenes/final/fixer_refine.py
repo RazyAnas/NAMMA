@@ -41,7 +41,15 @@ try:
     import solidify
     # data: the run's sparse + its frames (re-coloured to the video), same names/order as the run
     inp = lambda pat: sorted(glob.glob(f'/kaggle/input/**/{pat}', recursive=True))
-    D = f'{W}/data'; shutil.unpack_archive(inp('sparse.zip')[0], D); shutil.unpack_archive(inp('frames.zip')[0], D)
+    D = f'{W}/data'; os.makedirs(D, exist_ok=True)                  # Kaggle unzips uploaded zips into folders: take either form
+    if inp('sparse.zip'): shutil.unpack_archive(inp('sparse.zip')[0], D)
+    else: shutil.copytree(os.path.dirname(os.path.dirname(inp('cameras.bin')[0])), f'{D}/sparse')
+    if inp('frames.zip'): shutil.unpack_archive(inp('frames.zip')[0], D)
+    else:
+        cnt = {}
+        for f in inp('*.jpg'): cnt[os.path.dirname(f)] = cnt.get(os.path.dirname(f), 0) + 1
+        shutil.copytree(max(cnt, key=cnt.get), f'{D}/images')
+    say('data', os.listdir(f'{D}/sparse'), len(os.listdir(f'{D}/images')), 'frames')
     for m in [m for m in sys.modules if m.split('.')[0] == 'datasets']: del sys.modules[m]
     sys.path.insert(0, EX); from datasets.colmap import Parser
     P = Parser(D, factor=1, normalize=True, test_every=8); C = P.camtoworlds; N = len(C)
@@ -83,14 +91,19 @@ try:
         va, vb, cv = f(a * a) - ma ** 2, f(b * b) - mb ** 2, f(a * b) - ma * mb
         return (((2 * ma * mb + 1e-4) * (2 * cv + 9e-4)) / ((ma ** 2 + mb ** 2 + 1e-4) * (va + vb + 9e-4)))[0].mean(0)
 
+    def lab(x):                                                              # sRGB 0..1 -> CIE Lab (D65), torch
+        x = torch.where(x > 0.04045, ((x + 0.055) / 1.055) ** 2.4, x / 12.92) @ torch.tensor([[0.4124, 0.3576, 0.1805], [0.2126, 0.7152, 0.0722], [0.0193, 0.1192, 0.9505]], device=x.device).T
+        x = x / torch.tensor([0.95047, 1.0, 1.08883], device=x.device); f = torch.where(x > 0.008856, x.clamp(min=1e-9) ** (1 / 3), 7.787 * x + 16 / 116)
+        return torch.stack([116 * f[..., 1] - 16, 500 * (f[..., 0] - f[..., 1]), 200 * (f[..., 1] - f[..., 2])], -1)
+
     @torch.no_grad()
-    def heldout():                                                           # exposure-fair: per-image affine colour fit
-        ps = []
+    def heldout():                                       # PSNR exposure-fair (per-image affine colour fit) + raw colour error (dE)
+        ps, de = [], []
         for i in ho:
             r = render(C[i], Kt, Wt, Ht)[0][..., :3].clamp(0, 1).reshape(-1, 3); g = imgs[i].to(dev).reshape(-1, 3)
             A = torch.cat([r, torch.ones_like(r[:, :1])], 1); M = torch.linalg.lstsq(A, g).solution
-            ps.append(float(-10 * torch.log10(((A @ M).clamp(0, 1) - g).pow(2).mean())))
-        return round(float(np.mean(ps)), 3)
+            ps.append(float(-10 * torch.log10(((A @ M).clamp(0, 1) - g).pow(2).mean()))); de.append(float((lab(r) - lab(g)).norm(dim=-1).mean()))
+        return dict(psnr=round(float(np.mean(ps)), 3), dE=round(float(np.mean(de)), 2))
 
     REP['heldout_before'] = heldout(); say('held-out before', REP['heldout_before']); save()
 
