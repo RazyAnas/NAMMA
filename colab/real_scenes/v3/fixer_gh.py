@@ -74,7 +74,7 @@ if fx:                                                                          
         r.paste(a, (tw, 0)); r.paste(b, (2 * tw, 0)); rows.append(r)
         if n in real_imgs:                                                                 # does Fixer move a filmed view away from the photo?
             ref = real_imgs[n].astype(np.float32); f = lambda im: 10 * np.log10(255 ** 2 / max(((np.asarray(im.resize((W, H)), np.float32) - ref) ** 2).mean(), 1e-6))
-            rep.setdefault('held_psnr', {})[n] = dict(render=round(f(Image.open(f'{IN}/{n}.png')), 2), fixed=round(f(Image.open(f'{fx}/{n}.png')), 2))
+            rep.setdefault('held_psnr', {})[n] = dict(render=round(float(f(Image.open(f'{IN}/{n}.png'))), 2), fixed=round(float(f(Image.open(f'{fx}/{n}.png'))), 2))
     sheet = Image.new('RGB', (tw * 3, th * len(rows)))
     for i, r in enumerate(rows): sheet.paste(r, (0, i * th))
     sheet.save(f'{OUT}/fixer_sheet.jpg', quality=88); json.dump(rep, open(f'{OUT}/fixer_report.json', 'w'), indent=1)
