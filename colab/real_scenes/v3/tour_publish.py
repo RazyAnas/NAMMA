@@ -14,9 +14,9 @@ def prune(api, sp, results_repo, url_path, say=print):
     """The free Space holds 1 GB (30 Oct: full, publish refused). Keep only the folders some tour*_url.txt in the results dataset
     still points to (the links handed out), except the one about to be replaced, then squash the history so the space is freed."""
     from huggingface_hub import CommitOperationDelete, hf_hub_download
-    keep = set()
-    for f in api.list_repo_files(results_repo, repo_type='dataset'):
-        if re.search(r'(^|/)tour\d*_url\.txt$', f) and f != url_path:
+    keep = set(x for x in os.environ.get('TOUR_KEEP', '').split(',') if x)               # explicit list (PUBLISH.json "keep")
+    for f in ([] if keep else api.list_repo_files(results_repo, repo_type='dataset')):       # else: the main runs' and worlds' links
+        if re.fullmatch(r'(\d{8}-\d{4}|world/\d{8}-\d{4})/tour\d*_url\.txt', f) and f != url_path:
             try: keep.add(open(hf_hub_download(results_repo, f, repo_type='dataset', token=api.token, local_dir='urls')).read().strip().split('/')[-2])
             except Exception: pass
     folders = {x.split('/')[0] for x in api.list_repo_files(sp, repo_type='space') if '/' in x}
