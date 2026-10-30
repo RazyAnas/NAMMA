@@ -23,6 +23,16 @@ def stage(name, **kw):
         try: import inbox; inbox.set_status(os.environ['INBOX_JOB'], name, **kw)
         except Exception as e: say('status update failed:', str(e)[:200])
 
+def lfs_types(api, repo, kinds=('splat', 'ply', 'glb', 'spz', 'sog', 'bin', 'npz', 'mp4', 'jpg', 'png', 'webp')):
+    """The Hub now rejects small binary files sent as plain git blobs (28 Oct: a quick run's 1 MB model.splat). Files of these
+    types go to large-file storage whatever their size."""
+    from huggingface_hub import hf_hub_download
+    try: ga = open(hf_hub_download(repo, '.gitattributes', repo_type='dataset', token=api.token, force_download=True, local_dir='ga')).read()
+    except Exception: ga = ''
+    add = [f'*.{k} filter=lfs diff=lfs merge=lfs -text' for k in kinds if f'*.{k} filter=lfs' not in ga]
+    if add: api.upload_file(path_or_fileobj=(ga.rstrip('\n') + '\n' + '\n'.join(add) + '\n').encode(), path_in_repo='.gitattributes',
+                            repo_id=repo, repo_type='dataset', commit_message='large-file storage for splat/model/media types')
+
 def kg(*args, check=True):
     r = subprocess.run(['kaggle', *args], capture_output=True, text=True); out = (r.stdout + r.stderr).strip()
     if check and r.returncode: sys.exit(f'kaggle {" ".join(args[:2])} failed: {out[-800:]}')
@@ -174,6 +184,7 @@ if tok:
         from huggingface_hub import HfApi
         import tour_publish
         api = HfApi(token=tok); repo = f"{api.whoami()['name']}/namma-v3-out"; api.create_repo(repo, repo_type='dataset', private=True, exist_ok=True)
+        lfs_types(api, repo)
         api.upload_folder(folder_path=OUT, path_in_repo=RUN, repo_id=repo, repo_type='dataset', ignore_patterns=[f'{n}/model.ply' for n in os.listdir(OUT) if n not in ('full', 'prior')] + ['images/*'])
         say(f'results: https://huggingface.co/datasets/{repo}/tree/main/{RUN}')
         if os.path.exists(f'{OUT}/tour/tour.json'):                          # any built tour (scene.sog or scene.compressed.ply)

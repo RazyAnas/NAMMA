@@ -78,6 +78,11 @@ def run_settings(api, repo, job, cfg):
 def pick(collect_only=False):
     """Decide the next step for the workflow; writes job_run.json and GITHUB_OUTPUT action=start|collect|wait, job=<id>."""
     cfg = json.load(open(f'{V}/PIPELINE.json')); api, repo = hub(); allj = jobs(api, repo)
+    import glob                                                   # a trigger file with "retry": true sends a failed job round again
+    for f in glob.glob(f'{V}/inbox/*.json'):
+        t = json.load(open(f)); j = t.get('job')
+        if t.get('retry') and allj.get(j, {}).get('stage') == 'failed':
+            set_status(j, 'uploaded', note='retry'); allj[j]['stage'] = 'uploaded'
     sys.path.insert(0, V); import kaggle_io
     ku = kaggle_io.account({}); mine = f"{ku}/{cfg['kernel']}"
     act, job = 'wait', ''
