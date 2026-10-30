@@ -37,7 +37,7 @@ try:
             for k in [k for k in sys.modules if k.startswith(('cosmos_predict2', 'imaginaire'))]: sys.modules.pop(k)
     FC = t2i.Text2ImagePipeline.__dict__['from_config']; orig = FC.__func__                    # a staticmethod or classmethod
     torch.set_grad_enabled(False)
-    ins = sorted(glob.glob('/kaggle/input/*/*.png')); say(len(ins), 'views')
+    ins = sorted(glob.glob('/kaggle/input/**/*.png', recursive=True)); say(len(ins), 'views'); assert ins, 'no input views under /kaggle/input'
     for prec in cfg.get('precisions', ['bfloat16', 'float16', 'float32']):
         DT = getattr(torch, prec)
         try:
