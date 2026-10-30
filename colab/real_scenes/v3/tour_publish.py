@@ -36,14 +36,19 @@ def publish(api, user, results_repo, run, tour_dir, say=print, url_path=None):
     for f in {x.split('/')[0] for x in api.list_repo_files(sp, repo_type='space') if '/' in x}:      # old guessable folders out
         if not re.fullmatch(r'\d{8}-\d{4}(-[a-z0-9]+)?-[0-9a-f]{20}', f): api.delete_folder(f, repo_id=sp, repo_type='space')   # (digits: 'world1')
     folder = f'{run}-{secrets.token_hex(10)}'
-    api.upload_folder(folder_path=tour_dir, path_in_repo=folder, repo_id=sp, repo_type='space', ignore_patterns=['plan.json'])
+    for k in range(1, 10):                         # a full free Space (1 GB) spills over to namma-tour-2, -3, ... (old links stay)
+        try: api.upload_folder(folder_path=tour_dir, path_in_repo=folder, repo_id=sp, repo_type='space', ignore_patterns=['plan.json']); break
+        except Exception as e:
+            if 'Storage limit' not in str(e) or k == 9: raise
+            sp = f'{user}/namma-tour-{k + 1}'; say('Space full, publishing to', sp)
+            api.create_repo(sp, repo_type='space', space_sdk='static', private=False, exist_ok=True)
     page = '<!doctype html><meta charset="utf-8"><title>NAMMA</title><body style="font:16px sans-serif;padding:24px;background:#111;color:#ddd"><h1>NAMMA 3D tours</h1><p>Open a tour with its link.</p>'
     open('tours_index.html', 'w').write(page); api.upload_file(path_or_fileobj='tours_index.html', path_in_repo='index.html', repo_id=sp, repo_type='space')
     open('space_readme.md', 'w').write('---\ntitle: NAMMA tour\nemoji: 🏠\ncolorFrom: gray\ncolorTo: gray\nsdk: static\npinned: false\n---\n')
     api.upload_file(path_or_fileobj='space_readme.md', path_in_repo='README.md', repo_id=sp, repo_type='space')
     try: api.update_repo_settings(sp, repo_type='space', private=False)
     except Exception: api.update_repo_visibility(sp, private=False, repo_type='space')
-    open('tour_url.txt', 'w').write(f'https://{user}-namma-tour.static.hf.space/{folder}/index.html\n')
+    open('tour_url.txt', 'w').write(f"https://{sp.replace('/', '-')}.static.hf.space/{folder}/index.html\n")
     api.upload_file(path_or_fileobj='tour_url.txt', path_in_repo=url_path or f'{run}/tour_url.txt', repo_id=results_repo, repo_type='dataset')
     say('tour published (public Space, random folder; link in the private results dataset: tour_url.txt)')
 

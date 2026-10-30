@@ -1,7 +1,7 @@
 {
  "run": "20261030-0520",
  "inbox_job": "20261028-115014-eab5",
- "prune": true,
+ "prune": false,
  "keep": [
   "20261025-2336-78b302e60a23f66548af",
   "20261026-0309-3e9ccf6779bde2c1df3f",
@@ -14,5 +14,5 @@
   "20261027-1849-world-b16e6e0adb2f8007740e"
  ],
  "note": "owner approved 30 Oct: delete the 18 old tour folders not in keep (old run 3/4/6 versions, difix, freefix, objects, old worlds)",
- "n": 12
+ "n": 13
 }
