@@ -1,11 +1,11 @@
 {
  "run": "20261026-0327",
  "rebuild": true,
- "model": "solid/clean.ply",
+ "model": "fixer/model.ply",
  "sh": 3,
  "format": "lod",
- "dst": "tour_lod",
- "url_name": "tour_lod_url.txt",
+ "dst": "tour_refined",
+ "url_name": "tour_refined_url.txt",
  "prune": false,
  "keep": [
   "20261025-2336-78b302e60a23f66548af",
@@ -18,7 +18,6 @@
   "20261027-1849-world-03dd8b50eb66892b7e3b",
   "20261027-1849-world-b16e6e0adb2f8007740e"
  ],
- "note": "streamed run 4 tour: viewer waits for full detail before showing (fullload), republished into the same folder (same link)",
- "n": 20,
- "folder": "20261026-0327-db24737a947542e1cf1a"
+ "note": "run 4 refined v2 (Fixer views + phone-video colours, fixer/20261030-1339-refine) as a streamed tour with full load; new link tour_refined_url.txt",
+ "n": 21
 }
