@@ -270,7 +270,8 @@ def clean(run, tour, out):
 
 def head(html, fmt, bud=4):
     """The viewer start options, put first in <head>. Also used to update a published tour's page (tour_publish.py head)."""
-    html = re.sub(r'\n    <script>\(function\(\)\{var q=new URLSearchParams.*?</script>', '', html, count=1)   # an earlier version
+    html = re.sub(r'\n    <script>\(function\(\)\{var q=new URLSearchParams.*?</script>(<style>body:not\(\.namma-ready\).*?</script>)?', '',
+                  html, count=1)                                                         # an earlier version
     # streamed LOD: no fixed budget (the viewer sizes it for the device), but 'fullload': the loading screen stays until full
     # detail is in, so nobody sees a blurry room first (owner, 30 Oct: "load full room at once ... else people think it's bad")
     pre = 'if(!q.has("fullload"))q.set("fullload","1");' if fmt == 'lod' else 'if(!q.has("budget"))q.set("budget","%d");' % bud
@@ -280,8 +281,14 @@ def head(html, fmt, bud=4):
     pre += ('try{if(localStorage.getItem("nammaQ")!=="1"){var m=/Mobi|Android|iPhone|iPad/.test(navigator.userAgent)||'
             '(navigator.maxTouchPoints>1&&/Macintosh/.test(navigator.userAgent));localStorage.setItem("quality",m?"default":"high");'
             'localStorage.setItem("performanceMode","false");localStorage.setItem("nammaQ","1");}}catch(e){}')
+    # The viewer draws the room while it streams in (pieces popping in behind the loading bar); hide the 3D view until the
+    # viewer reports it loaded (all detail in, with fullload), at most 90 s.
+    cover = ('<style>body:not(.namma-ready) canvas{visibility:hidden}</style>'
+             '<script>(function(){var t0=Date.now(),k=setInterval(function(){var v=window.viewer;'
+             'if((v&&v.state&&v.state.loaded)||Date.now()-t0>90000){document.body.classList.add("namma-ready");clearInterval(k);}},200);})();</script>')
     return html.replace('<head>', '<head>\n    <script>(function(){var q=new URLSearchParams(location.search);' + pre +
-                        'if(!q.has("hpr"))q.set("hpr","1");history.replaceState(null,"",location.pathname+"?"+q.toString()+location.hash);})();</script>', 1)
+                        'if(!q.has("hpr"))q.set("hpr","1");history.replaceState(null,"",location.pathname+"?"+q.toString()+location.hash);})();</script>' +
+                        cover, 1)
 
 
 def build(run, tour, public, st='npx --no-install splat-transform'):

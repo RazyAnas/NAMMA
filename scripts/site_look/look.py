@@ -25,7 +25,12 @@ def visit_tour(ctx, url, k):
     page = ctx.new_page(); rec = dict(url=url, requests=[])
     page.on('request', lambda r: rec['requests'].append(r.url) if re.search(r'\.(sog|splat|ply|spz|ksplat|json|webp|jpg)(\?|$)', r.url) else None)
     try:
-        page.goto(url, wait_until='domcontentloaded', timeout=60000); page.wait_for_timeout(45000); shot(page, f'tour{k}_a_loaded')
+        page.goto(url, wait_until='domcontentloaded', timeout=60000); page.wait_for_timeout(15000); shot(page, f'tour{k}_0_loading')
+        t0 = time.time()                                                                  # until the viewer reports the scene in (max 10 min)
+        try: page.wait_for_function('window.viewer && window.viewer.state && window.viewer.state.loaded', timeout=600000)
+        except Exception as e: rec['load_wait_error'] = str(e)[:200]
+        rec['loaded_after_s'] = round(15 + time.time() - t0); print('loaded after', rec['loaded_after_s'], 's', flush=True)
+        page.wait_for_timeout(3000); shot(page, f'tour{k}_a_loaded')
         W, H = page.viewport_size['width'], page.viewport_size['height']
         page.mouse.move(W / 2, H / 2); page.mouse.down(); page.mouse.move(W / 2 + 300, H / 2, steps=20); page.mouse.up(); page.wait_for_timeout(4000)
         shot(page, f'tour{k}_b_turned')
