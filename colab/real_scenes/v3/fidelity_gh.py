@@ -23,8 +23,14 @@ run('pip install -q torch --index-url https://download.pytorch.org/whl/cpu && pi
 run(f'cd {T} && npm init -y >/dev/null && npm i -s --no-audit --no-fund @playcanvas/splat-transform@3.10.1 | tail -1'); st = f'{T}/node_modules/.bin/splat-transform -w -g cpu'
 shutil.copytree(f'{d}/{R}/sparse', f'{data}/sparse', dirs_exist_ok=True)
 import dl3dv, frames                                                                      # the run's frames, same names and order
-_, folder = dl3dv.fetch(cfg['scene'], f'{T}/ds', tok, cfg.get('dl3dv_res', 'images_2'))
-say('frames', frames.from_images(folder, f'{data}/images', int(cfg.get('nframes', 420)), int(cfg.get('long', 1440))))
+if cfg.get('video'):                                       # runs made from the original phone video (run 6): same sharpest frames
+    from huggingface_hub import hf_hub_download
+    vr = 'DL3DV/DL3DV-ALL-video'; sub = next(k for k in [f'{i}K' for i in range(1, 12)] if api.file_exists(vr, f'{k}/{cfg["scene"]}/video.mp4', repo_type='dataset'))
+    vid = hf_hub_download(vr, f'{sub}/{cfg["scene"]}/video.mp4', repo_type='dataset', token=tok, local_dir=f'{T}/vid')
+    say('frames', frames.from_video(vid, f'{data}/images', int(cfg.get('nframes', 900)), int(cfg.get('long', 1920))))
+else:
+    _, folder = dl3dv.fetch(cfg['scene'], f'{T}/ds', tok, cfg.get('dl3dv_res', 'images_2'))
+    say('frames', frames.from_images(folder, f'{data}/images', int(cfg.get('nframes', 420)), int(cfg.get('long', 1440))))
 M = f'{T}/m'; os.makedirs(M, exist_ok=True); model = f'{d}/{R}/full/model.ply'
 variants = [('trained', model)]; sizes = {'trained': os.path.getsize(model)}
 
