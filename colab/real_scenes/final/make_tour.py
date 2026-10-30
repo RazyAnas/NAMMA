@@ -282,10 +282,10 @@ def head(html, fmt, bud=4):
             '(navigator.maxTouchPoints>1&&/Macintosh/.test(navigator.userAgent));localStorage.setItem("quality",m?"default":"high");'
             'localStorage.setItem("performanceMode","false");localStorage.setItem("nammaQ","1");}}catch(e){}')
     # The viewer draws the room while it streams in (pieces popping in behind the loading bar); hide the 3D view until the
-    # viewer reports it loaded (all detail in, with fullload), at most 90 s.
-    cover = ('<style>body:not(.namma-ready) canvas{visibility:hidden}</style>'
+    # viewer reports it loaded (all detail in, with fullload), at most 30 s; dark meanwhile, like the viewer.
+    cover = ('<style>body:not(.namma-ready){background:#111}body:not(.namma-ready) canvas{visibility:hidden}</style>'
              '<script>(function(){var t0=Date.now(),k=setInterval(function(){var v=window.viewer;'
-             'if((v&&v.state&&v.state.loaded)||Date.now()-t0>90000){document.body.classList.add("namma-ready");clearInterval(k);}},200);})();</script>')
+             'if((v&&v.state&&v.state.loaded)||Date.now()-t0>30000){document.body.classList.add("namma-ready");clearInterval(k);}},200);})();</script>')
     return html.replace('<head>', '<head>\n    <script>(function(){var q=new URLSearchParams(location.search);' + pre +
                         'if(!q.has("hpr"))q.set("hpr","1");history.replaceState(null,"",location.pathname+"?"+q.toString()+location.hash);})();</script>' +
                         cover, 1)

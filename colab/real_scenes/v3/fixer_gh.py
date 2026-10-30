@@ -1,7 +1,9 @@
 """NVIDIA Fixer smoke test (.github/workflows/fixer.yml, settings in v3/FIXER.json; plan of 30 Oct, run 4 only).
 GitHub CPU runner: render the run's cleaned model (<run>/solid/clean.ply) from tour-like views off the filmed path (1 m to the side,
 turned up to 50 deg, raised; final/cpu_render.py) plus 2 held-out filmed views -> private Kaggle dataset namma-fixer-in ->
-Kaggle T4 job namma-fixer (final/fixer_smoke.py) fixes them -> before/after sheet -> hf://datasets/<user>/namma-v3-out/fixer/<time>/."""
+Kaggle T4 job namma-fixer (final/fixer_smoke.py) fixes them -> before/after sheet -> hf://datasets/<user>/namma-v3-out/fixer/<time>/.
+mode grade (owner, 30 Oct: true colours but no retraining, which made walls blotchy): fit the images_2 -> video colour
+polynomial and apply it straight to the clean model file (grade_ply); CPU only, no Kaggle."""
 import base64, io, json, os, shutil, subprocess, sys, tarfile, time
 V = os.path.dirname(os.path.abspath(__file__)); FIN = os.path.join(os.path.dirname(V), 'final'); sys.path.insert(0, V); sys.path.insert(0, FIN)
 cfg = json.load(open(f'{V}/FIXER.json')); OUT = os.path.abspath('out'); IN = os.path.abspath('in'); T0 = time.time(); STAMP = time.strftime('%Y%m%d-%H%M')
@@ -95,7 +97,79 @@ def recolour(data, out_dir):
     for n in fr:
         im = np.asarray(Image.open(f'{data}/images/{n}').convert('RGB')).reshape(-1, 3) / 255.
         Image.fromarray((np.clip(feats(im) @ M, 0, 1) * 255 + 0.5).astype(np.uint8).reshape(*np.asarray(Image.open(f'{data}/images/{n}')).shape[:2], 3)).save(f'{out_dir}/images/{n}', quality=95)
-    os.remove(vid); return dict(video_frames=len(vth), match_err_median=round(float(np.median([p[2] for p in pairs])), 3), deltaE_before=round(de0, 2), deltaE_after=round(de1, 2))
+    os.remove(vid); return dict(video_frames=len(vth), match_err_median=round(float(np.median([p[2] for p in pairs])), 3), deltaE_before=round(de0, 2),
+                                deltaE_after=round(de1, 2), M=M.tolist())
+
+
+def grade_ply(src, dst, M):
+    """No training: the colour polynomial (recolour's M, 10x3 on sRGB 0..1) applied straight to a model file. Base colour
+    c = 0.5 + C0 f_dc -> f(c); the view-dependent SH bands of each splat are multiplied by f's 3x3 Jacobian at c (first-order:
+    the view-dependent colour changes the way f changes colours there). Positions, shapes and opacities stay exactly as they are."""
+    from plyfile import PlyData, PlyElement
+    v = PlyData.read(src)['vertex'].data.copy(); C0 = 0.28209479177387814; M = np.asarray(M, np.float64)
+    c = np.stack([v[f'f_dc_{i}'] for i in range(3)], 1).astype(np.float64) * C0 + 0.5; x = np.clip(c, 0, 1)
+    F = np.c_[x, x ** 2, x[:, [0]] * x[:, [1]], x[:, [0]] * x[:, [2]], x[:, [1]] * x[:, [2]], np.ones(len(x))]
+    dF = np.zeros((len(x), 10, 3))                                               # d features / d (r, g, b)
+    for i in range(3): dF[:, i, i] = 1; dF[:, 3 + i, i] = 2 * x[:, i]
+    for k, (a, b) in enumerate(((0, 1), (0, 2), (1, 2))): dF[:, 6 + k, a] = x[:, b]; dF[:, 6 + k, b] = x[:, a]
+    J = np.einsum('fo,nfi->noi', M, dF)                                          # [n, out, in]
+    y = F @ M + np.einsum('noi,ni->no', J, c - x)                                # outside 0..1: keep the offset, linearised
+    for i in range(3): v[f'f_dc_{i}'] = ((y[:, i] - 0.5) / C0).astype(np.float32)
+    nr = len([n for n in v.dtype.names if n.startswith('f_rest_')]) // 3
+    if nr:
+        R = np.stack([v[f'f_rest_{i}'] for i in range(3 * nr)], 1).astype(np.float64).reshape(-1, 3, nr)
+        R = np.einsum('noi,nik->nok', J, R).reshape(-1, 3 * nr)
+        for i in range(3 * nr): v[f'f_rest_{i}'] = R[:, i].astype(np.float32)
+    PlyData([PlyElement.describe(v, 'vertex')]).write(dst)
+    return dict(splats=len(v), sh_rest_per_colour=nr, mean_rgb_before=x.mean(0).round(3).tolist(), mean_rgb_after=np.clip(y, 0, 1).mean(0).round(3).tolist())
+
+
+def mottle(img, flat):
+    """Wall blotches: mean colour / brightness change at blotch scale (4..25 px band) over flat areas."""
+    from scipy.ndimage import gaussian_filter
+    a = np.asarray(img, np.float64); band = lambda q: gaussian_filter(q, 4) - gaussian_filter(q, 25)
+    L = band(a.mean(2)); ch = np.hypot(band(a[..., 0] - a[..., 1]), band(a[..., 2] - (a[..., 0] + a[..., 1]) / 2))
+    return float(np.abs(ch[flat]).mean()), float(np.abs(L[flat]).mean())
+
+
+def flat_mask(img):
+    from scipy.ndimage import gaussian_filter
+    L = np.asarray(img, np.float64).mean(2); gm = np.hypot(*np.gradient(gaussian_filter(L, 1.5)))
+    return gaussian_filter((gm > 3).astype(float), 6) < 0.05
+
+
+if cfg.get('mode') == 'grade':                                                     # owner, 30 Oct: true colours, NO retraining
+    rc = f'{T}/data_rc'; shutil.copytree(f'{data}/sparse', f'{rc}/sparse', dirs_exist_ok=True)
+    rep = dict(recolour=recolour(data, rc)); say('colour fit', {k: v for k, v in rep['recolour'].items() if k != 'M'})
+    rep['grade'] = grade_ply(f'{d}/{R}/solid/clean.ply', f'{OUT}/graded.ply', rep['recolour']['M']); say('graded', rep['grade'])
+    snapshot_download(repo, repo_type='dataset', local_dir='dl', token=tok, allow_patterns=[f'{R}/fixer/model.ply'])
+    models = dict(clean=f'{d}/{R}/solid/clean.ply', graded=f'{OUT}/graded.ply', refined_v2=f'{d}/{R}/fixer/model.ply')
+    subprocess.run(f'cd {EX} && PYTHONPATH={EX}:{FIN}:$PYTHONPATH python {FIN}/tour_fidelity.py {rc} {OUT}/fid_video_colours {mpu} 640 12 '
+                   + ' '.join(f'{k}={v}' for k, v in models.items()) + ' 2>&1 | tail -5', shell=True, executable='/bin/bash')
+    if os.path.exists(f'{OUT}/fid_video_colours/fidelity_report.json'): rep['fidelity_video_colours'] = json.load(open(f'{OUT}/fid_video_colours/fidelity_report.json'))
+    tw = 512; th = round(H * tw / W); rows = []; mot = {k: [] for k in models}; loaded = {k: cpu_render.load_ply(p) for k, p in models.items() if k != 'clean'}
+    for n, c in views:
+        ims = dict(clean=Image.open(f'{IN}/{n}.png').convert('RGB'))               # clean renders of these views (reuse / smoke test)
+        for k, sm in loaded.items(): ims[k] = Image.fromarray((cpu_render.render(sm, c, K, W, H).clamp(0, 1) * 255).byte().numpy())
+        if n.startswith('off'):
+            fl = flat_mask(ims['clean'])
+            for k in models: mot[k].append(mottle(ims[k], fl))
+        r = Image.new('RGB', (tw * 4, th))                                         # filmed views: the photo in video colours
+        if n in real_imgs:
+            q = real_imgs[n].reshape(-1, 3) / 255.; q = np.c_[q, q ** 2, q[:, [0]] * q[:, [1]], q[:, [0]] * q[:, [2]], q[:, [1]] * q[:, [2]], np.ones(len(q))]
+            r.paste(Image.fromarray((np.clip(q @ np.asarray(rep['recolour']['M']), 0, 1) * 255 + 0.5).astype(np.uint8).reshape(real_imgs[n].shape)).resize((tw, th)), (0, 0))
+        for i, k in enumerate(models): r.paste(ims[k].resize((tw, th)), ((i + 1) * tw, 0))
+        rows.append(r); ims['graded'].save(f'{OUT}/graded_{n}.png')
+    rep['wall_mottling_off_path'] = {k: dict(colour=round(float(np.mean([m[0] for m in v])), 3), brightness=round(float(np.mean([m[1] for m in v])), 3),
+                                             per_view_colour=[round(m[0], 2) for m in v]) for k, v in mot.items()}
+    say('wall mottling', {k: (v['colour'], v['brightness']) for k, v in rep['wall_mottling_off_path'].items()})
+    sheet = Image.new('RGB', (tw * 4, th * len(rows)))
+    for i, r in enumerate(rows): sheet.paste(r, (0, i * th))
+    sheet.save(f'{OUT}/grade_sheet.jpg', quality=88)                             # columns: photo | clean | graded | refined v2
+    api.upload_file(path_or_fileobj=f'{OUT}/graded.ply', path_in_repo=f'{R}/graded/model.ply', repo_id=repo, repo_type='dataset')
+    os.remove(f'{OUT}/graded.ply'); json.dump(rep, open(f'{OUT}/grade_summary.json', 'w'), indent=1, default=float)
+    dst = f'fixer/{STAMP}-grade'; api.upload_folder(folder_path=OUT, path_in_repo=dst, repo_id=repo, repo_type='dataset')
+    say(f'results: hf://datasets/{repo}/{dst}'); sys.exit(0)
 
 
 if cfg.get('mode') == 'refine':                                                   # plan of 30 Oct: Fixer views + video colours -> refined run 4
