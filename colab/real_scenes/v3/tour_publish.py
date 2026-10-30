@@ -29,6 +29,16 @@ def prune(api, sp, results_repo, url_path, say=print):
     say('space: kept', len(folders & keep), 'linked tour folders, removed', len(drop))
 
 
+def lfs_rules(api, sp, kinds=('ply', 'sog', 'spz', 'splat', 'glb', 'bin', 'png', 'jpg', 'webp', 'mp4', 'wasm')):
+    """A new Space has no large-file rule for .ply etc. and the Hub rejects binary files sent as plain git blobs (30 Oct, namma-tour-2)."""
+    from huggingface_hub import hf_hub_download
+    try: ga = open(hf_hub_download(sp, '.gitattributes', repo_type='space', token=api.token, force_download=True, local_dir='ga_space')).read()
+    except Exception: ga = ''
+    add = [f'*.{k} filter=lfs diff=lfs merge=lfs -text' for k in kinds if f'*.{k} filter=lfs' not in ga]
+    if add: api.upload_file(path_or_fileobj=(ga.rstrip('\n') + '\n' + '\n'.join(add) + '\n').encode(), path_in_repo='.gitattributes',
+                            repo_id=sp, repo_type='space', commit_message='large-file storage for tour files')
+
+
 def publish(api, user, results_repo, run, tour_dir, say=print, url_path=None):
     sp = f'{user}/namma-tour'; api.create_repo(sp, repo_type='space', space_sdk='static', private=False, exist_ok=True)
     if os.environ.get('TOUR_PRUNE') == '1':                                               # deletes old tours: only with the owner's OK
@@ -37,7 +47,7 @@ def publish(api, user, results_repo, run, tour_dir, say=print, url_path=None):
         if not re.fullmatch(r'\d{8}-\d{4}(-[a-z0-9]+)?-[0-9a-f]{20}', f): api.delete_folder(f, repo_id=sp, repo_type='space')   # (digits: 'world1')
     folder = f'{run}-{secrets.token_hex(10)}'
     for k in range(1, 10):                         # a full free Space (1 GB) spills over to namma-tour-2, -3, ... (old links stay)
-        try: api.upload_folder(folder_path=tour_dir, path_in_repo=folder, repo_id=sp, repo_type='space', ignore_patterns=['plan.json']); break
+        try: lfs_rules(api, sp); api.upload_folder(folder_path=tour_dir, path_in_repo=folder, repo_id=sp, repo_type='space', ignore_patterns=['plan.json']); break
         except Exception as e:
             if 'Storage limit' not in str(e) or k == 9: raise
             sp = f'{user}/namma-tour-{k + 1}'; say('Space full, publishing to', sp)
