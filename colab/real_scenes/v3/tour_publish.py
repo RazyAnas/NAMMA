@@ -10,8 +10,29 @@ Used by gh_run.py after a run, and on its own (.github/workflows/tour-publish.ym
 import os, re, secrets, sys
 
 
+def prune(api, sp, results_repo, url_path, say=print):
+    """The free Space holds 1 GB (30 Oct: full, publish refused). Keep only the folders some tour*_url.txt in the results dataset
+    still points to (the links handed out), except the one about to be replaced, then squash the history so the space is freed."""
+    from huggingface_hub import CommitOperationDelete, hf_hub_download
+    keep = set()
+    for f in api.list_repo_files(results_repo, repo_type='dataset'):
+        if re.search(r'(^|/)tour\d*_url\.txt$', f) and f != url_path:
+            try: keep.add(open(hf_hub_download(results_repo, f, repo_type='dataset', token=api.token, local_dir='urls')).read().strip().split('/')[-2])
+            except Exception: pass
+    folders = {x.split('/')[0] for x in api.list_repo_files(sp, repo_type='space') if '/' in x}
+    drop = sorted(folders - keep)
+    if drop:
+        api.create_commit(sp, repo_type='space', operations=[CommitOperationDelete(path_in_repo=f + '/', is_folder=True) for f in drop],
+                          commit_message=f'remove {len(drop)} tour folders no link points to')
+        try: api.super_squash_history(repo_id=sp, repo_type='space')
+        except Exception as e: say('history squash failed:', str(e)[:150])
+    say('space: kept', len(folders & keep), 'linked tour folders, removed', len(drop))
+
+
 def publish(api, user, results_repo, run, tour_dir, say=print, url_path=None):
     sp = f'{user}/namma-tour'; api.create_repo(sp, repo_type='space', space_sdk='static', private=False, exist_ok=True)
+    if os.environ.get('TOUR_PRUNE') == '1':                                               # deletes old tours: only with the owner's OK
+        prune(api, sp, results_repo, url_path or f'{run}/tour_url.txt', say)
     for f in {x.split('/')[0] for x in api.list_repo_files(sp, repo_type='space') if '/' in x}:      # old guessable folders out
         if not re.fullmatch(r'\d{8}-\d{4}(-[a-z0-9]+)?-[0-9a-f]{20}', f): api.delete_folder(f, repo_id=sp, repo_type='space')   # (digits: 'world1')
     folder = f'{run}-{secrets.token_hex(10)}'
@@ -62,3 +83,5 @@ if __name__ == '__main__':
                                           f'{W}/node_modules/.bin/splat-transform'), flush=True)
         api.upload_folder(folder_path=tour, path_in_repo=f'{run}/tour', repo_id=repo, repo_type='dataset')
     publish(api, user, repo, run, tour)
+    if os.environ.get('INBOX_JOB'):                                                       # finish an app job whose publish failed
+        import inbox; inbox.set_status(os.environ['INBOX_JOB'], 'done', run=run, link=open('tour_url.txt').read().strip())
