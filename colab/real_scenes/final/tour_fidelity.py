@@ -47,8 +47,12 @@ def main(data, out, mpu, px, views, *variants):
         for n, (img, c2w) in enumerate(real):
             r = cpu_render.render(s, c2w, K, W, H); ps.append(10 * np.log10(1 / max(float(((r - img) ** 2).mean()), 1e-10))); ss.append(ssim(r, img))
             if n < 3: tiles.setdefault(('held', n), []).append(r)
-        for n, c2w in enumerate(off): tiles.setdefault(('off', n), []).append(cpu_render.render(s, c2w, K, W, H))
+        dark = []
+        for n, c2w in enumerate(off):
+            im = cpu_render.render(s, c2w, K, W, H); tiles.setdefault(('off', n), []).append(im)
+            dark.append(float((im.mean(2) < 0.05).float().mean()))                             # black / empty share off the walk
         res[name] = dict(psnr=round(float(np.mean(ps)), 3), ssim=round(float(np.mean(ss)), 4), splats=int(len(s['means'])),
+                         off_dark=round(float(np.mean(dark)), 4),
                          sh_bands=int(round(np.sqrt(s['sh'].shape[1]))) - 1, shipped_mb=round(sizes[name] / 1e6, 1) if name in sizes else None)
         say(name, res[name]); del s
     base = res[vs[0][0]]['psnr']

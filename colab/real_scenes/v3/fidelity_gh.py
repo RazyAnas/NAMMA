@@ -26,11 +26,26 @@ import dl3dv, frames                                                            
 _, folder = dl3dv.fetch(cfg['scene'], f'{T}/ds', tok, cfg.get('dl3dv_res', 'images_2'))
 say('frames', frames.from_images(folder, f'{data}/images', int(cfg.get('nframes', 420)), int(cfg.get('long', 1440))))
 M = f'{T}/m'; os.makedirs(M, exist_ok=True); model = f'{d}/{R}/full/model.ply'
-run(f'python {FIN}/make_tour.py clean {d}/{R} {d}/{R}/tour {M}/clean.ply')
-variants = [('trained', model), ('smears_off', f'{M}/clean.ply')]; sizes = {'trained': os.path.getsize(model)}
-for name, sh in (('tour_sh1', 1), ('cply_sh3', 3), ('cply_sh0', 0)):                     # tour_sh1 = what the tour ships now
-    run(f'{st} {M}/clean.ply -H {sh} {M}/{name}.compressed.ply && {st} {M}/{name}.compressed.ply {M}/{name}.ply')
+variants = [('trained', model)]; sizes = {'trained': os.path.getsize(model)}
+
+def shipped(name, src, sh):                                       # what the tour would ship: compressed PLY, decoded back
+    run(f'{st} {src} -H {sh} -N {M}/{name}.compressed.ply && {st} {M}/{name}.compressed.ply {M}/{name}.ply')
     sizes[name] = os.path.getsize(f'{M}/{name}.compressed.ply'); variants.append((name, f'{M}/{name}.ply'))
+
+if cfg.get('solidify'):                                           # no-training clean-up variants (final/solidify.py)
+    shipped('tour_now', model, 1)                                 # the tour as built since 30 Oct (no crop, no smear filter)
+    S = f'{OUT}/solidify'
+    run(f'cd {EX} && PYTHONPATH={EX}:{FIN}:$PYTHONPATH python {FIN}/solidify.py {data} {model} {M} {cfg.get("solid_px", 480)} {cfg.get("solid_step", 3)} 2>&1 | tee {OUT}/solidify.log')
+    shutil.copy(f'{M}/solidify.json', OUT)
+    variants += [('clean', f'{M}/clean.ply'), ('clean_sh1', f'{M}/clean_sh1.ply'), ('clean_sh1_flat', f'{M}/clean_sh1_flat.ply')]
+    shipped('ship_clean_sh1', f'{M}/clean_sh1.ply', 1); shipped('ship_clean_sh1_flat', f'{M}/clean_sh1_flat.ply', 1)
+    for f in ('clean_sh1', 'clean_sh1_flat'):                     # kept for building the tour from the winner
+        api.upload_file(path_or_fileobj=f'{M}/{f}.ply', path_in_repo=f'{R}/solid/{f}.ply', repo_id=repo, repo_type='dataset')
+else:
+    run(f'python {FIN}/make_tour.py clean {d}/{R} {d}/{R}/tour {M}/clean.ply')
+    variants.append(('smears_off', f'{M}/clean.ply'))
+    for name, sh in (('tour_sh1', 1), ('cply_sh3', 3), ('cply_sh0', 0)):
+        shipped(name, f'{M}/clean.ply', sh)
 json.dump(sizes, open(f'{OUT}/sizes.json', 'w')); say('sizes MB', {k: round(v / 1e6, 1) for k, v in sizes.items()})
 r = subprocess.run(f'cd {EX} && PYTHONPATH={EX}:{FIN}:$PYTHONPATH python {FIN}/tour_fidelity.py {data} {OUT} {mpu} {cfg.get("px", 640)} {cfg.get("views", 20)} '
                    + ' '.join(f'{n}={p}' for n, p in variants) + f' 2>&1 | tee {OUT}/fidelity.log', shell=True, executable='/bin/bash').returncode
