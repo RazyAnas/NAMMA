@@ -50,7 +50,9 @@ say('rendered', len(views), 'views')
 
 import kaggle_io
 ku = kaggle_io.account(cfg); ds, kid = f'{ku}/namma-fixer-in', f'{ku}/namma-fixer'
-buf = io.BytesIO(); tarfile.open(fileobj=buf, mode='w:gz').add(f'{FIN}/fixer_shim', arcname='.'); jcfg = dict(cfg, shim=base64.b64encode(buf.getvalue()).decode())
+buf = io.BytesIO()
+with tarfile.open(fileobj=buf, mode='w:gz') as tf: tf.add(f'{FIN}/fixer_shim', arcname='.')
+jcfg = dict(cfg, shim=base64.b64encode(buf.getvalue()).decode())
 kaggle_io.push_dataset(IN, ds, 'namma-fixer-in', f'{R} {STAMP}', say)
 kaggle_io.push_kernel(kid, 'namma-fixer', f'{FIN}/fixer_smoke.py', jcfg, [ds], say)
 st = kaggle_io.wait_kernel(kid, OUT, say, minutes=int(cfg.get('minutes', 120)))
