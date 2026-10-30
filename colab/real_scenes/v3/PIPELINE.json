@@ -3,9 +3,10 @@
  "default": "best",
  "kernel": "namma-job",
  "other_kernels": [
+  "namma-fixer",
+  "namma-flashworld",
   "namma-v3",
-  "namma-world",
-  "namma-flashworld"
+  "namma-world"
  ],
  "presets": {
   "best": {
@@ -23,6 +24,15 @@
     "LONG": "960",
     "VARIANTS": "[[\"full\", 3000, 300000]]"
    }
+  },
+  "home": {
+   "env": {
+    "STEPS": "40000",
+    "NFRAMES": "900",
+    "LONG": "1440",
+    "VARIANTS": "[[\"full\", 40000, 3000000]]"
+   },
+   "note": "whole home (several rooms): more frames and splats, run 6 sizes that fit a T4"
   }
  }
 }
