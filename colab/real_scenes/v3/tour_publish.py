@@ -81,6 +81,10 @@ if __name__ == '__main__':
                       'head' in sys.argv[2:])
     extra = ([f'{run}/full/{x}' for x in ('model.ply', 'level.json', 'nav.json')] if fp or rb else []) + ([f'{run}/mesh/mesh.glb'] if co or rb else [])
     if rb and os.environ.get('TOUR_MODEL'): extra.append(f"{run}/{os.environ['TOUR_MODEL']}")
+    if rb and os.environ.get('TOUR_MODEL'):                                               # model still being made by another job: wait (max 90 min)
+        import time; t0 = time.time()
+        while not api.file_exists(repo, f"{run}/{os.environ['TOUR_MODEL']}", repo_type='dataset'):
+            assert time.time() - t0 < 5400, 'model never appeared'; print('waiting for', os.environ['TOUR_MODEL'], flush=True); time.sleep(30)
     src = os.environ.get('TOUR_DST', 'tour') if hd and not rb else 'tour'                # 'head': the stored tour it updates
     d = snapshot_download(repo, repo_type='dataset', allow_patterns=[f'{run}/{src}/*', f'{run}/{src}/**'] + extra, local_dir='pub', token=tok)
     tour = os.path.join(d, run, src); assert os.path.exists(f'{tour}/index.html'), f'no built tour in {repo}/{run}/{src}'

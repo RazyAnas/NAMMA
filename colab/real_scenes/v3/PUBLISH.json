@@ -1,11 +1,10 @@
 {
  "run": "20261026-0327",
- "rebuild": false,
- "model": "fixer/model.ply",
+ "rebuild": true,
+ "model": "graded/model.ply",
  "sh": 3,
- "format": "lod",
- "dst": "tour_refined",
- "url_name": "tour_refined_url.txt",
+ "dst": "tour_graded",
+ "url_name": "tour_graded_url.txt",
  "prune": false,
  "keep": [
   "20261025-2336-78b302e60a23f66548af",
@@ -18,8 +17,6 @@
   "20261027-1849-world-03dd8b50eb66892b7e3b",
   "20261027-1849-world-b16e6e0adb2f8007740e"
  ],
- "note": "page-only update of the refined v2 tour (same link): device quality defaults + 3D view hidden until loaded",
- "n": 22,
- "head": true,
- "folder": "20261026-0327-75b48f1185fc24a35eca"
+ "note": "run 4 clean model with video colours applied directly (no retraining, fixer_gh grade), single-file SOG tour (fast build); new link tour_graded_url.txt",
+ "n": 23
 }

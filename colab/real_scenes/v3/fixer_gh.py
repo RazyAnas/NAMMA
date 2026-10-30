@@ -142,7 +142,8 @@ if cfg.get('mode') == 'grade':                                                  
     rc = f'{T}/data_rc'; shutil.copytree(f'{data}/sparse', f'{rc}/sparse', dirs_exist_ok=True)
     rep = dict(recolour=recolour(data, rc)); say('colour fit', {k: v for k, v in rep['recolour'].items() if k != 'M'})
     rep['grade'] = grade_ply(f'{d}/{R}/solid/clean.ply', f'{OUT}/graded.ply', rep['recolour']['M']); say('graded', rep['grade'])
-    snapshot_download(repo, repo_type='dataset', local_dir='dl', token=tok, allow_patterns=[f'{R}/fixer/model.ply'])
+    api.upload_file(path_or_fileobj=f'{OUT}/graded.ply', path_in_repo=f'{R}/graded/model.ply', repo_id=repo, repo_type='dataset')   # tour build can start
+    snapshot_download(repo, repo_type='dataset', local_dir=d, token=tok, allow_patterns=[f'{R}/fixer/model.ply'])   # (cwd is EX now)
     models = dict(clean=f'{d}/{R}/solid/clean.ply', graded=f'{OUT}/graded.ply', refined_v2=f'{d}/{R}/fixer/model.ply')
     subprocess.run(f'cd {EX} && PYTHONPATH={EX}:{FIN}:$PYTHONPATH python {FIN}/tour_fidelity.py {rc} {OUT}/fid_video_colours {mpu} 640 12 '
                    + ' '.join(f'{k}={v}' for k, v in models.items()) + ' 2>&1 | tail -5', shell=True, executable='/bin/bash')
@@ -166,7 +167,6 @@ if cfg.get('mode') == 'grade':                                                  
     sheet = Image.new('RGB', (tw * 4, th * len(rows)))
     for i, r in enumerate(rows): sheet.paste(r, (0, i * th))
     sheet.save(f'{OUT}/grade_sheet.jpg', quality=88)                             # columns: photo | clean | graded | refined v2
-    api.upload_file(path_or_fileobj=f'{OUT}/graded.ply', path_in_repo=f'{R}/graded/model.ply', repo_id=repo, repo_type='dataset')
     os.remove(f'{OUT}/graded.ply'); json.dump(rep, open(f'{OUT}/grade_summary.json', 'w'), indent=1, default=float)
     dst = f'fixer/{STAMP}-grade'; api.upload_folder(folder_path=OUT, path_in_repo=dst, repo_id=repo, repo_type='dataset')
     say(f'results: hf://datasets/{repo}/{dst}'); sys.exit(0)
