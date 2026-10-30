@@ -320,9 +320,11 @@ def build(run, tour, public, st='npx --no-install splat-transform'):
     html = open(f'{public}/index.html').read(); a = html.index('id="sse-bootstrap">') + len('id="sse-bootstrap">'); c = html.index('</script>', a)
     html = (html[:a] + '\n' + json.dumps(boot) + '\n        ' + html[c:]).replace('<title>SuperSplat Viewer</title>', '<title>NAMMA 3D tour</title>')
     nsp = len(v) - int(bad.sum()); bud = max(4, int(np.ceil(nsp / 1e6)) + 1)                 # the viewer's splat budget, millions
-    if fmt != 'lod':                                    # streamed LOD: the viewer picks its own budget for the device
-        html = html.replace('<head>', '<head>\n    <script>(function(){var q=new URLSearchParams(location.search);if(!q.has("budget"))q.set("budget","%d");'
-                            'if(!q.has("hpr"))q.set("hpr","1");history.replaceState(null,"",location.pathname+"?"+q.toString()+location.hash);})();</script>' % bud, 1)
+    # streamed LOD: no fixed budget (the viewer sizes it for the device), but 'fullload': the loading screen stays until full
+    # detail is in, so nobody sees a blurry room first (owner, 30 Oct: "load full room at once ... else people think it's bad")
+    pre = 'if(!q.has("fullload"))q.set("fullload","1");' if fmt == 'lod' else 'if(!q.has("budget"))q.set("budget","%d");' % bud
+    html = html.replace('<head>', '<head>\n    <script>(function(){var q=new URLSearchParams(location.search);' + pre +
+                        'if(!q.has("hpr"))q.set("hpr","1");history.replaceState(null,"",location.pathname+"?"+q.toString()+location.hash);})();</script>', 1)
     html = html.replace("createViewer({ container: document.body, settings, ...options });",
                         "window.viewer = await createViewer({ container: document.body, settings, ...options });")
     if os.path.exists(f'{tour}/overlay.json'): html = html.replace('</body>', OVERLAY + '\n    </body>')

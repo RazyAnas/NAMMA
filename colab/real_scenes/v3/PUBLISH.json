@@ -18,6 +18,7 @@
   "20261027-1849-world-03dd8b50eb66892b7e3b",
   "20261027-1849-world-b16e6e0adb2f8007740e"
  ],
- "note": "whole-house plan test on run 4: Streamed SOG (LOD levels 100/30/10/3 %), new link tour_lod_url.txt; the old run 4 link stays",
- "n": 19
+ "note": "streamed run 4 tour: viewer waits for full detail before showing (fullload), republished into the same folder (same link)",
+ "n": 20,
+ "folder": "20261026-0327-db24737a947542e1cf1a"
 }

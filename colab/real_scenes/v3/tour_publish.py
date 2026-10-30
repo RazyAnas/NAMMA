@@ -45,7 +45,7 @@ def publish(api, user, results_repo, run, tour_dir, say=print, url_path=None):
         prune(api, sp, results_repo, url_path or f'{run}/tour_url.txt', say)
     for f in {x.split('/')[0] for x in api.list_repo_files(sp, repo_type='space') if '/' in x}:      # old guessable folders out
         if not re.fullmatch(r'\d{8}-\d{4}(-[a-z0-9]+)?-[0-9a-f]{20}', f): api.delete_folder(f, repo_id=sp, repo_type='space')   # (digits: 'world1')
-    folder = f'{run}-{secrets.token_hex(10)}'
+    folder = os.environ.get('TOUR_FOLDER') or f'{run}-{secrets.token_hex(10)}'          # TOUR_FOLDER: update a published tour in place (same link)
     for k in range(1, 10):                         # a full free Space (1 GB) spills over to namma-tour-2, -3, ... (old links stay)
         try: lfs_rules(api, sp); api.upload_folder(folder_path=tour_dir, path_in_repo=folder, repo_id=sp, repo_type='space', ignore_patterns=['plan.json']); break
         except Exception as e:
