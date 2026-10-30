@@ -17,7 +17,7 @@ try:
     import tarfile; tarfile.open(fileobj=io.BytesIO(base64.b64decode(cfg['shim']))).extractall(f'{X}/shim')
     sh('pip install -q --no-deps cosmos-predict2==1.0.9')
     sh('pip install -q attrs better-profanity boto3 einops ftfy fvcore hydra-core "imageio[ffmpeg]" iopath loguru mediapy nltk nvidia-ml-py '
-       'omegaconf peft pycocotools pynvml pyyaml safetensors scikit-image sentencepiece termcolor webdataset natsort lpips "diffusers==0.33.1"')
+       'omegaconf peft pycocotools pynvml pyyaml safetensors scikit-image sentencepiece termcolor webdataset natsort lpips qwen-vl-utils "transformers==4.51.3" "diffusers==0.33.1"')
     sh(f'git clone -q --depth 1 https://github.com/nv-tlabs/Fixer {X}/Fixer && sed -i "s#/work/models#{X}/models#g" {X}/Fixer/src/*.py')
     from huggingface_hub import snapshot_download
     snapshot_download('nvidia/Fixer', local_dir=f'{X}/models'); say('weights', os.listdir(f'{X}/models'))
@@ -25,7 +25,14 @@ try:
     import numpy as np, torch
     from PIL import Image
     _load = torch.load; torch.load = lambda *a, **k: _load(*a, **{**k, 'weights_only': False})       # NVIDIA's own checkpoint
-    import cosmos_predict2.pipelines.text2image as t2i
+    from unittest.mock import MagicMock
+    STUB = ('qwen_vl_utils', 'decord', 'retinaface', 'modelscope', 'better_profanity', 'mediapy', 'webdataset', 'boto3', 'natten')
+    for _ in range(25):                          # parts never used here (text encoder, guardrails, data loaders): stand-ins if missing
+        try: import cosmos_predict2.pipelines.text2image as t2i; break
+        except ModuleNotFoundError as e:
+            if not (e.name or '').split('.')[0] in STUB: raise
+            say('stand-in for', e.name); sys.modules[e.name] = MagicMock(__path__=[], __spec__=None)
+            for k in [k for k in sys.modules if k.startswith(('cosmos_predict2', 'imaginaire'))]: sys.modules.pop(k)
     orig = t2i.Text2ImagePipeline.from_config.__func__
     torch.set_grad_enabled(False)
     ins = sorted(glob.glob('/kaggle/input/*/*.png')); say(len(ins), 'views')
