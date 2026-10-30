@@ -15,7 +15,7 @@ for sc in cfg['scenes']:                                     # {name, repo, spar
     for f in ('cameras.bin', 'images.bin', 'points3D.bin'):
         hf_hub_download(sc['repo'], f"{sc['sparse']}/{f}", repo_type='dataset', token=tok, local_dir=sp)
     out = f"out/{sc['name']}"; os.makedirs(out, exist_ok=True); t = time.time()
-    names, C, R, P = rooms.load(f"{sp}/{sc['sparse']}"); meta, rs, order, (reg, wallm, c2, lo) = rooms.split(names, C, R, P)
+    names, C, R, P, obs = rooms.load(f"{sp}/{sc['sparse']}"); meta, rs, order, (reg, wallm, c2, lo) = rooms.split(names, C, R, P, obs)
     json.dump(dict(meta, order=order, rooms=rs), open(f'{out}/rooms.json', 'w')); rooms.draw(f'{out}/rooms.png', reg, wallm, c2, lo, rs)
     print(sc['name'], len(C), 'cameras', len(P), 'points ->', len(rs), 'rooms in', round(time.time() - t), 's:',
           [(r['id'], r['area_m2'], len(r['cameras']), [d['to'] for d in r['doors']]) for r in rs], flush=True)
