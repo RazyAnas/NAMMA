@@ -159,3 +159,12 @@ not match the video. Earlier notes calling its contents "real" were reported, ne
   fixed (not yet re-run): needle metric counted flat discs (76%); outside/top-down shots looked into the shell of big splats that
   models the view through the window -> dollhouse crop now. Results: HF dataset anasrazy/namma-v3-out/20261025-1835.
   Conclusion: with a good handheld capture the standard stack works; the owner's own re-filmed room is next.
+
+## 30 Oct: true colours without retraining (fixer/20261030-1837-grade)
+- Retrained colour (Fixer refine v1/v2) made walls blotchy off the filmed path: colour mottling on flat walls +55 % vs clean.
+- Graded = run 4 clean.ply with the images_2 -> video colour polynomial applied to the splats directly (fixer_gh grade_ply, SH
+  bands via the polynomial's Jacobian), geometry untouched. Held-out vs video-coloured frames: clean 17.4 dB, refined v2 18.0,
+  graded 23.6 (ssim 0.89 / 0.89 / 0.92).
+- Walls: graded mottling = clean's renders colour-graded in image space (ratio 0.94-1.07 per view), i.e. no new blotches; the
+  colour change only scales existing contrast. Refined v2 adds local dark smudges (visible on the bed wall).
+- Tour: tour_graded_url.txt (single-file compressed PLY, loads in ~15 s in CI).
