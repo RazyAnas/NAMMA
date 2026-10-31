@@ -34,7 +34,7 @@ OVERLAY = """<style>
   .nm-svg .spot{fill:var(--nm-acc);stroke:#fff;stroke-width:2;cursor:pointer} .nm-svg .spot:hover{fill:#ffc58a}
   .nm-svg .lbl{fill:#fff;font:bold 13px Arial,sans-serif;paint-order:stroke;stroke:rgba(0,0,0,.7);stroke-width:3px}
   .nm-svg .me{fill:var(--nm-acc);stroke:#fff;stroke-width:2} .nm-svg .cone{fill:var(--nm-acc);opacity:.5}
-  #nm-strip{position:fixed;left:50%;transform:translateX(-50%);bottom:calc(max(16px,env(safe-area-inset-bottom)) + 50px);display:flex;gap:6px;z-index:10;max-width:calc(100vw - 32px);overflow-x:auto;padding:6px;border-radius:16px;scrollbar-width:none}
+  #nm-strip{position:fixed;left:50%;transform:translateX(-50%);bottom:calc(max(16px,env(safe-area-inset-bottom)) + 72px);display:flex;gap:6px;z-index:10;max-width:calc(100vw - 32px);overflow-x:auto;padding:6px;border-radius:16px;scrollbar-width:none}
   #nm-strip button{border:1px solid rgba(255,255,255,.1);border-radius:8px;padding:0;background:#141414;cursor:pointer;position:relative;flex:none;overflow:hidden;transition:border-color 250ms ease}
   #nm-strip button:hover{border-color:var(--nm-acc)}
   #nm-strip img{width:96px;height:58px;object-fit:cover;display:block}
@@ -56,7 +56,7 @@ OVERLAY = """<style>
   #nm-help .row{display:flex;justify-content:space-between;align-items:center;gap:16px;min-height:28px;font-size:12px}
   #nm-help .keys{display:flex;gap:3px;align-items:center;color:var(--nm-dark);font-size:11px}
   #nm-help .go{align-self:stretch}
-  #nm-find{position:fixed;left:50%;bottom:calc(max(16px,env(safe-area-inset-bottom)) + 130px);transform:translateX(-50%);width:min(80vw,340px);z-index:11;font:13px Arial,sans-serif;color:var(--nm-text);display:none}
+  #nm-find{position:fixed;left:50%;bottom:calc(max(16px,env(safe-area-inset-bottom)) + 156px);transform:translateX(-50%);width:min(80vw,340px);z-index:11;font:13px Arial,sans-serif;color:var(--nm-text);display:none}
   #nm-q{width:100%;padding:9px 12px;border-radius:8px;border:1px solid rgba(255,255,255,.1);background:var(--nm-panel);backdrop-filter:blur(20px);color:#fff;font:inherit;outline:none}
   #nm-hits{display:flex;flex-direction:column-reverse;gap:4px;margin-bottom:6px;max-height:50vh;overflow-y:auto}
   #nm-hits button,#nm-card{display:flex;align-items:center;gap:8px;background:rgba(0,0,0,.6);border:1px solid rgba(255,255,255,.1);border-radius:8px;color:var(--nm-text);font:inherit;padding:4px;cursor:pointer;text-align:left}
