@@ -146,7 +146,9 @@ sh(f'pip -q install uv 2>&1 | tail -1; unset UV_SYSTEM_PYTHON UV_PYTHON PIP_TARG
    f'git clone -q --recursive https://github.com/cvg/Hierarchical-Localization {W}/hloc && '
    f'uv pip install -q {P} "numpy<2" -e {W}/hloc "lightglue @ git+https://github.com/cvg/LightGlue" >> {W}/sfm_pip.log 2>&1; tail -3 {W}/sfm_pip.log')
 sh(f'{E} -c "import hloc, lightglue, pycolmap; print(\'hloc ok, pycolmap\', pycolmap.__version__)"', check=True)
-sh(f'cd {W} && {E} {F}/sfm_hloc.py {D}/images {W}/sfm 10 15 SIMPLE_RADIAL 2>&1 | grep -v "it/s" | grep -v "s/it" | tail -25')
+# live in the Kaggle log (a `| tail` here held every line back until the end: the 30 Oct house run looked stuck for hours)
+sh(f'cd {W} && PYTHONUNBUFFERED=1 {E} {F}/sfm_hloc.py {D}/images {W}/sfm 10 15 SIMPLE_RADIAL 2>&1 | tee {W}/sfm.log '
+   f'| grep --line-buffered -v -E "it/s|s/it" | while IFS= read -r l; do echo "[$(date -u +%H:%M:%S)] $l"; done')
 assert os.path.exists(f'{W}/sfm/sfm/images.bin'), 'camera solve failed: no COLMAP model (see the hloc log above)'
 sfm_min = round((time.time() - t_sfm) / 60, 1)
 rep = json.load(open(f'{W}/sfm/sfm_report.json')); shutil.copy(f'{W}/sfm/sfm_report.json', O); push(f'{O}/sfm_report.json', 'sfm_report.json')
