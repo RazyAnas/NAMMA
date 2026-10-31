@@ -127,7 +127,11 @@ def plan_frames(v):
 
 t_fr = time.time()
 if not os.path.isdir(src): plan_frames(src)
-n = frames.from_images(src, f'{D}/images', NFRAMES, LONG) if os.path.isdir(src) else frames.from_video(src, f'{D}/images', NFRAMES, LONG)
+if os.path.isdir(src): n = frames.from_images(src, f'{D}/images', NFRAMES, LONG)
+else:                                                                                      # ffmpeg on all cores; OpenCV if that fails
+    try: n = frames.from_video_fast(src, f'{D}/images', NFRAMES, LONG, VTOT)
+    except Exception as e: say('fast frame reader failed:', str(e)[:200]); n = 0
+    if n < 20: shutil.rmtree(f'{D}/images', ignore_errors=True); n = frames.from_video(src, f'{D}/images', NFRAMES, LONG)
 if n < 20 and not os.path.isdir(src):                                                       # e.g. 4K HEVC OpenCV cannot decode:
     say('only', n, 'frames decoded; converting the video with ffmpeg first')                 # H.264 at the training size
     sh(f'ffmpeg -v error -y -i "{src}" -vf "scale=\'if(gt(iw,ih),{LONG},-2)\':\'if(gt(iw,ih),-2,{LONG})\'" -c:v libx264 -crf 14 -preset veryfast {W}/video.mp4')
