@@ -24,7 +24,7 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.11"
-      - run: pip install -q huggingface_hub numpy scipy pillow plyfile trimesh fast-simplification playwright==1.49.1 && python -m playwright install --with-deps chromium
+      - run: pip install -q huggingface_hub numpy scipy pillow plyfile trimesh fast-simplification opencv-python-headless playwright==1.49.1 && python -m playwright install --with-deps chromium
       - name: Publish
         env:
           HF_TOKEN: ${{ secrets.HF_TOKEN || secrets.HUGGINGFACE_WRITE_TOKEN }}

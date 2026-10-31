@@ -14,38 +14,149 @@ F = np.diag([-1., -1, 1])
 
 # Floor plan minimap (live position dot, clickable spots) + strip of real-photo thumbnails; clicking goes to that spot.
 OVERLAY = """<style>
-  #nm-plan{position:fixed;left:16px;top:16px;width:min(30vw,260px);background:#111c;border:1px solid #fff2;border-radius:10px;padding:6px;z-index:10;font:12px system-ui,sans-serif;color:#ddd}
-  #nm-plan .wrap{position:relative} #nm-plan img{width:100%;display:block;border-radius:6px}
-  #nm-plan .dot{position:absolute;width:12px;height:12px;margin:-6px 0 0 -6px;border-radius:50%;background:#e8a96b;border:2px solid #fff;box-shadow:0 0 6px #000}
-  #nm-plan .spot{position:absolute;width:10px;height:10px;margin:-5px 0 0 -5px;border-radius:50%;background:#fff9;border:1px solid #000;cursor:pointer}
-  #nm-strip{position:fixed;right:16px;top:16px;display:flex;gap:8px;z-index:10;max-width:calc(100vw - 320px);overflow-x:auto}
-  #nm-strip button{border:2px solid #fff3;border-radius:8px;padding:0;background:#000;cursor:pointer;position:relative}
-  #nm-strip img{width:96px;height:64px;object-fit:cover;display:block;border-radius:6px}
-  #nm-strip span{position:absolute;left:4px;bottom:2px;color:#fff;font:11px system-ui,sans-serif;text-shadow:0 0 3px #000}
-  #nm-find{position:fixed;left:50%;bottom:72px;transform:translateX(-50%);width:min(80vw,340px);z-index:11;font:13px system-ui,sans-serif;color:#eee;display:none}
+  :root{--nm-cream:#f1e9d8;--nm-acc:#e3a96b;--nm-panel:#0e0e0fe6;--nm-line:#ffffff1f}
+  #nm-plan{position:fixed;left:16px;top:16px;width:min(30vw,270px);background:var(--nm-panel);border:1px solid var(--nm-line);border-radius:14px;padding:8px;z-index:10;font:11px ui-monospace,Menlo,monospace;color:#cfc7b8;letter-spacing:.12em;backdrop-filter:blur(6px)}
+  #nm-plan .wrap{position:relative;cursor:pointer} #nm-plan .bar{display:flex;justify-content:space-between;align-items:center;padding:6px 4px 0}
+  #nm-plan button{background:none;border:0;color:#cfc7b8;cursor:pointer;font-size:15px;padding:0 2px}
+  .nm-svg{display:block;width:100%;height:auto;border-radius:8px;background:#070707}
+  .nm-svg .wall{stroke:var(--nm-cream);stroke-linecap:square;fill:none}
+  .nm-svg .spot{fill:#f4efe6;stroke:#00000088;cursor:pointer} .nm-svg .spot:hover{fill:var(--nm-acc)}
+  .nm-svg .lbl{fill:#f4efe6;font:600 13px ui-monospace,Menlo,monospace;letter-spacing:.06em;paint-order:stroke;stroke:#000a;stroke-width:3px}
+  .nm-svg .me{fill:var(--nm-acc);stroke:#fff;stroke-width:2} .nm-svg .cone{fill:var(--nm-acc);opacity:.55}
+  #nm-strip{position:fixed;left:50%;transform:translateX(-50%);bottom:calc(84px + env(safe-area-inset-bottom));display:flex;gap:8px;z-index:10;max-width:calc(100vw - 32px);overflow-x:auto;padding:6px;background:#0e0e0fb3;border:1px solid var(--nm-line);border-radius:14px;scrollbar-width:none}
+  #nm-strip button{border:2px solid #ffffff22;border-radius:9px;padding:0;background:#000;cursor:pointer;position:relative;flex:none}
+  #nm-strip button:hover{border-color:var(--nm-acc)}
+  #nm-strip img{width:104px;height:64px;object-fit:cover;display:block;border-radius:7px}
+  #nm-strip span{position:absolute;left:5px;bottom:3px;color:#fff;font:600 10px ui-monospace,Menlo,monospace;letter-spacing:.08em;text-shadow:0 0 4px #000}
+  #nm-fp,#nm-help{position:fixed;inset:0;z-index:30;display:none;align-items:center;justify-content:center;background:#000a;backdrop-filter:blur(10px)}
+  #nm-fp .box{position:relative;width:min(92vw,980px);height:min(78vh,700px);background:#0a0a0a;border:1px solid var(--nm-line);border-radius:16px;overflow:hidden}
+  #nm-fp .tog{position:absolute;right:14px;top:14px;display:flex;background:#141414;border:1px solid var(--nm-line);border-radius:999px;padding:3px;z-index:2}
+  #nm-fp .tog button{background:none;border:0;color:#bbb;font:600 13px ui-monospace,Menlo,monospace;letter-spacing:.1em;padding:6px 14px;border-radius:999px;cursor:pointer}
+  #nm-fp .tog button.on{background:#3a2a1c;color:var(--nm-acc)}
+  #nm-fp .x,#nm-help .x{position:absolute;left:14px;top:14px;width:34px;height:34px;border-radius:50%;border:1px solid var(--nm-line);background:#141414;color:#ddd;font-size:16px;cursor:pointer;z-index:2}
+  #nm-fp .v2d,#nm-fp canvas{position:absolute;inset:0;width:100%;height:100%} #nm-fp .v2d svg{width:100%;height:100%;background:none}
+  #nm-fp .cap{position:absolute;left:0;right:0;bottom:12px;text-align:center;color:#a9a39a;font:12px ui-monospace,Menlo,monospace;letter-spacing:.18em}
+  #nm-help .card{position:relative;width:min(88vw,460px);background:#0d0d0d;border:1px solid var(--nm-line);border-radius:18px;padding:22px 26px 14px;color:#ddd;font:13px ui-monospace,Menlo,monospace;letter-spacing:.14em}
+  #nm-help h4{margin:0 0 10px;color:var(--nm-acc);font:600 13px ui-monospace,Menlo,monospace;letter-spacing:.28em}
+  #nm-help .x{left:auto;right:18px;top:16px}
+  #nm-help .row{display:flex;align-items:center;gap:22px;border-top:1px solid var(--nm-line);padding:14px 0}
+  #nm-help .ic{width:130px;display:flex;justify-content:center;align-items:center;flex:none}
+  #nm-help .keys{display:grid;grid-template-columns:repeat(3,30px);gap:4px} #nm-help .keys b{display:flex;align-items:center;justify-content:center;height:30px;border:1px solid #ffffff33;border-radius:6px;background:#161616;font-weight:600}
+  #nm-help .keys b:nth-child(1){grid-column:2;grid-row:1} #nm-help .keys b:nth-child(2){grid-column:1;grid-row:2} #nm-help .keys b:nth-child(3){grid-column:2;grid-row:2} #nm-help .keys b:nth-child(4){grid-column:3;grid-row:2}
+  #nm-help .go{display:block;margin:8px auto 4px;background:var(--nm-acc);color:#1a1209;border:0;border-radius:999px;padding:9px 26px;font:700 12px ui-monospace,Menlo,monospace;letter-spacing:.2em;cursor:pointer}
+  #nm-helpbtn{position:fixed;left:16px;bottom:calc(84px + env(safe-area-inset-bottom));z-index:10;width:34px;height:34px;border-radius:50%;border:1px solid var(--nm-line);background:var(--nm-panel);color:#ddd;font:700 15px ui-monospace,Menlo,monospace;cursor:pointer}
+  #nm-find{position:fixed;left:50%;bottom:calc(176px + env(safe-area-inset-bottom));transform:translateX(-50%);width:min(80vw,340px);z-index:11;font:13px system-ui,sans-serif;color:#eee;display:none}
   #nm-q{width:100%;box-sizing:border-box;padding:9px 12px;border-radius:20px;border:1px solid #fff4;background:#111d;color:#fff;font:inherit;outline:none}
   #nm-hits{display:flex;flex-direction:column-reverse;gap:4px;margin-bottom:6px;max-height:50vh;overflow-y:auto}
   #nm-hits button,#nm-card{display:flex;align-items:center;gap:8px;background:#111e;border:1px solid #fff3;border-radius:8px;color:#eee;font:inherit;padding:4px;cursor:pointer;text-align:left}
   #nm-hits img,#nm-card img{width:44px;height:44px;object-fit:cover;border-radius:5px;flex:none}
   #nm-card{position:fixed;z-index:11;display:none;max-width:260px;padding:6px 8px}
   #nm-card b{display:block} #nm-card small{color:#aaa}
-  @media (max-width:640px){#nm-plan{width:38vw}#nm-strip{display:none}#nm-find{bottom:84px}}
+  @media (max-width:640px){#nm-plan{width:40vw;padding:6px}#nm-strip img{width:76px;height:48px}#nm-strip{left:auto;right:10px;transform:none;max-width:calc(100vw - 130px);bottom:calc(74px + env(safe-area-inset-bottom))}
+    #nm-helpbtn{bottom:auto;top:16px;left:auto;right:16px}#nm-find{bottom:calc(230px + env(safe-area-inset-bottom))}#nm-help .ic{width:90px}}
 </style>
 <div id="nm-find"><div id="nm-hits"></div><input id="nm-q" type="search" placeholder="Search the room: sofa, lamp, bag ..." autocomplete="off"></div>
 <div id="nm-card"></div>
-<div id="nm-plan"><div class="wrap"><img src="./floorplan.png" alt="floor plan"><div class="dot" id="nm-dot"></div></div><div>FLOOR PLAN</div></div>
+<div id="nm-plan"><div class="wrap" id="nm-mini"></div><div class="bar"><span>FLOOR PLAN</span><button id="nm-exp" title="Open floor plan">&#x2922;</button></div></div>
 <div id="nm-strip"></div>
+<button id="nm-helpbtn" title="Controls">?</button>
+<div id="nm-fp"><div class="box"><button class="x" id="nm-fpx">&#x2715;</button>
+  <div class="tog"><button data-m="2d" class="on">2D</button><button data-m="3d">3D</button></div>
+  <div class="v2d" id="nm-fp2d"></div><canvas id="nm-fp3d" style="display:none"></canvas><div class="cap" id="nm-fpcap">FLOOR PLAN &middot; CLICK A POINT TO ENTER</div></div></div>
+<div id="nm-help"><div class="card"><button class="x" id="nm-hx">&#x2715;</button><h4>CONTROLS</h4><div id="nm-rows"></div><button class="go" id="nm-hgo">START EXPLORING</button></div></div>
 <script type="module">
-  const o = await (await fetch('./overlay.json')).json(); const f = o.floor; const wrap = document.querySelector('#nm-plan .wrap');
-  const pos = (x, z) => [((x - f.x0) * f.px) / f.w * 100, ((z - f.z0) * f.px) / f.h * 100];
+  const o = await (await fetch('./overlay.json')).json(); const f = o.floor;
+  let wj = null; try { wj = await (await fetch('./walls.json')).json(); } catch (e) {}
+  const walls = (wj && wj.walls) || [], H = (wj && wj.height) || 2.5;
+  const box = (wj && wj.box) || [f.x0, 0, f.z0, f.x0 + f.w / f.px, H, f.z0 + f.h / f.px];
   const go = (i) => { try { window.viewer.selectAnnotation(i); } catch (e) {} };
-  o.spots.forEach((s, i) => {
-    const d = document.createElement('div'); d.className = 'spot'; d.title = s.title; [d.style.left, d.style.top] = pos(s.x, s.z).map(v => v + '%'); d.onclick = () => go(i); wrap.appendChild(d);
-    const b = document.createElement('button'); b.innerHTML = `<img src="./${s.thumb}" alt=""><span>${s.title}</span>`; b.onclick = () => go(i); document.getElementById('nm-strip').appendChild(b);
-  });
-  const dot = document.getElementById('nm-dot');
-  setInterval(() => { const app = window.app; if (!app) return; let c; app.root.forEach(e => { if (e.camera) c = e.getPosition(); });
-    if (c) { const [l, t] = pos(c.x, c.z); dot.style.left = Math.max(0, Math.min(100, l)) + '%'; dot.style.top = Math.max(0, Math.min(100, t)) + '%'; } }, 200);
+  const P = (x, z) => [(x - f.x0) * f.px, (z - f.z0) * f.px];                              // room metres -> floor-plan pixels
+  const NS = 'http://www.w3.org/2000/svg', el = (t, a, p) => { const e = document.createElementNS(NS, t); for (const k in a) e.setAttribute(k, a[k]); if (p) p.appendChild(e); return e; };
+  // 2D plan: the top-down picture (dimmed), solid cream walls, spots; `big` adds labels
+  function plan2d(big) {
+    const sv = el('svg', { viewBox: `0 0 ${f.w} ${f.h}`, class: 'nm-svg', preserveAspectRatio: 'xMidYMid meet' });
+    el('image', { href: './floorplan.png', x: 0, y: 0, width: f.w, height: f.h, opacity: 0.42 }, sv);
+    walls.forEach(w => { const [a, b] = P(w[0], w[1]), [c, d] = P(w[2], w[3]); el('line', { x1: a, y1: b, x2: c, y2: d, class: 'wall', 'stroke-width': Math.max(4, 0.13 * f.px) }, sv); });
+    const r = Math.max(7, 0.16 * f.px) * (big ? 1 : 1.25);
+    o.spots.forEach((s, i) => { const [x, y] = P(s.x, s.z); const c = el('circle', { cx: x, cy: y, r, class: 'spot' }, sv); c.onclick = (e) => { e.stopPropagation(); go(i); closeFp(); };
+      if (big) { const t = el('text', { x, y: y - r - 6, 'text-anchor': 'middle', class: 'lbl' }, sv); t.textContent = s.title.toUpperCase(); } });
+    const cone = el('path', { class: 'cone' }, sv), me = el('circle', { r: r * 0.85, class: 'me' }, sv);
+    return { sv, cone, me };
+  }
+  const mini = plan2d(false); document.getElementById('nm-mini').appendChild(mini.sv);
+  const camState = () => { const app = window.app; if (!app) return null; const c = app.root.findComponents('camera')[0]; if (!c) return null;
+    const p = c.entity.getPosition(), fw = c.entity.forward; return { x: p.x, y: p.y, z: p.z, fx: fw.x, fz: fw.z }; };
+  const putMe = (m) => { const c = camState(); if (!c) return; const [x, y] = P(c.x, c.z), L = 0.9 * f.px, a = Math.atan2(c.fz, c.fx), s = 0.55;
+    m.me.setAttribute('cx', x); m.me.setAttribute('cy', y);
+    m.cone.setAttribute('d', `M${x},${y} L${x + L * Math.cos(a - s)},${y + L * Math.sin(a - s)} A${L},${L} 0 0 1 ${x + L * Math.cos(a + s)},${y + L * Math.sin(a + s)} Z`); };
+  // spots bar at the bottom
+  o.spots.forEach((s, i) => { const b = document.createElement('button'); b.innerHTML = `<img src="./${s.thumb}" alt=""><span>${s.title.toUpperCase()}</span>`; b.onclick = () => go(i); document.getElementById('nm-strip').appendChild(b); });
+  // full floor plan: 2D / 3D (solid walls, drag to rotate), click a point to enter
+  const fp = document.getElementById('nm-fp'), v2 = document.getElementById('nm-fp2d'), cv = document.getElementById('nm-fp3d'), cap = document.getElementById('nm-fpcap');
+  const big = plan2d(true); v2.appendChild(big.sv); let mode = '2d', yaw = -0.6, pitch = 0.95, img = new Image(); img.src = './floorplan.png';
+  const openFp = () => { fp.style.display = 'flex'; setMode(mode); }; const closeFp = () => { fp.style.display = 'none'; };
+  document.getElementById('nm-exp').onclick = openFp; document.getElementById('nm-mini').onclick = openFp; document.getElementById('nm-fpx').onclick = closeFp;
+  fp.onclick = (e) => { if (e.target === fp) closeFp(); };
+  const setMode = (m) => { mode = m; fp.querySelectorAll('.tog button').forEach(b => b.classList.toggle('on', b.dataset.m === m));
+    v2.style.display = m === '2d' ? 'block' : 'none'; cv.style.display = m === '3d' ? 'block' : 'none';
+    cap.innerHTML = m === '2d' ? 'FLOOR PLAN &middot; CLICK A POINT TO ENTER' : '3D &middot; DRAG TO ROTATE &middot; CLICK A POINT TO ENTER'; if (m === '3d') draw3d(); };
+  fp.querySelectorAll('.tog button').forEach(b => b.onclick = () => setMode(b.dataset.m));
+  const cx = (box[0] + box[3]) / 2, cz = (box[2] + box[5]) / 2, span = Math.max(box[3] - box[0], box[5] - box[2]), WH = Math.min(H * 0.82, 2.4), T = 0.12;
+  let dots3d = [];
+  function draw3d() {
+    const r = cv.getBoundingClientRect(), dpr = devicePixelRatio || 1; cv.width = r.width * dpr; cv.height = r.height * dpr;
+    const g = cv.getContext('2d'); g.setTransform(dpr, 0, 0, dpr, 0, 0); g.clearRect(0, 0, r.width, r.height);
+    const S = Math.min(r.width, r.height) * 0.78 / span, cy_ = Math.cos(yaw), sy = Math.sin(yaw), sp = Math.sin(pitch), cp = Math.cos(pitch);
+    const pr = (x, y, z) => { const u = (x - cx) * cy_ - (z - cz) * sy, v = (x - cx) * sy + (z - cz) * cy_;
+      return [r.width / 2 + u * S, r.height / 2 + 30 + (v * sp - y * cp) * S, v * cp + y * sp]; };
+    // floor: the top-down picture, an affine image of the floor plane
+    const o0 = pr(f.x0, 0, f.z0), ox = pr(f.x0 + 1 / f.px, 0, f.z0), oz = pr(f.x0, 0, f.z0 + 1 / f.px);
+    g.save(); g.globalAlpha = 0.5; g.setTransform(dpr * (ox[0] - o0[0]), dpr * (ox[1] - o0[1]), dpr * (oz[0] - o0[0]), dpr * (oz[1] - o0[1]), dpr * o0[0], dpr * o0[1]);
+    if (img.complete) g.drawImage(img, 0, 0); g.restore(); g.setTransform(dpr, 0, 0, dpr, 0, 0);
+    // solid walls: prisms, faces drawn back to front
+    const faces = [];
+    walls.forEach(w => { const dx = w[2] - w[0], dz = w[3] - w[1], L = Math.hypot(dx, dz) || 1, nx = -dz / L * T / 2, nz = dx / L * T / 2, ex = dx / L * T / 2, ez = dz / L * T / 2;
+      const c = [[w[0] - ex + nx, w[1] - ez + nz], [w[2] + ex + nx, w[3] + ez + nz], [w[2] + ex - nx, w[3] + ez - nz], [w[0] - ex - nx, w[1] - ez - nz]];
+      for (let k = 0; k < 4; k++) { const a = c[k], b = c[(k + 1) % 4]; const q = [pr(a[0], 0, a[1]), pr(b[0], 0, b[1]), pr(b[0], WH, b[1]), pr(a[0], WH, a[1])];
+        const mx = (a[0] + b[0]) / 2 - (w[0] + w[2]) / 2, mz = (a[1] + b[1]) / 2 - (w[1] + w[3]) / 2, lit = 0.72 + 0.28 * Math.abs((mx * cy_ - mz * sy) / (Math.hypot(mx, mz) || 1));
+        faces.push({ q, d: q.reduce((s, p) => s + p[2], 0) / 4, col: `rgb(${Math.round(225 * lit)},${Math.round(217 * lit)},${Math.round(200 * lit)})` }); }
+      const top = c.map(p => pr(p[0], WH, p[1])); faces.push({ q: top, d: top.reduce((s, p) => s + p[2], 0) / 4 + 0.01, col: '#f4ede0' }); });
+    faces.sort((a, b) => a.d - b.d).forEach(F => { g.beginPath(); F.q.forEach((p, i) => i ? g.lineTo(p[0], p[1]) : g.moveTo(p[0], p[1])); g.closePath(); g.fillStyle = F.col; g.fill(); g.strokeStyle = '#00000022'; g.stroke(); });
+    dots3d = o.spots.map((s, i) => { const p = pr(s.x, 1.0, s.z); g.beginPath(); g.arc(p[0], p[1], 9, 0, 7); g.fillStyle = '#e3a96b'; g.fill(); g.lineWidth = 2; g.strokeStyle = '#fff'; g.stroke();
+      g.font = '600 12px ui-monospace,Menlo,monospace'; g.textAlign = 'center'; g.lineWidth = 3; g.strokeStyle = '#000b'; g.strokeText(s.title.toUpperCase(), p[0], p[1] - 14); g.fillStyle = '#f4efe6'; g.fillText(s.title.toUpperCase(), p[0], p[1] - 14);
+      return [p[0], p[1], i]; });
+  }
+  let drag = null;
+  cv.addEventListener('pointerdown', e => { drag = [e.clientX, e.clientY, yaw, pitch, 0]; cv.setPointerCapture(e.pointerId); });
+  cv.addEventListener('pointermove', e => { if (!drag) return; const dx = e.clientX - drag[0], dy = e.clientY - drag[1]; drag[4] = Math.max(drag[4], Math.hypot(dx, dy));
+    yaw = drag[2] + dx * 0.008; pitch = Math.max(0.45, Math.min(1.45, drag[3] - dy * 0.006)); draw3d(); });
+  cv.addEventListener('pointerup', e => { const moved = drag && drag[4] > 5; drag = null; if (moved) return; const r = cv.getBoundingClientRect();
+    const hit = dots3d.find(d => Math.hypot(d[0] - (e.clientX - r.left), d[1] - (e.clientY - r.top)) < 16); if (hit) { go(hit[2]); closeFp(); } });
+  addEventListener('resize', () => { if (fp.style.display === 'flex' && mode === '3d') draw3d(); });
+  addEventListener('keydown', e => { if (e.key === 'Escape') { closeFp(); closeHelp(); } }, true);
+  setInterval(() => { putMe(mini); if (fp.style.display === 'flex') putMe(big); }, 150);
+  // walk mode stands on the floor inside the room: entered from outside (orbit / fly), it first goes to the nearest spot
+  const inRoom = (c) => c && c.x > box[0] + 0.15 && c.x < box[3] - 0.15 && c.z > box[2] + 0.15 && c.z < box[5] - 0.15 && c.y > 0.4 && c.y < Math.min(box[4] - 0.2, 2.4);
+  let fixing = false;
+  const hookWalk = () => { const v = window.viewer; if (!v || !v.events) return setTimeout(hookWalk, 300);
+    v.events.on('cameraMode:changed', (m) => { if (m !== 'walk' || fixing) return; const c = camState(); if (inRoom(c)) return;
+      fixing = true; v.state.cameraMode = 'orbit'; let best = 0, bd = 1e9; o.spots.forEach((s, i) => { const d = c ? Math.hypot(s.x - c.x, s.z - c.z) : i; if (d < bd) { bd = d; best = i; } });
+      go(best); setTimeout(() => { try { v.toggleWalk(); } catch (e) {} fixing = false; }, 1600); }); };
+  hookWalk();
+  // first visit: how to move (like splattour's card); the ? button opens it again
+  const touch = matchMedia('(pointer:coarse)').matches || /Mobi|Android|iPhone|iPad/.test(navigator.userAgent);
+  const mouse = (k) => `<svg width="46" height="34" viewBox="0 0 46 34" fill="none" stroke="#ddd" stroke-width="1.6"><rect x="6" y="3" width="16" height="28" rx="8"/><line x1="14" y1="3" x2="14" y2="12"/>${k === 'look' ? '<path d="M8 3h6v9H6V11a8 8 0 0 1 2-8z" fill="#e3a96b" stroke="none"/><path d="M28 14l6-6m0 0h-4m4 0v4" stroke="#e3a96b"/>' : k === 'zoom' ? '<line x1="14" y1="7" x2="14" y2="11" stroke="#e3a96b" stroke-width="3"/><path d="M32 6v20m-3-17l3-3 3 3m-6 14l3 3 3-3" stroke="#e3a96b"/>' : '<path d="M8 3h6v9H6V11a8 8 0 0 1 2-8z" fill="#e3a96b" stroke="none"/><path d="M26 17h8" stroke="#e3a96b" stroke-dasharray="2 2"/><circle cx="40" cy="17" r="4" stroke="#e3a96b"/><circle cx="40" cy="17" r="1.5" fill="#e3a96b" stroke="none"/>'}</svg>`;
+  const rowsDesk = [[`<div class="keys"><b>W</b><b>A</b><b>S</b><b>D</b></div>`, 'MOVE'], [mouse('look'), 'LOOK'], [mouse('zoom'), 'ZOOM'], [mouse('walk'), 'WALK TO']];
+  const rowsTouch = [[`<svg width="44" height="44" viewBox="0 0 44 44" fill="none" stroke="#ddd" stroke-width="1.6"><circle cx="22" cy="22" r="16"/><circle cx="22" cy="22" r="7" fill="#e3a96b" stroke="none"/><path d="M22 2v4m0 32v4M2 22h4m32 0h4" stroke="#e3a96b"/></svg>`, 'MOVE (JOYSTICK)'],
+    [`<svg width="46" height="40" viewBox="0 0 46 40" fill="none" stroke="#ddd" stroke-width="1.6"><path d="M24 36V18a3 3 0 0 1 6 0v8l6 1a3 3 0 0 1 2 3l-1 6"/><path d="M24 22v-9a3 3 0 0 0-6 0v15l-3-3a3 3 0 0 0-4 4l7 7"/><path d="M6 10q4-6 10-6" stroke="#e3a96b" stroke-dasharray="2 2"/></svg>`, 'LOOK (DRAG)'],
+    [`<svg width="40" height="40" viewBox="0 0 40 40" fill="none" stroke="#e3a96b" stroke-width="1.6"><circle cx="20" cy="20" r="15" opacity=".6"/><circle cx="20" cy="20" r="9"/><circle cx="20" cy="20" r="4" fill="#e3a96b"/></svg>`, 'WALK (TAP A SPOT)']];
+  document.getElementById('nm-rows').innerHTML = (touch ? rowsTouch : rowsDesk).map(r => `<div class="row"><div class="ic">${r[0]}</div><div>${r[1]}</div></div>`).join('');
+  const help = document.getElementById('nm-help'), openHelp = () => { help.style.display = 'flex'; },
+    closeHelp = () => { help.style.display = 'none'; try { localStorage.setItem('nammaHelp', '1'); } catch (e) {} };
+  document.getElementById('nm-hx').onclick = closeHelp; document.getElementById('nm-hgo').onclick = closeHelp; help.onclick = (e) => { if (e.target === help) closeHelp(); };
+  document.getElementById('nm-helpbtn').onclick = openHelp;
+  let seen = '1'; try { seen = localStorage.getItem('nammaHelp'); } catch (e) {}
+  if (seen !== '1') { const t0 = Date.now(), k = setInterval(() => { const v = window.viewer; if ((v && v.state && v.state.loaded) || Date.now() - t0 > 30000) { clearInterval(k); openHelp(); } }, 300); }
   // objects (objects3d.py): search by name / description, and click an object in the 3D view to see what it is
   const obs = o.objects || [], find = document.getElementById('nm-find'), q = document.getElementById('nm-q'), hits = document.getElementById('nm-hits'), card = document.getElementById('nm-card');
   const row = (x) => `${x.thumb ? `<img src="./${x.thumb}" alt="">` : ''}<span><b>${x.label}</b><br><small>${x.size}</small></span>`;
@@ -99,6 +210,51 @@ def euler_xyz(M):
     from scipy.spatial.transform import Rotation
     return Rotation.from_matrix(M).as_euler('xyz', degrees=True)
 
+def walls2d(Q, a, lo, hi, h, res=0.04):
+    """Straight walls for the floor plan (2D lines, 3D solid walls in the tour): where splats stack up above furniture height
+    (0.55-0.92 x room height, so beds, sofas and tables drop out), Hough lines along the room's two main directions, merged per
+    wall. Metres in room coordinates, [[x0, z0, x1, z1], ...]; falls back to the room box when fewer than 3 walls are found."""
+    import cv2
+    from scipy import ndimage
+    box = [[lo[0], lo[2], hi[0], lo[2]], [hi[0], lo[2], hi[0], hi[2]], [hi[0], hi[2], lo[0], hi[2]], [lo[0], hi[2], lo[0], lo[2]]]
+    m = (Q[:, 1] > 0.55 * h) & (Q[:, 1] < 0.92 * h) & (a > 0.2) & np.all((Q[:, [0, 2]] >= lo[[0, 2]]) & (Q[:, [0, 2]] <= hi[[0, 2]]), 1)
+    W, H = int((hi[0] - lo[0]) / res) + 1, int((hi[2] - lo[2]) / res) + 1
+    if m.sum() < 1000: return [[round(float(v), 3) for v in w] for w in box], 'box'
+    g, _, _ = np.histogram2d(((Q[m, 2] - lo[2]) / res).astype(int), ((Q[m, 0] - lo[0]) / res).astype(int), bins=(H, W), range=((0, H), (0, W)), weights=a[m])
+    g = ndimage.gaussian_filter(g, 1.0); nz = g[g > 0]; mask = g > max(0.1 * np.percentile(nz, 99), 4 * np.median(nz))   # above floaters
+    mask = ndimage.binary_closing(mask, iterations=2); lab, n = ndimage.label(mask)
+    if n: mask &= np.isin(lab, 1 + np.flatnonzero(ndimage.sum(mask, lab, range(1, n + 1)) >= 0.5 / res))
+    L = cv2.HoughLinesP(mask.astype(np.uint8) * 255, 1, np.pi / 360, int(0.4 / res), minLineLength=int(0.6 / res), maxLineGap=int(0.35 / res))
+    if L is None: return [[round(float(v), 3) for v in w] for w in box], 'box'
+    L = L.reshape(-1, 4).astype(float); d = L[:, 2:] - L[:, :2]; ln = np.hypot(d[:, 0], d[:, 1]); ang = np.arctan2(d[:, 1], d[:, 0]) % (np.pi / 2)
+    th = np.angle(np.sum(ln * np.exp(4j * ang))) / 4                                         # the room's main direction (mod 90 deg)
+    walls = []
+    for k in range(2):
+        u = np.array([np.cos(th + k * np.pi / 2), np.sin(th + k * np.pi / 2)]); v = np.array([-u[1], u[0]])
+        off = (np.arctan2(d[:, 1], d[:, 0]) - (th + k * np.pi / 2) + np.pi / 2) % np.pi - np.pi / 2
+        sel = np.abs(off) < np.radians(6)
+        if not sel.any(): continue
+        c = (L[sel, :2] + L[sel, 2:]) / 2; vv = c @ v; a0, a1 = L[sel, :2] @ u, L[sel, 2:] @ u; lens = ln[sel]
+        order = np.argsort(vv); groups, cur = [], [order[0]]
+        for i in order[1:]:                                                                   # lines within 12 cm across = one wall
+            if vv[i] - vv[cur[-1]] < 0.12 / res: cur.append(i)
+            else: groups.append(cur); cur = [i]
+        groups.append(cur)
+        for gi in groups:
+            off_v = float(np.average(vv[gi], weights=lens[gi])); iv = sorted((min(a0[i], a1[i]), max(a0[i], a1[i])) for i in gi)
+            s0, s1 = iv[0]
+            for x0, x1 in iv[1:] + [(1e18, 1e18)]:                                            # merge pieces with gaps < 40 cm
+                if x0 - s1 < 0.4 / res: s1 = max(s1, x1); continue
+                p0, p1 = s0 * u + off_v * v, s1 * u + off_v * v
+                t = np.linspace(0, 1, max(2, int(s1 - s0))); pr = (p0[None] + t[:, None] * (p1 - p0)[None]).round().astype(int)
+                near = ndimage.binary_dilation(mask, iterations=2)[np.clip(pr[:, 1], 0, H - 1), np.clip(pr[:, 0], 0, W - 1)]
+                if (s1 - s0) * res >= 0.5 and near.mean() >= 0.6:                             # a real wall: mostly on wall pixels
+                    walls.append([round(float(lo[0] + p0[0] * res), 3), round(float(lo[2] + p0[1] * res), 3),
+                                  round(float(lo[0] + p1[0] * res), 3), round(float(lo[2] + p1[1] * res), 3)])
+                s0, s1 = x0, x1
+    return (walls, 'hough') if len(walls) >= 3 else ([[round(float(v), 3) for v in w] for w in box], 'box')
+
+
 def floorplan(run, tour, M=None):
     """Floor plan like splattour's: the model seen from straight above with the ceiling and wall tops cut off (each pixel = the
     highest splat below the cut, in its own colour, holes filled from the nearest splat), walls drawn dark on top (splat density
@@ -149,6 +305,10 @@ def floorplan(run, tour, M=None):
     img = img * (1 - 0.75 * np.clip((g - 0.35) / 0.4, 0, 1))[..., None]
     W2, H2 = (span * out_px).astype(int) + 1
     Image.fromarray((img * 255).clip(0, 255).astype(np.uint8)).resize((int(W2), int(H2)), Image.LANCZOS).save(f'{tour}/floorplan.png')
+    walls, how = walls2d(Q, a, lo, hi, h)                                                  # 2D lines / 3D solid walls in the tour
+    json.dump(dict(walls=walls, height=round(float(h), 2), box=[round(float(x), 3) for x in list(lo) + list(hi)], source=how),
+              open(f'{tour}/walls.json', 'w'))
+    print(f'floor plan walls: {len(walls)} ({how})', flush=True)
     return int(W2), int(H2), float(out_px)
 
 
@@ -268,6 +428,13 @@ def clean(run, tour, out):
     bad = smear_mask(v, pl['box'], pl.get('scale', 1.0)); PlyData([PlyElement.describe(v[~bad], 'vertex')]).write(out)
     print(f'smears removed: {bad.sum()} of {len(v)}', flush=True)
 
+def overlay(html):
+    """The floor plan / spots / controls overlay (OVERLAY) put in, or swapped for an earlier version (tour_publish.py head)."""
+    if 'id="nm-plan"' in html:
+        i = html.rfind('<style>', 0, html.index('id="nm-plan"')); j = html.index('</body>', i); html = html[:i] + html[j:]
+    return html.replace('</body>', OVERLAY + '\n    </body>', 1)
+
+
 def head(html, fmt, bud=4):
     """The viewer start options, put first in <head>. Also used to update a published tour's page (tour_publish.py head)."""
     html = re.sub(r'\n    <script>\(function\(\)\{var q=new URLSearchParams.*?</script>(<style>body:not\(\.namma-ready\).*?</script>)?', '',
@@ -275,12 +442,12 @@ def head(html, fmt, bud=4):
     # streamed LOD: no fixed budget (the viewer sizes it for the device), but 'fullload': the loading screen stays until full
     # detail is in, so nobody sees a blurry room first (owner, 30 Oct: "load full room at once ... else people think it's bad")
     pre = 'if(!q.has("fullload"))q.set("fullload","1");' if fmt == 'lod' else 'if(!q.has("budget"))q.set("budget","%d");' % bud
-    # Quality slider defaults per device. The viewer's own phone default is Performance (1 M splats at half resolution: blurry).
-    # Laptop: High (8 M splats), phone: Default (2 M, full resolution); Performance Mode off. Written once (marker key), so a
-    # visitor's own slider choice is kept afterwards.
-    pre += ('try{if(localStorage.getItem("nammaQ")!=="1"){var m=/Mobi|Android|iPhone|iPad/.test(navigator.userAgent)||'
-            '(navigator.maxTouchPoints>1&&/Macintosh/.test(navigator.userAgent));localStorage.setItem("quality",m?"default":"high");'
-            'localStorage.setItem("performanceMode","false");localStorage.setItem("nammaQ","1");}}catch(e){}')
+    # Defaults per device, written once (marker key), so a visitor's own choice is kept afterwards. Laptop: Quality High (8 M
+    # splats), Performance Mode off. Phone (owner, 31 Oct): Quality Performance, Performance Mode and gaming controls on.
+    pre += ('try{if(localStorage.getItem("nammaQ")!=="2"){var m=/Mobi|Android|iPhone|iPad/.test(navigator.userAgent)||'
+            '(navigator.maxTouchPoints>1&&/Macintosh/.test(navigator.userAgent));localStorage.setItem("quality",m?"performance":"high");'
+            'localStorage.setItem("performanceMode",m?"true":"false");if(m)localStorage.setItem("gamingControls","true");'
+            'localStorage.setItem("nammaQ","2");}}catch(e){}')
     # The viewer draws the room while it streams in (pieces popping in behind the loading bar); hide the 3D view until the
     # viewer reports it loaded (all detail in, with fullload), at most 30 s; dark meanwhile, like the viewer.
     cover = ('<style>body:not(.namma-ready){background:#111}body:not(.namma-ready) canvas{visibility:hidden}</style>'
@@ -346,7 +513,7 @@ def build(run, tour, public, st='npx --no-install splat-transform'):
     html = head(html, fmt, bud)
     html = html.replace("createViewer({ container: document.body, settings, ...options });",
                         "window.viewer = await createViewer({ container: document.body, settings, ...options });")
-    if os.path.exists(f'{tour}/overlay.json'): html = html.replace('</body>', OVERLAY + '\n    </body>')
+    if os.path.exists(f'{tour}/overlay.json'): html = overlay(html)
     open(f'{tour}/index.html', 'w').write(html)
     info = json.load(open(f'{tour}/tour.json')); info.update(smears_removed=int(bad.sum()), collision='collisionUrl' in boot, scene_mb=round((sum(os.path.getsize(os.path.join(dp, f)) for dp, _, fs in os.walk(os.path.dirname(out)) for f in fs) if fmt == 'lod' else os.path.getsize(out)) / 1e6, 1), format=fmt, sh_bands=sh)
     json.dump(info, open(f'{tour}/tour.json', 'w'), indent=1); print('TOUR', json.dumps(info), flush=True)

@@ -1,6 +1,6 @@
 {
  "run": "20261026-0327",
- "rebuild": true,
+ "rebuild": false,
  "model": "graded/model.ply",
  "sh": 3,
  "dst": "tour_graded",
@@ -17,6 +17,9 @@
   "20261027-1849-world-03dd8b50eb66892b7e3b",
   "20261027-1849-world-b16e6e0adb2f8007740e"
  ],
- "note": "run 4 clean model with video colours applied directly (no retraining, fixer_gh grade), single-file SOG tour (fast build); new link tour_graded_url.txt",
- "n": 23
+ "note": "graded run 4 tour, same link: new floor plan (straight solid walls, 2D/3D, click a point to enter), controls card on first visit, spots bar at the bottom, walk mode always on the floor, phone defaults (Performance quality, Performance Mode, gaming controls)",
+ "n": 24,
+ "head": true,
+ "floorplan": true,
+ "folder": "20261026-0327-61a95d994e7c78c23d8b"
 }

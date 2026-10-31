@@ -91,7 +91,8 @@ if __name__ == '__main__':
     if fp or co or rb or hd: sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', 'final')); import make_tour
     if fp:
         print('floor plan redrawn:', make_tour.floorplan(os.path.join(d, run), tour), flush=True)
-        api.upload_file(path_or_fileobj=f'{tour}/floorplan.png', path_in_repo=f'{run}/tour/floorplan.png', repo_id=repo, repo_type='dataset')
+        for x in ('floorplan.png', 'walls.json'):
+            api.upload_file(path_or_fileobj=f'{tour}/{x}', path_in_repo=f'{run}/{src}/{x}', repo_id=repo, repo_type='dataset')
     if co:
         make_tour.collision(os.path.join(d, run), tour)
         api.upload_file(path_or_fileobj=f'{tour}/collision.glb', path_in_repo=f'{run}/tour/collision.glb', repo_id=repo, repo_type='dataset')
@@ -107,7 +108,9 @@ if __name__ == '__main__':
         api.upload_folder(folder_path=tour, path_in_repo=f"{run}/{os.environ.get('TOUR_DST', 'tour')}", repo_id=repo, repo_type='dataset')
     if hd and not rb:                                                                     # page only: current viewer start options
         h = open(f'{tour}/index.html').read(); b = re.search(r'q\.set\("budget","(\d+)"\)', h)
-        open(f'{tour}/index.html', 'w').write(make_tour.head(h, 'lod' if os.path.isdir(f'{tour}/lod') else 'sog', int(b.group(1)) if b else 4))
+        h = make_tour.head(h, 'lod' if os.path.isdir(f'{tour}/lod') else 'sog', int(b.group(1)) if b else 4)
+        if os.path.exists(f'{tour}/overlay.json'): h = make_tour.overlay(h)                # current floor plan / spots / controls UI
+        open(f'{tour}/index.html', 'w').write(h)
         print('page start options updated', flush=True)
         api.upload_file(path_or_fileobj=f'{tour}/index.html', path_in_repo=f'{run}/{src}/index.html', repo_id=repo, repo_type='dataset')
     publish(api, user, repo, run, tour, url_path=f"{run}/{os.environ.get('TOUR_URL_NAME', 'tour_url.txt')}")   # a new name keeps the old link

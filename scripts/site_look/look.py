@@ -31,6 +31,13 @@ def visit_tour(ctx, url, k):
         except Exception as e: rec['load_wait_error'] = str(e)[:200]
         rec['loaded_after_s'] = round(15 + time.time() - t0); print('loaded after', rec['loaded_after_s'], 's', flush=True)
         page.wait_for_timeout(3000); shot(page, f'tour{k}_a_loaded')
+        try:                                                                              # our overlay: controls card, floor plan 2D / 3D
+            if page.locator('#nm-hgo').is_visible(): page.click('#nm-hgo', timeout=5000)
+            if page.locator('#nm-exp').count():
+                page.click('#nm-exp', timeout=5000); page.wait_for_timeout(1500); shot(page, f'tour{k}_a2_plan2d')
+                page.click('#nm-fp .tog button[data-m="3d"]', timeout=5000); page.wait_for_timeout(1500); shot(page, f'tour{k}_a3_plan3d')
+                page.click('#nm-fpx', timeout=5000); page.wait_for_timeout(500)
+        except Exception as e: rec['overlay_error'] = str(e)[:200]
         W, H = page.viewport_size['width'], page.viewport_size['height']
         page.mouse.move(W / 2, H / 2); page.mouse.down(); page.mouse.move(W / 2 + 300, H / 2, steps=20); page.mouse.up(); page.wait_for_timeout(4000)
         shot(page, f'tour{k}_b_turned')
