@@ -14,13 +14,13 @@ F = np.diag([-1., -1, 1])
 
 # Floor plan minimap (live position dot, clickable spots) + strip of real-photo thumbnails; clicking goes to that spot.
 OVERLAY = """<style>
-  :root{--nm-cream:#f1e9d8;--nm-acc:#e3a96b;--nm-panel:#0e0e0fe6;--nm-line:#ffffff1f}
+  :root{--nm-cream:#f1e9d8;--nm-acc:#e8a96b;--nm-panel:#0e0e0fe6;--nm-line:#ffffff1f}
   #nm-plan{position:fixed;left:16px;top:16px;width:min(30vw,270px);background:var(--nm-panel);border:1px solid var(--nm-line);border-radius:14px;padding:8px;z-index:10;font:11px ui-monospace,Menlo,monospace;color:#cfc7b8;letter-spacing:.12em;backdrop-filter:blur(6px)}
   #nm-plan .wrap{position:relative;cursor:pointer} #nm-plan .bar{display:flex;justify-content:space-between;align-items:center;padding:6px 4px 0}
   #nm-plan button{background:none;border:0;color:#cfc7b8;cursor:pointer;font-size:15px;padding:0 2px}
   .nm-svg{display:block;width:100%;height:auto;border-radius:8px;background:#070707}
   .nm-svg .wall{stroke:var(--nm-cream);stroke-linecap:square;fill:none}
-  .nm-svg .spot{fill:#f4efe6;stroke:#00000088;cursor:pointer} .nm-svg .spot:hover{fill:var(--nm-acc)}
+  .nm-svg .spot{fill:var(--nm-acc);stroke:#fff;stroke-width:2;cursor:pointer} .nm-svg .spot:hover{fill:#ffc58a}
   .nm-svg .lbl{fill:#f4efe6;font:600 13px ui-monospace,Menlo,monospace;letter-spacing:.06em;paint-order:stroke;stroke:#000a;stroke-width:3px}
   .nm-svg .me{fill:var(--nm-acc);stroke:#fff;stroke-width:2} .nm-svg .cone{fill:var(--nm-acc);opacity:.55}
   #nm-strip{position:fixed;left:50%;transform:translateX(-50%);bottom:calc(84px + env(safe-area-inset-bottom));display:flex;gap:8px;z-index:10;max-width:calc(100vw - 32px);overflow-x:auto;padding:6px;background:#0e0e0fb3;border:1px solid var(--nm-line);border-radius:14px;scrollbar-width:none}
@@ -122,7 +122,7 @@ OVERLAY = """<style>
         faces.push({ q, d: q.reduce((s, p) => s + p[2], 0) / 4, col: `rgb(${Math.round(225 * lit)},${Math.round(217 * lit)},${Math.round(200 * lit)})` }); }
       const top = c.map(p => pr(p[0], WH, p[1])); faces.push({ q: top, d: top.reduce((s, p) => s + p[2], 0) / 4 + 0.01, col: '#f4ede0' }); });
     faces.sort((a, b) => a.d - b.d).forEach(F => { g.beginPath(); F.q.forEach((p, i) => i ? g.lineTo(p[0], p[1]) : g.moveTo(p[0], p[1])); g.closePath(); g.fillStyle = F.col; g.fill(); g.strokeStyle = '#00000022'; g.stroke(); });
-    dots3d = o.spots.map((s, i) => { const p = pr(s.x, 1.0, s.z); g.beginPath(); g.arc(p[0], p[1], 9, 0, 7); g.fillStyle = '#e3a96b'; g.fill(); g.lineWidth = 2; g.strokeStyle = '#fff'; g.stroke();
+    dots3d = o.spots.map((s, i) => { const p = pr(s.x, 1.0, s.z); g.beginPath(); g.arc(p[0], p[1], 9, 0, 7); g.fillStyle = '#e8a96b'; g.fill(); g.lineWidth = 2; g.strokeStyle = '#fff'; g.stroke();
       g.font = '600 12px ui-monospace,Menlo,monospace'; g.textAlign = 'center'; g.lineWidth = 3; g.strokeStyle = '#000b'; g.strokeText(s.title.toUpperCase(), p[0], p[1] - 14); g.fillStyle = '#f4efe6'; g.fillText(s.title.toUpperCase(), p[0], p[1] - 14);
       return [p[0], p[1], i]; });
   }
@@ -145,11 +145,11 @@ OVERLAY = """<style>
   hookWalk();
   // first visit: how to move (like splattour's card); the ? button opens it again
   const touch = matchMedia('(pointer:coarse)').matches || /Mobi|Android|iPhone|iPad/.test(navigator.userAgent);
-  const mouse = (k) => `<svg width="46" height="34" viewBox="0 0 46 34" fill="none" stroke="#ddd" stroke-width="1.6"><rect x="6" y="3" width="16" height="28" rx="8"/><line x1="14" y1="3" x2="14" y2="12"/>${k === 'look' ? '<path d="M8 3h6v9H6V11a8 8 0 0 1 2-8z" fill="#e3a96b" stroke="none"/><path d="M28 14l6-6m0 0h-4m4 0v4" stroke="#e3a96b"/>' : k === 'zoom' ? '<line x1="14" y1="7" x2="14" y2="11" stroke="#e3a96b" stroke-width="3"/><path d="M32 6v20m-3-17l3-3 3 3m-6 14l3 3 3-3" stroke="#e3a96b"/>' : '<path d="M8 3h6v9H6V11a8 8 0 0 1 2-8z" fill="#e3a96b" stroke="none"/><path d="M26 17h8" stroke="#e3a96b" stroke-dasharray="2 2"/><circle cx="40" cy="17" r="4" stroke="#e3a96b"/><circle cx="40" cy="17" r="1.5" fill="#e3a96b" stroke="none"/>'}</svg>`;
+  const mouse = (k) => `<svg width="46" height="34" viewBox="0 0 46 34" fill="none" stroke="#ddd" stroke-width="1.6"><rect x="6" y="3" width="16" height="28" rx="8"/><line x1="14" y1="3" x2="14" y2="12"/>${k === 'look' ? '<path d="M8 3h6v9H6V11a8 8 0 0 1 2-8z" fill="#e8a96b" stroke="none"/><path d="M28 14l6-6m0 0h-4m4 0v4" stroke="#e8a96b"/>' : k === 'zoom' ? '<line x1="14" y1="7" x2="14" y2="11" stroke="#e8a96b" stroke-width="3"/><path d="M32 6v20m-3-17l3-3 3 3m-6 14l3 3 3-3" stroke="#e8a96b"/>' : '<path d="M8 3h6v9H6V11a8 8 0 0 1 2-8z" fill="#e8a96b" stroke="none"/><path d="M26 17h8" stroke="#e8a96b" stroke-dasharray="2 2"/><circle cx="40" cy="17" r="4" stroke="#e8a96b"/><circle cx="40" cy="17" r="1.5" fill="#e8a96b" stroke="none"/>'}</svg>`;
   const rowsDesk = [[`<div class="keys"><b>W</b><b>A</b><b>S</b><b>D</b></div>`, 'MOVE'], [mouse('look'), 'LOOK'], [mouse('zoom'), 'ZOOM'], [mouse('walk'), 'WALK TO']];
-  const rowsTouch = [[`<svg width="44" height="44" viewBox="0 0 44 44" fill="none" stroke="#ddd" stroke-width="1.6"><circle cx="22" cy="22" r="16"/><circle cx="22" cy="22" r="7" fill="#e3a96b" stroke="none"/><path d="M22 2v4m0 32v4M2 22h4m32 0h4" stroke="#e3a96b"/></svg>`, 'MOVE (JOYSTICK)'],
-    [`<svg width="46" height="40" viewBox="0 0 46 40" fill="none" stroke="#ddd" stroke-width="1.6"><path d="M24 36V18a3 3 0 0 1 6 0v8l6 1a3 3 0 0 1 2 3l-1 6"/><path d="M24 22v-9a3 3 0 0 0-6 0v15l-3-3a3 3 0 0 0-4 4l7 7"/><path d="M6 10q4-6 10-6" stroke="#e3a96b" stroke-dasharray="2 2"/></svg>`, 'LOOK (DRAG)'],
-    [`<svg width="40" height="40" viewBox="0 0 40 40" fill="none" stroke="#e3a96b" stroke-width="1.6"><circle cx="20" cy="20" r="15" opacity=".6"/><circle cx="20" cy="20" r="9"/><circle cx="20" cy="20" r="4" fill="#e3a96b"/></svg>`, 'WALK (TAP A SPOT)']];
+  const rowsTouch = [[`<svg width="44" height="44" viewBox="0 0 44 44" fill="none" stroke="#ddd" stroke-width="1.6"><circle cx="22" cy="22" r="16"/><circle cx="22" cy="22" r="7" fill="#e8a96b" stroke="none"/><path d="M22 2v4m0 32v4M2 22h4m32 0h4" stroke="#e8a96b"/></svg>`, 'MOVE (JOYSTICK)'],
+    [`<svg width="46" height="40" viewBox="0 0 46 40" fill="none" stroke="#ddd" stroke-width="1.6"><path d="M24 36V18a3 3 0 0 1 6 0v8l6 1a3 3 0 0 1 2 3l-1 6"/><path d="M24 22v-9a3 3 0 0 0-6 0v15l-3-3a3 3 0 0 0-4 4l7 7"/><path d="M6 10q4-6 10-6" stroke="#e8a96b" stroke-dasharray="2 2"/></svg>`, 'LOOK (DRAG)'],
+    [`<svg width="40" height="40" viewBox="0 0 40 40" fill="none" stroke="#e8a96b" stroke-width="1.6"><circle cx="20" cy="20" r="15" opacity=".6"/><circle cx="20" cy="20" r="9"/><circle cx="20" cy="20" r="4" fill="#e8a96b"/></svg>`, 'WALK (TAP A SPOT)']];
   document.getElementById('nm-rows').innerHTML = (touch ? rowsTouch : rowsDesk).map(r => `<div class="row"><div class="ic">${r[0]}</div><div>${r[1]}</div></div>`).join('');
   const help = document.getElementById('nm-help'), openHelp = () => { help.style.display = 'flex'; },
     closeHelp = () => { help.style.display = 'none'; try { localStorage.setItem('nammaHelp', '1'); } catch (e) {} };
