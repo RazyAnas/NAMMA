@@ -33,6 +33,11 @@ def sh(c, check=False):
 
 def say(*a): print(f'[{time.time()-T0:5.0f}s]', *a, flush=True)
 
+# no GPU = hours of CPU work that can never finish (30 Oct: a new account's run got no accelerator and ran 6 h on CPU): stop now
+_g = subprocess.run('nvidia-smi --query-gpu=name,memory.total --format=csv,noheader', shell=True, capture_output=True, text=True)
+say('GPUs:', _g.stdout.strip().replace('\n', ' | ') or 'none')
+if _g.returncode or not _g.stdout.strip():
+    raise SystemExit('NO GPU in this Kaggle session (account not phone-verified, or no GPU quota left): stopping before any work')
 sh(f'git clone -q --depth 1 -b claude/wonderful-cori-i3fn41 https://github.com/RazyAnas/NAMMA {W}/repo', check=True)
 F = f'{W}/repo/colab/real_scenes/final'; sys.path.insert(0, F)
 sh('ls /kaggle/input /kaggle/input/* | head -30')
