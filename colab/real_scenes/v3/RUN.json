@@ -1,5 +1,5 @@
 {
- "n": 14,
+ "n": 15,
  "collect": false,
  "source": "dl3dv-video:d961728dc5b54ceb70018b4d433041737a51957ebe9f90747097b777c0879f73",
  "env": {
@@ -9,5 +9,6 @@
  },
  "scene": "DL3DV-ALL-video 10K/d961728d...: whole house, 17 min, 8 GB (test video, non-commercial data, testing only)",
  "how": "change n (and source) and push to start a run: .github/workflows/namma-v3.yml -> gh_run.py",
- "note": "whole-house PRE-CHECK (plan of 30 Oct): frames at run 4's density, cameras, rooms -> chunks, 2 GPU benchmarks (one model on both T4s vs one chunk per T4), gate -> precheck.json. No splat training."
+ "note": "whole-house PRE-CHECK, rerun with fixes: GPU check at start, ffmpeg frame reader (NVDEC/all cores), live SfM log; own Kaggle job name so the old CPU-only session (namma-v3) cannot clash. Gate -> precheck.json; no splat training.",
+ "kernel": "namma-house"
 }
