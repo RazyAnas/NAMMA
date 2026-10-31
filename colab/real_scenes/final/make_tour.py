@@ -14,56 +14,82 @@ F = np.diag([-1., -1, 1])
 
 # Floor plan minimap (live position dot, clickable spots) + strip of real-photo thumbnails; clicking goes to that spot.
 OVERLAY = """<style>
-  :root{--nm-cream:#f1e9d8;--nm-acc:#e8a96b;--nm-panel:#0e0e0fe6;--nm-line:#ffffff1f}
-  #nm-plan{position:fixed;left:16px;top:16px;width:min(30vw,270px);background:var(--nm-panel);border:1px solid var(--nm-line);border-radius:14px;padding:8px;z-index:10;font:11px ui-monospace,Menlo,monospace;color:#cfc7b8;letter-spacing:.12em;backdrop-filter:blur(6px)}
-  #nm-plan .wrap{position:relative;cursor:pointer} #nm-plan .bar{display:flex;justify-content:space-between;align-items:center;padding:6px 4px 0}
-  #nm-plan button{background:none;border:0;color:#cfc7b8;cursor:pointer;font-size:15px;padding:0 2px}
-  .nm-svg{display:block;width:100%;height:auto;border-radius:8px;background:#070707}
-  .nm-svg .wall{stroke:var(--nm-cream);stroke-linecap:square;fill:none}
+  /* SuperSplat viewer's design system (its index.css tokens): Arial, panels of 50 % black + 20 px blur, 16 px corners,
+     1 px white-8 % borders, 34 px icon buttons (filled icon + 40 % black outline), keycap chips; our accent stays #e8a96b */
+  :root{--nm-text:#e0dcdd;--nm-light:#fff;--nm-dark:#aaa;--nm-acc:#e8a96b;--nm-wall:#f1e9d8;--nm-panel:rgba(0,0,0,.5);--nm-line:rgba(255,255,255,.08)}
+  .nm-ui,.nm-ui *{box-sizing:border-box;font-family:Arial,sans-serif;-webkit-user-select:none;user-select:none}
+  .nm-panel{background:var(--nm-panel);backdrop-filter:blur(20px);-webkit-backdrop-filter:blur(20px);border:1px solid var(--nm-line);color:var(--nm-text)}
+  .nm-btn{width:34px;height:34px;padding:0;margin:0;border:0;cursor:pointer;color:var(--nm-text);background:transparent;display:flex;align-items:center;justify-content:center}
+  .nm-btn:hover{color:var(--nm-light)} .nm-btn svg{display:block}
+  .nm-btn svg>g.s{fill:none;stroke:#000;stroke-width:2;stroke-linejoin:round;opacity:.4} .nm-btn svg>g.f{fill:currentColor;stroke:none}
+  .nm-group{display:flex;background:rgba(0,0,0,.3);border-radius:6px}
+  .nm-key{display:inline-flex;align-items:center;justify-content:center;min-width:20px;height:20px;padding:0 5px;border-radius:4px;border:1px solid rgba(255,255,255,.14);border-bottom-color:rgba(255,255,255,.26);background:rgba(255,255,255,.08);color:var(--nm-light);font-size:11px}
+  .nm-pill{height:34px;padding:0 20px;border:1px solid rgba(255,255,255,.1);border-radius:8px;font-size:13px;cursor:pointer;color:var(--nm-dark);background:rgba(255,255,255,.04);transition:background-color 250ms ease,color 250ms ease}
+  .nm-pill:hover,.nm-pill.on{color:var(--nm-light);background:rgba(255,255,255,.1)}
+  #nm-plan{position:fixed;left:max(16px,env(safe-area-inset-left));top:max(16px,env(safe-area-inset-top));width:min(30vw,260px);border-radius:16px;padding:8px;z-index:10}
+  #nm-plan .wrap{position:relative;cursor:pointer;border-radius:10px;overflow:hidden}
+  #nm-plan .bar{display:flex;justify-content:space-between;align-items:center;padding:4px 2px 0 6px;font-size:12px}
+  .nm-svg{display:block;width:100%;height:auto;background:#141414}
+  .nm-svg .wall{stroke:var(--nm-wall);stroke-linecap:square;fill:none}
   .nm-svg .spot{fill:var(--nm-acc);stroke:#fff;stroke-width:2;cursor:pointer} .nm-svg .spot:hover{fill:#ffc58a}
-  .nm-svg .lbl{fill:#f4efe6;font:600 13px ui-monospace,Menlo,monospace;letter-spacing:.06em;paint-order:stroke;stroke:#000a;stroke-width:3px}
-  .nm-svg .me{fill:var(--nm-acc);stroke:#fff;stroke-width:2} .nm-svg .cone{fill:var(--nm-acc);opacity:.55}
-  #nm-strip{position:fixed;left:50%;transform:translateX(-50%);bottom:calc(84px + env(safe-area-inset-bottom));display:flex;gap:8px;z-index:10;max-width:calc(100vw - 32px);overflow-x:auto;padding:6px;background:#0e0e0fb3;border:1px solid var(--nm-line);border-radius:14px;scrollbar-width:none}
-  #nm-strip button{border:2px solid #ffffff22;border-radius:9px;padding:0;background:#000;cursor:pointer;position:relative;flex:none}
+  .nm-svg .lbl{fill:#fff;font:bold 13px Arial,sans-serif;paint-order:stroke;stroke:rgba(0,0,0,.7);stroke-width:3px}
+  .nm-svg .me{fill:var(--nm-acc);stroke:#fff;stroke-width:2} .nm-svg .cone{fill:var(--nm-acc);opacity:.5}
+  #nm-strip{position:fixed;left:50%;transform:translateX(-50%);bottom:calc(max(16px,env(safe-area-inset-bottom)) + 50px);display:flex;gap:6px;z-index:10;max-width:calc(100vw - 32px);overflow-x:auto;padding:6px;border-radius:16px;scrollbar-width:none}
+  #nm-strip button{border:1px solid rgba(255,255,255,.1);border-radius:8px;padding:0;background:#141414;cursor:pointer;position:relative;flex:none;overflow:hidden;transition:border-color 250ms ease}
   #nm-strip button:hover{border-color:var(--nm-acc)}
-  #nm-strip img{width:104px;height:64px;object-fit:cover;display:block;border-radius:7px}
-  #nm-strip span{position:absolute;left:5px;bottom:3px;color:#fff;font:600 10px ui-monospace,Menlo,monospace;letter-spacing:.08em;text-shadow:0 0 4px #000}
-  #nm-fp,#nm-help{position:fixed;inset:0;z-index:30;display:none;align-items:center;justify-content:center;background:#000a;backdrop-filter:blur(10px)}
-  #nm-fp .box{position:relative;width:min(92vw,980px);height:min(78vh,700px);background:#0a0a0a;border:1px solid var(--nm-line);border-radius:16px;overflow:hidden}
-  #nm-fp .tog{position:absolute;right:14px;top:14px;display:flex;background:#141414;border:1px solid var(--nm-line);border-radius:999px;padding:3px;z-index:2}
-  #nm-fp .tog button{background:none;border:0;color:#bbb;font:600 13px ui-monospace,Menlo,monospace;letter-spacing:.1em;padding:6px 14px;border-radius:999px;cursor:pointer}
-  #nm-fp .tog button.on{background:#3a2a1c;color:var(--nm-acc)}
-  #nm-fp .x,#nm-help .x{position:absolute;left:14px;top:14px;width:34px;height:34px;border-radius:50%;border:1px solid var(--nm-line);background:#141414;color:#ddd;font-size:16px;cursor:pointer;z-index:2}
-  #nm-fp .v2d,#nm-fp canvas{position:absolute;inset:0;width:100%;height:100%} #nm-fp .v2d svg{width:100%;height:100%;background:none}
-  #nm-fp .cap{position:absolute;left:0;right:0;bottom:12px;text-align:center;color:#a9a39a;font:12px ui-monospace,Menlo,monospace;letter-spacing:.18em}
-  #nm-help .card{position:relative;width:min(88vw,460px);background:#0d0d0d;border:1px solid var(--nm-line);border-radius:18px;padding:22px 26px 14px;color:#ddd;font:13px ui-monospace,Menlo,monospace;letter-spacing:.14em}
-  #nm-help h4{margin:0 0 10px;color:var(--nm-acc);font:600 13px ui-monospace,Menlo,monospace;letter-spacing:.28em}
-  #nm-help .x{left:auto;right:18px;top:16px}
-  #nm-help .row{display:flex;align-items:center;gap:22px;border-top:1px solid var(--nm-line);padding:14px 0}
-  #nm-help .ic{width:130px;display:flex;justify-content:center;align-items:center;flex:none}
-  #nm-help .keys{display:grid;grid-template-columns:repeat(3,30px);gap:4px} #nm-help .keys b{display:flex;align-items:center;justify-content:center;height:30px;border:1px solid #ffffff33;border-radius:6px;background:#161616;font-weight:600}
-  #nm-help .keys b:nth-child(1){grid-column:2;grid-row:1} #nm-help .keys b:nth-child(2){grid-column:1;grid-row:2} #nm-help .keys b:nth-child(3){grid-column:2;grid-row:2} #nm-help .keys b:nth-child(4){grid-column:3;grid-row:2}
-  #nm-help .go{display:block;margin:8px auto 4px;background:var(--nm-acc);color:#1a1209;border:0;border-radius:999px;padding:9px 26px;font:700 12px ui-monospace,Menlo,monospace;letter-spacing:.2em;cursor:pointer}
-  #nm-helpbtn{position:fixed;left:16px;bottom:calc(84px + env(safe-area-inset-bottom));z-index:10;width:34px;height:34px;border-radius:50%;border:1px solid var(--nm-line);background:var(--nm-panel);color:#ddd;font:700 15px ui-monospace,Menlo,monospace;cursor:pointer}
-  #nm-find{position:fixed;left:50%;bottom:calc(176px + env(safe-area-inset-bottom));transform:translateX(-50%);width:min(80vw,340px);z-index:11;font:13px system-ui,sans-serif;color:#eee;display:none}
-  #nm-q{width:100%;box-sizing:border-box;padding:9px 12px;border-radius:20px;border:1px solid #fff4;background:#111d;color:#fff;font:inherit;outline:none}
+  #nm-strip img{width:96px;height:58px;object-fit:cover;display:block}
+  #nm-strip span{position:absolute;left:0;right:0;bottom:0;padding:10px 6px 3px;color:#fff;font-size:11px;text-align:left;background:linear-gradient(transparent,rgba(0,0,0,.7))}
+  #nm-height{position:fixed;right:max(16px,env(safe-area-inset-right));top:50%;transform:translateY(-50%);z-index:10;display:none;flex-direction:column;align-items:center;padding:4px 0}
+  #nm-height .val{font-size:11px;color:var(--nm-text);padding:2px 0} #nm-height .lbl{font-size:10px;color:var(--nm-dark);padding-bottom:2px}
+  #nm-jump{display:none;margin-top:6px}
+  #nm-fp,#nm-help{position:fixed;inset:0;z-index:30;display:none;align-items:center;justify-content:center;background:rgba(0,0,0,.25);backdrop-filter:blur(3px);-webkit-backdrop-filter:blur(3px)}
+  #nm-fp .box{position:relative;width:min(92vw,980px);height:min(78vh,700px);border-radius:16px;overflow:hidden}
+  #nm-fp .tog{position:absolute;left:12px;top:12px;z-index:2;display:flex;gap:4px}
+  #nm-fp .tog .nm-pill{height:30px;padding:0 14px}
+  #nm-fp .x,#nm-help .x{position:absolute;right:10px;top:10px;z-index:2}
+  #nm-fp .v2d,#nm-fp canvas{position:absolute;left:0;top:52px;right:0;bottom:36px;width:100%;height:calc(100% - 88px)} #nm-fp .v2d svg{width:100%;height:100%;background:none}
+  #nm-fp .cap{position:absolute;left:0;right:0;bottom:12px;text-align:center;color:var(--nm-dark);font-size:12px}
+  #nm-help .card{position:relative;width:340px;max-width:calc(100% - 32px);max-height:calc(100% - 32px);overflow-y:auto;padding:24px 20px 20px;border-radius:16px;display:flex;flex-direction:column;gap:14px;font-size:13px}
+  #nm-help .title{font-size:16px;color:var(--nm-light);font-weight:bold} #nm-help .sub{color:var(--nm-dark);font-size:12px;margin-top:-8px}
+  #nm-help h1{font-size:11px;font-weight:bold;text-transform:uppercase;letter-spacing:1px;color:var(--nm-acc);padding-bottom:6px;margin:0}
+  #nm-help .sec{padding-top:12px;border-top:1px solid rgba(255,255,255,.06)}
+  #nm-help .row{display:flex;justify-content:space-between;align-items:center;gap:16px;min-height:28px;font-size:12px}
+  #nm-help .keys{display:flex;gap:3px;align-items:center;color:var(--nm-dark);font-size:11px}
+  #nm-help .go{align-self:stretch}
+  #nm-find{position:fixed;left:50%;bottom:calc(max(16px,env(safe-area-inset-bottom)) + 130px);transform:translateX(-50%);width:min(80vw,340px);z-index:11;font:13px Arial,sans-serif;color:var(--nm-text);display:none}
+  #nm-q{width:100%;padding:9px 12px;border-radius:8px;border:1px solid rgba(255,255,255,.1);background:var(--nm-panel);backdrop-filter:blur(20px);color:#fff;font:inherit;outline:none}
   #nm-hits{display:flex;flex-direction:column-reverse;gap:4px;margin-bottom:6px;max-height:50vh;overflow-y:auto}
-  #nm-hits button,#nm-card{display:flex;align-items:center;gap:8px;background:#111e;border:1px solid #fff3;border-radius:8px;color:#eee;font:inherit;padding:4px;cursor:pointer;text-align:left}
+  #nm-hits button,#nm-card{display:flex;align-items:center;gap:8px;background:rgba(0,0,0,.6);border:1px solid rgba(255,255,255,.1);border-radius:8px;color:var(--nm-text);font:inherit;padding:4px;cursor:pointer;text-align:left}
   #nm-hits img,#nm-card img{width:44px;height:44px;object-fit:cover;border-radius:5px;flex:none}
   #nm-card{position:fixed;z-index:11;display:none;max-width:260px;padding:6px 8px}
-  #nm-card b{display:block} #nm-card small{color:#aaa}
-  @media (max-width:640px){#nm-plan{width:40vw;padding:6px}#nm-strip img{width:76px;height:48px}#nm-strip{left:auto;right:10px;transform:none;max-width:calc(100vw - 130px);bottom:calc(74px + env(safe-area-inset-bottom))}
-    #nm-helpbtn{bottom:auto;top:16px;left:auto;right:16px}#nm-find{bottom:calc(230px + env(safe-area-inset-bottom))}#nm-help .ic{width:90px}}
+  #nm-card b{display:block} #nm-card small{color:var(--nm-dark)}
+  @media (max-width:640px),(pointer:coarse){#nm-strip{display:none!important}#nm-plan{width:42vw;padding:6px}#nm-jump{display:flex}
+    #nm-find{bottom:calc(max(16px,env(safe-area-inset-bottom)) + 70px)}}
 </style>
+<svg width="0" height="0" style="position:absolute" aria-hidden="true">
+  <symbol id="nmPlanIcon" viewBox="0 0 24 24"><path fill-rule="evenodd" d="M4 3h16a1 1 0 0 1 1 1v16a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1V4a1 1 0 0 1 1-1zm1 2v14h6v-5h2v5h6v-6h-4v-2h4V5h-8v4h-2V5H5z"/></symbol>
+  <symbol id="nmExpandIcon" viewBox="0 0 24 24"><path d="M14 3h7v7h-2V6.41l-4.29 4.3-1.42-1.42L17.59 5H14V3zM3 14h2v3.59l4.29-4.3 1.42 1.42L6.41 19H10v2H3v-7z"/></symbol>
+  <symbol id="nmJumpIcon" viewBox="0 0 24 24"><path d="M12 3l6.5 6.5h-4.25V15h-4.5V9.5H5.5L12 3zM5 18h14v2.5H5z"/></symbol>
+</svg>
+<div class="nm-ui">
 <div id="nm-find"><div id="nm-hits"></div><input id="nm-q" type="search" placeholder="Search the room: sofa, lamp, bag ..." autocomplete="off"></div>
-<div id="nm-card"></div>
-<div id="nm-plan"><div class="wrap" id="nm-mini"></div><div class="bar"><span>FLOOR PLAN</span><button id="nm-exp" title="Open floor plan">&#x2922;</button></div></div>
-<div id="nm-strip"></div>
-<button id="nm-helpbtn" title="Controls">?</button>
-<div id="nm-fp"><div class="box"><button class="x" id="nm-fpx">&#x2715;</button>
-  <div class="tog"><button data-m="2d" class="on">2D</button><button data-m="3d">3D</button></div>
-  <div class="v2d" id="nm-fp2d"></div><canvas id="nm-fp3d" style="display:none"></canvas><div class="cap" id="nm-fpcap">FLOOR PLAN &middot; CLICK A POINT TO ENTER</div></div></div>
-<div id="nm-help"><div class="card"><button class="x" id="nm-hx">&#x2715;</button><h4>CONTROLS</h4><div id="nm-rows"></div><button class="go" id="nm-hgo">START EXPLORING</button></div></div>
+<div id="nm-card" class="nm-panel"></div>
+<div id="nm-plan" class="nm-panel"><div class="wrap" id="nm-mini"></div><div class="bar"><span>Floor plan</span><span class="nm-group">
+  <button class="nm-btn" id="nm-helpbtn" title="Controls (?)"><svg width="24" height="24"><g class="s"><use href="#keyboardIcon"/></g><g class="f"><use href="#keyboardIcon"/></g></svg></button>
+  <button class="nm-btn" id="nm-exp" title="Open floor plan"><svg width="20" height="20" viewBox="0 0 24 24"><g class="s"><use href="#nmExpandIcon"/></g><g class="f"><use href="#nmExpandIcon"/></g></svg></button></span></div></div>
+<div id="nm-strip" class="nm-panel"></div>
+<div id="nm-height" class="nm-panel" style="border-radius:16px">
+  <button class="nm-btn" id="nm-up" title="Raise eye height (E)"><svg width="24" height="24" style="transform:rotate(90deg)"><g class="s"><use href="#chevronLeftIcon"/></g><g class="f"><use href="#chevronLeftIcon"/></g></svg></button>
+  <div class="val" id="nm-hv">1.5 m</div><div class="lbl">eye</div>
+  <button class="nm-btn" id="nm-down" title="Lower eye height (Q)"><svg width="24" height="24" style="transform:rotate(-90deg)"><g class="s"><use href="#chevronLeftIcon"/></g><g class="f"><use href="#chevronLeftIcon"/></g></svg></button>
+  <button class="nm-btn" id="nm-jump" title="Jump"><svg width="24" height="24" viewBox="0 0 24 24"><g class="s"><use href="#nmJumpIcon"/></g><g class="f"><use href="#nmJumpIcon"/></g></svg></button>
+</div>
+<div id="nm-fp"><div class="box nm-panel"><button class="nm-btn x" id="nm-fpx" title="Close"><svg width="24" height="24"><use href="#closeIcon"/></svg></button>
+  <div class="tog"><button class="nm-pill on" data-m="2d">2D</button><button class="nm-pill" data-m="3d">3D</button></div>
+  <div class="v2d" id="nm-fp2d"></div><canvas id="nm-fp3d" style="display:none"></canvas><div class="cap" id="nm-fpcap">Click a point to go there</div></div></div>
+<div id="nm-help"><div class="card nm-panel"><button class="nm-btn x" id="nm-hx" title="Close"><svg width="24" height="24"><use href="#closeIcon"/></svg></button>
+  <div class="title">How to explore</div><div class="sub" id="nm-hsub"></div><div id="nm-rows"></div><button class="nm-pill go on" id="nm-hgo">Start exploring</button></div></div>
+</div>
 <script type="module">
   const o = await (await fetch('./overlay.json')).json(); const f = o.floor;
   let wj = null; try { wj = await (await fetch('./walls.json')).json(); } catch (e) {}
@@ -79,7 +105,7 @@ OVERLAY = """<style>
     walls.forEach(w => { const [a, b] = P(w[0], w[1]), [c, d] = P(w[2], w[3]); el('line', { x1: a, y1: b, x2: c, y2: d, class: 'wall', 'stroke-width': Math.max(4, 0.13 * f.px) }, sv); });
     const r = Math.max(7, 0.16 * f.px) * (big ? 1 : 1.25);
     o.spots.forEach((s, i) => { const [x, y] = P(s.x, s.z); const c = el('circle', { cx: x, cy: y, r, class: 'spot' }, sv); c.onclick = (e) => { e.stopPropagation(); go(i); closeFp(); };
-      if (big) { const t = el('text', { x, y: y - r - 6, 'text-anchor': 'middle', class: 'lbl' }, sv); t.textContent = s.title.toUpperCase(); } });
+      if (big) { const t = el('text', { x, y: y - r - 6, 'text-anchor': 'middle', class: 'lbl' }, sv); t.textContent = s.title; } });
     const cone = el('path', { class: 'cone' }, sv), me = el('circle', { r: r * 0.85, class: 'me' }, sv);
     return { sv, cone, me };
   }
@@ -89,17 +115,17 @@ OVERLAY = """<style>
   const putMe = (m) => { const c = camState(); if (!c) return; const [x, y] = P(c.x, c.z), L = 0.9 * f.px, a = Math.atan2(c.fz, c.fx), s = 0.55;
     m.me.setAttribute('cx', x); m.me.setAttribute('cy', y);
     m.cone.setAttribute('d', `M${x},${y} L${x + L * Math.cos(a - s)},${y + L * Math.sin(a - s)} A${L},${L} 0 0 1 ${x + L * Math.cos(a + s)},${y + L * Math.sin(a + s)} Z`); };
-  // spots bar at the bottom
-  o.spots.forEach((s, i) => { const b = document.createElement('button'); b.innerHTML = `<img src="./${s.thumb}" alt=""><span>${s.title.toUpperCase()}</span>`; b.onclick = () => go(i); document.getElementById('nm-strip').appendChild(b); });
+  // spots bar at the bottom (laptops; hidden on phones, where the floor plan is the way to jump)
+  o.spots.forEach((s, i) => { const b = document.createElement('button'); b.title = s.title; b.innerHTML = `<img src="./${s.thumb}" alt=""><span>${s.title}</span>`; b.onclick = () => go(i); document.getElementById('nm-strip').appendChild(b); });
   // full floor plan: 2D / 3D (solid walls, drag to rotate), click a point to enter
   const fp = document.getElementById('nm-fp'), v2 = document.getElementById('nm-fp2d'), cv = document.getElementById('nm-fp3d'), cap = document.getElementById('nm-fpcap');
   const big = plan2d(true); v2.appendChild(big.sv); let mode = '2d', yaw = -0.6, pitch = 0.95, img = new Image(); img.src = './floorplan.png';
   const openFp = () => { fp.style.display = 'flex'; setMode(mode); }; const closeFp = () => { fp.style.display = 'none'; };
-  document.getElementById('nm-exp').onclick = openFp; document.getElementById('nm-mini').onclick = openFp; document.getElementById('nm-fpx').onclick = closeFp;
+  document.getElementById('nm-exp').onclick = (e) => { e.stopPropagation(); openFp(); }; document.getElementById('nm-mini').onclick = openFp; document.getElementById('nm-fpx').onclick = closeFp;
   fp.onclick = (e) => { if (e.target === fp) closeFp(); };
   const setMode = (m) => { mode = m; fp.querySelectorAll('.tog button').forEach(b => b.classList.toggle('on', b.dataset.m === m));
     v2.style.display = m === '2d' ? 'block' : 'none'; cv.style.display = m === '3d' ? 'block' : 'none';
-    cap.innerHTML = m === '2d' ? 'FLOOR PLAN &middot; CLICK A POINT TO ENTER' : '3D &middot; DRAG TO ROTATE &middot; CLICK A POINT TO ENTER'; if (m === '3d') draw3d(); };
+    cap.textContent = m === '2d' ? 'Click a point to go there' : 'Drag to rotate · click a point to go there'; if (m === '3d') draw3d(); };
   fp.querySelectorAll('.tog button').forEach(b => b.onclick = () => setMode(b.dataset.m));
   const cx = (box[0] + box[3]) / 2, cz = (box[2] + box[5]) / 2, span = Math.max(box[3] - box[0], box[5] - box[2]), WH = Math.min(H * 0.82, 2.4), T = 0.12;
   let dots3d = [];
@@ -123,7 +149,7 @@ OVERLAY = """<style>
       const top = c.map(p => pr(p[0], WH, p[1])); faces.push({ q: top, d: top.reduce((s, p) => s + p[2], 0) / 4 + 0.01, col: '#f4ede0' }); });
     faces.sort((a, b) => a.d - b.d).forEach(F => { g.beginPath(); F.q.forEach((p, i) => i ? g.lineTo(p[0], p[1]) : g.moveTo(p[0], p[1])); g.closePath(); g.fillStyle = F.col; g.fill(); g.strokeStyle = '#00000022'; g.stroke(); });
     dots3d = o.spots.map((s, i) => { const p = pr(s.x, 1.0, s.z); g.beginPath(); g.arc(p[0], p[1], 9, 0, 7); g.fillStyle = '#e8a96b'; g.fill(); g.lineWidth = 2; g.strokeStyle = '#fff'; g.stroke();
-      g.font = '600 12px ui-monospace,Menlo,monospace'; g.textAlign = 'center'; g.lineWidth = 3; g.strokeStyle = '#000b'; g.strokeText(s.title.toUpperCase(), p[0], p[1] - 14); g.fillStyle = '#f4efe6'; g.fillText(s.title.toUpperCase(), p[0], p[1] - 14);
+      g.font = 'bold 12px Arial, sans-serif'; g.textAlign = 'center'; g.lineWidth = 3; g.strokeStyle = '#000b'; g.strokeText(s.title, p[0], p[1] - 14); g.fillStyle = '#fff'; g.fillText(s.title, p[0], p[1] - 14);
       return [p[0], p[1], i]; });
   }
   let drag = null;
@@ -143,18 +169,33 @@ OVERLAY = """<style>
       fixing = true; v.state.cameraMode = 'orbit'; let best = 0, bd = 1e9; o.spots.forEach((s, i) => { const d = c ? Math.hypot(s.x - c.x, s.z - c.z) : i; if (d < bd) { bd = d; best = i; } });
       go(best); setTimeout(() => { try { v.toggleWalk(); } catch (e) {} fixing = false; }, 1600); }); };
   hookWalk();
-  // first visit: how to move (like splattour's card); the ? button opens it again
+  // walk mode: eye height (Q / E, the ▲ ▼ buttons) and a jump button on touch screens. The viewer's walk controller is exposed
+  // as window.nammaWalk by make_tour.patch_js; eye = camera above the floor (controller eyeHeight + its 0.2 m hover)
+  const hb = document.getElementById('nm-height'), hv = document.getElementById('nm-hv');
+  let eye = 1.5; try { eye = parseFloat(localStorage.getItem('nammaEye')) || 1.5; } catch (e) {}
+  const setEye = (h) => { eye = Math.round(Math.max(0.9, Math.min(2.2, h)) * 10) / 10; hv.textContent = eye.toFixed(1) + ' m';
+    const w = window.nammaWalk; if (w) w.eyeHeight = eye - 0.2; try { localStorage.setItem('nammaEye', String(eye)); } catch (e) {} };
+  document.getElementById('nm-up').onclick = () => setEye(eye + 0.1); document.getElementById('nm-down').onclick = () => setEye(eye - 0.1);
+  document.getElementById('nm-jump').onpointerdown = (e) => { e.preventDefault(); const w = window.nammaWalk; if (w && w._pendingMove) w._pendingMove[1] = 1; };
+  const walkUi = (m) => { hb.style.display = m === 'walk' ? 'flex' : 'none'; if (m === 'walk') setEye(eye); };
+  const hookUi = () => { const v = window.viewer; if (!v || !v.events) return setTimeout(hookUi, 300); v.events.on('cameraMode:changed', walkUi); walkUi(v.state.cameraMode); };
+  hookUi();
+  addEventListener('keydown', (e) => { const v = window.viewer; if (!v || v.state.cameraMode !== 'walk' || /INPUT|TEXTAREA/.test((e.target || {}).tagName || '')) return;
+    if (e.code === 'KeyE') setEye(eye + 0.1); else if (e.code === 'KeyQ') setEye(eye - 0.1); });
+  // first visit: how to move (the viewer's own controls panel is closed for new visitors by the head script, so one card shows)
   const touch = matchMedia('(pointer:coarse)').matches || /Mobi|Android|iPhone|iPad/.test(navigator.userAgent);
-  const mouse = (k) => `<svg width="46" height="34" viewBox="0 0 46 34" fill="none" stroke="#ddd" stroke-width="1.6"><rect x="6" y="3" width="16" height="28" rx="8"/><line x1="14" y1="3" x2="14" y2="12"/>${k === 'look' ? '<path d="M8 3h6v9H6V11a8 8 0 0 1 2-8z" fill="#e8a96b" stroke="none"/><path d="M28 14l6-6m0 0h-4m4 0v4" stroke="#e8a96b"/>' : k === 'zoom' ? '<line x1="14" y1="7" x2="14" y2="11" stroke="#e8a96b" stroke-width="3"/><path d="M32 6v20m-3-17l3-3 3 3m-6 14l3 3 3-3" stroke="#e8a96b"/>' : '<path d="M8 3h6v9H6V11a8 8 0 0 1 2-8z" fill="#e8a96b" stroke="none"/><path d="M26 17h8" stroke="#e8a96b" stroke-dasharray="2 2"/><circle cx="40" cy="17" r="4" stroke="#e8a96b"/><circle cx="40" cy="17" r="1.5" fill="#e8a96b" stroke="none"/>'}</svg>`;
-  const rowsDesk = [[`<div class="keys"><b>W</b><b>A</b><b>S</b><b>D</b></div>`, 'MOVE'], [mouse('look'), 'LOOK'], [mouse('zoom'), 'ZOOM'], [mouse('walk'), 'WALK TO']];
-  const rowsTouch = [[`<svg width="44" height="44" viewBox="0 0 44 44" fill="none" stroke="#ddd" stroke-width="1.6"><circle cx="22" cy="22" r="16"/><circle cx="22" cy="22" r="7" fill="#e8a96b" stroke="none"/><path d="M22 2v4m0 32v4M2 22h4m32 0h4" stroke="#e8a96b"/></svg>`, 'MOVE (JOYSTICK)'],
-    [`<svg width="46" height="40" viewBox="0 0 46 40" fill="none" stroke="#ddd" stroke-width="1.6"><path d="M24 36V18a3 3 0 0 1 6 0v8l6 1a3 3 0 0 1 2 3l-1 6"/><path d="M24 22v-9a3 3 0 0 0-6 0v15l-3-3a3 3 0 0 0-4 4l7 7"/><path d="M6 10q4-6 10-6" stroke="#e8a96b" stroke-dasharray="2 2"/></svg>`, 'LOOK (DRAG)'],
-    [`<svg width="40" height="40" viewBox="0 0 40 40" fill="none" stroke="#e8a96b" stroke-width="1.6"><circle cx="20" cy="20" r="15" opacity=".6"/><circle cx="20" cy="20" r="9"/><circle cx="20" cy="20" r="4" fill="#e8a96b"/></svg>`, 'WALK (TAP A SPOT)']];
-  document.getElementById('nm-rows').innerHTML = (touch ? rowsTouch : rowsDesk).map(r => `<div class="row"><div class="ic">${r[0]}</div><div>${r[1]}</div></div>`).join('');
+  const K = (...k) => k.map(x => `<span class="nm-key">${x}</span>`).join('');
+  const sec = (t, rows) => `<div class="sec"><h1>${t}</h1>${rows.map(r => `<div class="row"><span>${r[0]}</span><span class="keys">${r[1]}</span></div>`).join('')}</div>`;
+  document.getElementById('nm-hsub').textContent = touch ? 'Walk through the real place with your fingers.' : 'Walk through the real place like in a game.';
+  document.getElementById('nm-rows').innerHTML = touch
+    ? sec('Walk', [['Move', 'left joystick'], ['Look around', 'drag with one finger'], ['Jump', 'jump button (right)'], ['Eye height', '▲ ▼ buttons (right)']])
+      + sec('Go to a place', [['Rooms and spots', 'tap the floor plan'], ['Walk mode', 'person button (bottom right)']])
+    : sec('Walk', [['Move', K('W', 'A', 'S', 'D')], ['Look around', 'mouse'], ['Jump', K('Space')], ['Eye height', K('Q') + ' / ' + K('E')], ['Run / slow', K('Shift') + ' / ' + K('Ctrl')], ['Walk to a point', 'click']])
+      + sec('Go to a place', [['Rooms and spots', 'photo bar or floor plan'], ['Walk mode', 'person button (bottom right)'], ['All shortcuts', K('Shift', 'H')]]);
   const help = document.getElementById('nm-help'), openHelp = () => { help.style.display = 'flex'; },
     closeHelp = () => { help.style.display = 'none'; try { localStorage.setItem('nammaHelp', '1'); } catch (e) {} };
   document.getElementById('nm-hx').onclick = closeHelp; document.getElementById('nm-hgo').onclick = closeHelp; help.onclick = (e) => { if (e.target === help) closeHelp(); };
-  document.getElementById('nm-helpbtn').onclick = openHelp;
+  document.getElementById('nm-helpbtn').onclick = (e) => { e.stopPropagation(); openHelp(); };
   let seen = '1'; try { seen = localStorage.getItem('nammaHelp'); } catch (e) {}
   if (seen !== '1') { const t0 = Date.now(), k = setInterval(() => { const v = window.viewer; if ((v && v.state && v.state.loaded) || Date.now() - t0 > 30000) { clearInterval(k); openHelp(); } }, 300); }
   // objects (objects3d.py): search by name / description, and click an object in the 3D view to see what it is
@@ -443,6 +484,15 @@ def overlay(html):
     return html.replace('</body>', OVERLAY + '\n    </body>', 1)
 
 
+def patch_js(js):
+    """The viewer script, patched: walk mode also in rooms smaller than 5 x 5 m, and its walk controller exposed as
+    window.nammaWalk (eye height and the touch jump button of OVERLAY). Idempotent."""
+    if 'window.nammaWalk' not in js:
+        assert 'walk: new WalkController(),' in js, 'viewer changed: no walk controller to expose'
+        js = js.replace('walk: new WalkController(),', 'walk: (window.nammaWalk = new WalkController()),', 1)
+    return js.replace('WALK_MIN_HORIZONTAL_RANGE = 5', 'WALK_MIN_HORIZONTAL_RANGE = 2')
+
+
 def head(html, fmt, bud=4):
     """The viewer start options, put first in <head>. Also used to update a published tour's page (tour_publish.py head)."""
     html = re.sub(r'\n    <script>\(function\(\)\{var q=new URLSearchParams.*?</script>(<style>body:not\(\.namma-ready\).*?</script>)?', '',
@@ -452,10 +502,10 @@ def head(html, fmt, bud=4):
     pre = 'if(!q.has("fullload"))q.set("fullload","1");' if fmt == 'lod' else 'if(!q.has("budget"))q.set("budget","%d");' % bud
     # Defaults per device, written once (marker key), so a visitor's own choice is kept afterwards. Laptop: Quality High (8 M
     # splats), Performance Mode off. Phone (owner, 31 Oct): Quality Performance, Performance Mode and gaming controls on.
-    pre += ('try{if(localStorage.getItem("nammaQ")!=="2"){var m=/Mobi|Android|iPhone|iPad/.test(navigator.userAgent)||'
+    pre += ('try{if(localStorage.getItem("nammaQ")!=="3"){var m=/Mobi|Android|iPhone|iPad/.test(navigator.userAgent)||'
             '(navigator.maxTouchPoints>1&&/Macintosh/.test(navigator.userAgent));localStorage.setItem("quality",m?"performance":"high");'
             'localStorage.setItem("performanceMode",m?"true":"false");if(m)localStorage.setItem("gamingControls","true");'
-            'localStorage.setItem("nammaQ","2");}}catch(e){}')
+            'localStorage.setItem("controlsPanelOpen","false");localStorage.setItem("nammaQ","3");}}catch(e){}')   # one help card: ours
     # The viewer draws the room while it streams in (pieces popping in behind the loading bar); hide the 3D view until the
     # viewer reports it loaded (all detail in, with fullload), at most 30 s; dark meanwhile, like the viewer.
     cover = ('<style>body:not(.namma-ready){background:#111}body:not(.namma-ready) canvas{visibility:hidden}</style>'
@@ -513,8 +563,8 @@ def build(run, tour, public, st='npx --no-install splat-transform'):
     collision(run, tour)
     if os.path.exists(f'{tour}/collision.glb'): boot['collisionUrl'] = './collision.glb'
     shutil.copy(f'{public}/index.css', tour)
-    js = open(f'{public}/index.js').read()                                                 # walk mode also in rooms < 5 x 5 m
-    assert 'WALK_MIN_HORIZONTAL_RANGE = 5' in js; open(f'{tour}/index.js', 'w').write(js.replace('WALK_MIN_HORIZONTAL_RANGE = 5', 'WALK_MIN_HORIZONTAL_RANGE = 2'))
+    js = open(f'{public}/index.js').read()
+    assert 'WALK_MIN_HORIZONTAL_RANGE = 5' in js; open(f'{tour}/index.js', 'w').write(patch_js(js))
     html = open(f'{public}/index.html').read(); a = html.index('id="sse-bootstrap">') + len('id="sse-bootstrap">'); c = html.index('</script>', a)
     html = (html[:a] + '\n' + json.dumps(boot) + '\n        ' + html[c:]).replace('<title>SuperSplat Viewer</title>', '<title>NAMMA 3D tour</title>')
     nsp = len(v) - int(bad.sum()); bud = max(4, int(np.ceil(nsp / 1e6)) + 1)                 # the viewer's splat budget, millions

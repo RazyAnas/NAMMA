@@ -110,9 +110,11 @@ if __name__ == '__main__':
         h = open(f'{tour}/index.html').read(); b = re.search(r'q\.set\("budget","(\d+)"\)', h)
         h = make_tour.head(h, 'lod' if os.path.isdir(f'{tour}/lod') else 'sog', int(b.group(1)) if b else 4)
         if os.path.exists(f'{tour}/overlay.json'): h = make_tour.overlay(h)                # current floor plan / spots / controls UI
+        if os.path.exists(f'{tour}/index.js'): open(f'{tour}/index.js', 'w').write(make_tour.patch_js(open(f'{tour}/index.js').read()))
         open(f'{tour}/index.html', 'w').write(h)
         print('page start options updated', flush=True)
-        api.upload_file(path_or_fileobj=f'{tour}/index.html', path_in_repo=f'{run}/{src}/index.html', repo_id=repo, repo_type='dataset')
+        for x in ('index.html', 'index.js'):
+            api.upload_file(path_or_fileobj=f'{tour}/{x}', path_in_repo=f'{run}/{src}/{x}', repo_id=repo, repo_type='dataset')
     publish(api, user, repo, run, tour, url_path=f"{run}/{os.environ.get('TOUR_URL_NAME', 'tour_url.txt')}")   # a new name keeps the old link
     if os.environ.get('INBOX_JOB'):                                                       # finish an app job whose publish failed
         import inbox; inbox.set_status(os.environ['INBOX_JOB'], 'done', run=run, link=open('tour_url.txt').read().strip())
