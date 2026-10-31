@@ -177,7 +177,7 @@ OVERLAY = """<style>
     const w = window.nammaWalk; if (w) w.eyeHeight = eye - 0.2; try { localStorage.setItem('nammaEye', String(eye)); } catch (e) {} };
   document.getElementById('nm-up').onclick = () => setEye(eye + 0.1); document.getElementById('nm-down').onclick = () => setEye(eye - 0.1);
   document.getElementById('nm-jump').onpointerdown = (e) => { e.preventDefault(); const w = window.nammaWalk; if (w && w._pendingMove) w._pendingMove[1] = 1; };
-  const walkUi = (m) => { hb.style.display = m === 'walk' ? 'flex' : 'none'; if (m === 'walk') setEye(eye); };
+  const walkUi = (m) => { hb.style.display = m === 'walk' && window.nammaWalk ? 'flex' : 'none'; if (m === 'walk') setEye(eye); };
   const hookUi = () => { const v = window.viewer; if (!v || !v.events) return setTimeout(hookUi, 300); v.events.on('cameraMode:changed', walkUi); walkUi(v.state.cameraMode); };
   hookUi();
   addEventListener('keydown', (e) => { const v = window.viewer; if (!v || v.state.cameraMode !== 'walk' || /INPUT|TEXTAREA/.test((e.target || {}).tagName || '')) return;
@@ -488,9 +488,9 @@ def patch_js(js):
     """The viewer script, patched: walk mode also in rooms smaller than 5 x 5 m, and its walk controller exposed as
     window.nammaWalk (eye height and the touch jump button of OVERLAY). Idempotent."""
     if 'window.nammaWalk' not in js:
-        assert 'walk: new WalkController(),' in js, 'viewer changed: no walk controller to expose'
-        js = js.replace('walk: new WalkController(),', 'walk: (window.nammaWalk = new WalkController()),', 1)
-    return js.replace('WALK_MIN_HORIZONTAL_RANGE = 5', 'WALK_MIN_HORIZONTAL_RANGE = 2')
+        js, k = re.subn(r'walk\s*:\s*new\s+([\w$]+)\(\)', r'walk: (window.nammaWalk = new \1())', js, count=1)
+        if not k: print('patch_js: walk controller not found in this viewer build: eye height stays hidden', flush=True)
+    return re.sub(r'WALK_MIN_HORIZONTAL_RANGE\s*=\s*5\b', 'WALK_MIN_HORIZONTAL_RANGE = 2', js)
 
 
 def head(html, fmt, bud=4):
