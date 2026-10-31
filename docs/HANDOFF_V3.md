@@ -415,3 +415,29 @@ The Claude cloud container **cannot reach kaggle.com** (proxy 403). GitHub's run
   not split from the hall); run 4 hotel -> 2 (main 28 m2 + 9 m2 entry/bath); Alameda -> 7 (two low-camera pieces to check).
   Failed attempts (kept in git): walls from all points (split single rooms), co-visibility communities alone (mixed rooms),
   full-height walls only (white walls have too few SfM points).
+
+## Whole house, 31 Oct: what went wrong in the pre-check runs, and the rules since then
+Measured from `namma-v3-out/20261031-0831/` (namma-house.log, precheck.json, chunks.json):
+1. The first run on the new Kaggle account got no GPU (6 h on CPU). run.py now stops in 1 s without a GPU.
+2. OpenCV read the 62,458-frame 4K 60 fps video at 5 frames/s (3.6 h). Now ffmpeg + NVDEC: 34 min.
+3. The SfM log was held back by `| tail`. Now it streams live with timestamps.
+4. 3,470 frames went into the incremental mapper: 7.6 h, and one global bundle adjustment alone took 72 min.
+5. The walk broke into 4 models.
+   - The main one is frames 1394-3357 (1,964 frames, 6 rooms, 54 m², 1.06 px).
+   - Frames 0-1393 and 3358-3469 are in 3 other pieces: matching broke at ~6.7 min and ~16.1 min of the video.
+6. Features, matches and the other pieces were in /kaggle/temp and were lost.
+7. Frame density counted video frames, so the 60 fps video gave 2x the frames. The slow walk also gave a 5 m² room 583 frames.
+8. The gsplat multi-GPU benchmark crashed (`BilateralGrid` not imported in the workers). Not used.
+
+The gate stopped everything before training: no GPU hours went into a broken model.
+
+Rules:
+- **R1:** SfM gets at most ~1,000 frames (`SFM_MAX`), picked by walking time.
+- **R2:** SfM work is saved to `/kaggle/working/sfm_work`.
+- **R3:** train only with proven code paths.
+- **R4:** a full-size dry run plus a time gate (`AUTO_STEPS=1`, ≤ 9 h, else thin more or refuse) before any long training.
+- **R5:** no mesh for a house (`NO_MESH=1`): collision comes from the floor-plan walls.
+- **R6:** gh_run uploads the model to HF before building the tour.
+
+Reuse: `RUN.json` `source: "reuse:<kernel>"` attaches that run's Kaggle output (frames + sparse/0). `THIN=k` keeps every k-th
+frame (`final/thin_model.py`, tested byte-identical round trip). The job must use another kernel name.

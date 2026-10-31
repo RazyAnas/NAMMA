@@ -11,8 +11,13 @@ Run 4 (the reference): 411 frames (359 train views), 30k steps = 83.6 steps per 
 import json, math, os, re, subprocess, sys, threading, time
 import numpy as np
 
-EX, D, W, O = sys.argv[1:5]; TIM = json.loads(sys.argv[5]); PP = sys.argv[6] if len(sys.argv) > 6 else ''
+EX = D = W = O = PP = ''; TIM = {}                                                          # set by setup() (run.py imports bench)
 F = os.path.dirname(os.path.abspath(__file__)); sys.path.insert(0, F)
+
+
+def setup(ex, d, w, o, tim=None, pp=''):
+    global EX, D, W, O, TIM, PP
+    EX, D, W, O, TIM, PP = ex, d, w, o, tim or {}, pp
 R4 = dict(frames=411, train_views=359, steps=30000, splats=1_500_000, area_m2=37.0, s_per_step=0.1815, mem_gb=2.2)
 STEPS_PER_VIEW = R4['steps'] / R4['train_views']
 MAX_CHUNK, SESSION_H, WEEK_H, MEM_GB, MARGIN, SETUP_H = 450, 9.0, 27.0, 13.0, 1.2, 0.5
@@ -133,4 +138,5 @@ def main():
 
 
 if __name__ == '__main__':
+    setup(*sys.argv[1:5], json.loads(sys.argv[5]), sys.argv[6] if len(sys.argv) > 6 else '')
     main()

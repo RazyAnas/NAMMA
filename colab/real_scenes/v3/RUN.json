@@ -1,14 +1,15 @@
 {
- "n": 15,
+ "n": 16,
  "collect": false,
- "source": "dl3dv-video:d961728dc5b54ceb70018b4d433041737a51957ebe9f90747097b777c0879f73",
+ "source": "reuse:namma-house",
  "env": {
-  "PREP_ONLY": "1",
-  "NFRAMES": "auto",
+  "THIN": "2",
+  "AUTO_STEPS": "1",
+  "NO_MESH": "1",
   "LONG": "1440"
  },
  "scene": "DL3DV-ALL-video 10K/d961728d...: whole house, 17 min, 8 GB (test video, non-commercial data, testing only)",
  "how": "change n (and source) and push to start a run: .github/workflows/namma-v3.yml -> gh_run.py",
- "note": "whole-house PRE-CHECK, rerun with fixes: GPU check at start, ffmpeg frame reader (NVDEC/all cores), live SfM log; own Kaggle job name so the old CPU-only session (namma-v3) cannot clash. Gate -> precheck.json; no splat training.",
- "kernel": "namma-house"
+ "note": "whole house, ONE model with run 4's recipe exactly (steps per view, splats per m2, trainer flags), on the main camera piece of the namma-house pre-check (frames 1394-3357, 6 rooms, 54 m2) thinned to every 2nd frame; full-size dry run + go/no-go (<= 9 h) before training; no mesh (walls collision); model uploaded before the tour",
+ "kernel": "namma-house-train"
 }

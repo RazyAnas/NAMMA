@@ -113,6 +113,8 @@ else:
             json.dump(dict(title=slug, id=DS, licenses=[dict(name='other')]), open('in/dataset-metadata.json', 'w'))
             say(kg('datasets', 'create', '-p', 'in', '-q')[1][-300:]); kaggle_io.wait_ready(DS, say)
         datasets, env['SOURCE'] = [DS], f'kaggle:{slug}'
+    elif src.startswith('reuse:'):                                                            # an earlier run's frames + camera model
+        datasets, env['REUSE'] = [], '1'; info['reuse'] = src[6:]                                # (its Kaggle output; own account)
     elif src.startswith('kaggle:'):
         datasets, env['SOURCE'] = [src[7:]], f'kaggle:{src[7:].split("/")[-1]}'
     else: sys.exit(f'unknown source {src}')
@@ -121,6 +123,9 @@ else:
     os.makedirs('kern', exist_ok=True)
     meta = json.load(open(f'{V}/kernel-metadata.json')); meta.update(id=KID, title=KID.split('/')[1], dataset_sources=datasets)
     meta['kernel_sources'] = [k for k in meta.get('kernel_sources', []) if k.startswith(KU + '/')]   # another account's build cache: not usable
+    if src.startswith('reuse:'):
+        assert f'{KU}/{src[6:]}' != KID, 'reuse: the job must not overwrite the run it reuses (use another kernel name)'
+        meta['kernel_sources'].append(f'{KU}/{src[6:]}')
     json.dump(meta, open('kern/kernel-metadata.json', 'w'))
     code = open(f'{V}/run.py').read(); first = 'import glob, json, os, shutil, subprocess, sys, time\n'; assert first in code
     code = code.replace(first, first + f'os.environ.update({json.dumps(env)})  # set by gh_run.py\n', 1)
@@ -183,16 +188,23 @@ def tour_step():
     say('tour built:', json.load(open(f'{OUT}/tour/tour.json')))
 
 stage('publishing')
+tok = os.environ.get('HF_TOKEN'); api = repo = None
+skip = lambda: [f'{n}/model.ply' for n in os.listdir(OUT) if n not in ('full', 'prior')] + ['images/*', 'sfm_work/*', 'tour/*']
+if tok:                                       # the trained model goes to HF FIRST: a slow or failed tour build can never lose it
+    try:
+        from huggingface_hub import HfApi
+        api = HfApi(token=tok); repo = f"{api.whoami()['name']}/namma-v3-out"; api.create_repo(repo, repo_type='dataset', private=True, exist_ok=True)
+        lfs_types(api, repo); api.upload_folder(folder_path=OUT, path_in_repo=RUN, repo_id=repo, repo_type='dataset', ignore_patterns=skip())
+        say(f'results (before the tour): https://huggingface.co/datasets/{repo}/tree/main/{RUN}')
+    except Exception as e: say('HF upload failed:', str(e)[:300])
 try: tour_step()
 except Exception as e: say('tour failed:', str(e)[:400])
-tok = os.environ.get('HF_TOKEN')
 if tok:
     try:
         from huggingface_hub import HfApi
         import tour_publish
-        api = HfApi(token=tok); repo = f"{api.whoami()['name']}/namma-v3-out"; api.create_repo(repo, repo_type='dataset', private=True, exist_ok=True)
-        lfs_types(api, repo)
-        api.upload_folder(folder_path=OUT, path_in_repo=RUN, repo_id=repo, repo_type='dataset', ignore_patterns=[f'{n}/model.ply' for n in os.listdir(OUT) if n not in ('full', 'prior')] + ['images/*'])
+        api = api or HfApi(token=tok); repo = repo or f"{api.whoami()['name']}/namma-v3-out"
+        api.upload_folder(folder_path=OUT, path_in_repo=RUN, repo_id=repo, repo_type='dataset', ignore_patterns=[x for x in skip() if x != 'tour/*'])
         say(f'results: https://huggingface.co/datasets/{repo}/tree/main/{RUN}')
         if os.path.exists(f'{OUT}/tour/tour.json'):                          # any built tour (scene.sog or scene.compressed.ply)
             try:

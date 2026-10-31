@@ -402,6 +402,14 @@ def collision(run, tour, faces=150000):
     import trimesh
     pl = json.load(open(f'{tour}/plan.json')); s = pl['scale']; lo, hi = np.array(pl['box'][:3]), np.array(pl['box'][3:])
     parts = [trimesh.load(f'{tour}/room_collision.glb', force='mesh')] if os.path.exists(f'{tour}/room_collision.glb') else []
+    if os.path.exists(f'{tour}/walls.json'):                                               # inner walls from the floor plan (a house)
+        wj = json.load(open(f'{tour}/walls.json'))
+        for x0, z0, x1, z1 in wj['walls']:
+            L = float(np.hypot(x1 - x0, z1 - z0)); hgt = float(wj.get('height', 2.5))
+            if L < 0.3: continue
+            T = np.eye(4); u = np.array([x1 - x0, z1 - z0]) / L; T[[0, 2], 0] = u; T[[0, 2], 2] = [-u[1], u[0]]
+            T[0, 3], T[1, 3], T[2, 3] = (x0 + x1) / 2, hgt / 2, (z0 + z1) / 2
+            parts.append(trimesh.creation.box(extents=(L, hgt, 0.12), transform=T))
     if os.path.exists(f'{run}/mesh/mesh.glb'):
         m = trimesh.load(f'{run}/mesh/mesh.glb', force='mesh'); m.apply_scale(s)
         c = m.triangles_center; keep = np.all((c >= lo + [0, 0.08, 0]) & (c <= hi), 1)            # inside, not the floor itself
