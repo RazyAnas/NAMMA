@@ -582,6 +582,9 @@ def head(html, fmt, bud=4):
     # streamed LOD: no fixed budget (the viewer sizes it for the device), but 'fullload': the loading screen stays until full
     # detail is in, so nobody sees a blurry room first (owner, 30 Oct: "load full room at once ... else people think it's bad")
     pre = 'if(!q.has("fullload"))q.set("fullload","1");' if fmt == 'lod' else 'if(!q.has("budget"))q.set("budget","%d");' % bud
+    # Collision geometry overlay is opt-in: leave it off unless a visitor explicitly asks for it.
+    # This avoids showing the collision volume on first load across desktop and mobile browsers.
+    pre += 'if(!q.has("showcollision"))q.set("showcollision","0");'
     # NAMMA default: Performance quality + Performance Mode on for every device. Bump the marker so
     # visitors who previously received the Android-only default also get the updated setting once.
     # Touch devices still get gaming controls; desktop keyboard/mouse controls remain unchanged.
