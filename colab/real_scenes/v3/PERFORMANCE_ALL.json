@@ -1,0 +1,8 @@
+{
+  "operation": "enable_performance_mode",
+  "scope": "all currently live tour URL records",
+  "default_quality": "performance",
+  "performance_mode": true,
+  "device_scope": "all devices",
+  "preserve_existing_tour_urls": true
+}
