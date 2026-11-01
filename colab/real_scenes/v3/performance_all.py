@@ -235,7 +235,7 @@ def main() -> int:
                     force_download=True,
                 )
                 verified = Path(verify_page).read_text(encoding="utf-8")
-                verify_page(verified, kind)
+                verify_page_settings(verified, kind)
                 url = f"https://{space_repo.replace('/', '-')}.static.hf.space/{folder}/index.html"
                 updated.append(url)
                 print(f"VERIFIED [{kind}] {url} ({len(refs)} URL record(s))", flush=True)
