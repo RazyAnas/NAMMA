@@ -5,7 +5,7 @@
   "performance_mode": true,
   "device_scope": "all devices",
   "preserve_existing_tour_urls": true,
-  "run_revision": "82b1462d9aac619cdf6b561106cb7c4bb4232610",
+  "run_revision": "432cd3f43007ef41721590a73d8fc486cd9af955",
   "default_showcollision": false,
   "explicit_override": "showcollision=1"
 }
