@@ -7,6 +7,7 @@ Each unique live page is updated without changing its URL or scene assets.
 """
 from __future__ import annotations
 
+import json
 import os
 import re
 import sys
@@ -19,6 +20,114 @@ from huggingface_hub import HfApi, hf_hub_download
 HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE.parent / "final"))
 import make_tour  # noqa: E402
+
+
+
+def patch_supersplat(html: str) -> str:
+    """Apply current start defaults while preserving this tour's LOD/budget mode."""
+    tag = '<script type="application/json" id="sse-bootstrap">'
+    start = html.find(tag)
+    if start < 0:
+        raise ValueError("SuperSplat bootstrap was not found")
+    start += len(tag)
+    end = html.find("</script>", start)
+    if end < 0:
+        raise ValueError("SuperSplat bootstrap script is not closed")
+    bootstrap = json.loads(html[start:end].strip())
+    content_url = str(bootstrap.get("contentUrl", ""))
+    fmt = "lod" if Path(urlparse(content_url).path).name.lower() == "lod-meta.json" else "sog"
+
+    budget = 4
+    budget_prefix = 'q.set("budget","'
+    budget_at = html.find(budget_prefix)
+    if budget_at >= 0:
+        value_start = budget_at + len(budget_prefix)
+        value_end = html.find('"', value_start)
+        if value_end > value_start:
+            try:
+                budget = int(html[value_start:value_end])
+            except ValueError:
+                pass
+
+    patched = make_tour.head(html, fmt, budget)
+    for setting in (
+        'localStorage.setItem("quality","performance")',
+        'localStorage.setItem("performanceMode","true")',
+        'localStorage.setItem("nammaQ","4")',
+    ):
+        if setting not in patched:
+            raise ValueError(f"missing performance default: {setting}")
+    return patched
+
+
+def patch_world(html: str) -> str:
+    """Enable equivalent performance defaults on the lightweight Three.js World viewer."""
+    old_renderer = "new THREE.WebGLRenderer({antialias:true})"
+    old_ratio = "r.setPixelRatio(Math.min(devicePixelRatio, 2))"
+    if old_renderer not in html or old_ratio not in html:
+        raise ValueError("unrecognized NAMMA World renderer; refusing a blind edit")
+
+    patched = html.replace(
+        old_renderer,
+        "new THREE.WebGLRenderer({antialias:false, powerPreference:'high-performance'})",
+        1,
+    ).replace(
+        old_ratio,
+        "r.setPixelRatio(Math.min(devicePixelRatio || 1, 1.5))",
+        1,
+    )
+    if 'localStorage.setItem("nammaQ","4")' not in patched:
+        preference_script = (
+            '<script>(function(){try{if(localStorage.getItem("nammaQ")!=="4"){'
+            'var m=/Mobi|Android|iPhone|iPad/.test(navigator.userAgent)||'
+            '(navigator.maxTouchPoints>1&&/Macintosh/.test(navigator.userAgent));'
+            'localStorage.setItem("quality","performance");'
+            'localStorage.setItem("performanceMode","true");'
+            'if(m)localStorage.setItem("gamingControls","true");'
+            'localStorage.setItem("nammaQ","4");}}catch(e){}})();</script>'
+        )
+        if "</head>" not in patched:
+            raise ValueError("NAMMA World page has no closing head element")
+        patched = patched.replace("</head>", preference_script + "</head>", 1)
+
+    for setting in (
+        "antialias:false",
+        "powerPreference:'high-performance'",
+        "r.setPixelRatio(Math.min(devicePixelRatio || 1, 1.5))",
+        'localStorage.setItem("performanceMode","true")',
+        'localStorage.setItem("nammaQ","4")',
+    ):
+        if setting not in patched:
+            raise ValueError(f"NAMMA World page missing performance setting: {setting}")
+    return patched
+
+
+def patch_page(html: str) -> tuple[str, str]:
+    if 'id="sse-bootstrap"' in html and "./index.js" in html:
+        return patch_supersplat(html), "SuperSplat"
+    if "<title>NAMMA World</title>" in html and "THREE.WebGLRenderer" in html:
+        return patch_world(html), "Three.js World"
+    raise ValueError("unrecognized live tour template; refusing to modify it")
+
+
+def verify_page(html: str, kind: str) -> None:
+    if kind == "SuperSplat":
+        required = (
+            'localStorage.setItem("quality","performance")',
+            'localStorage.setItem("performanceMode","true")',
+            'localStorage.setItem("nammaQ","4")',
+        )
+    else:
+        required = (
+            "antialias:false",
+            "powerPreference:'high-performance'",
+            "r.setPixelRatio(Math.min(devicePixelRatio || 1, 1.5))",
+            'localStorage.setItem("performanceMode","true")',
+            'localStorage.setItem("nammaQ","4")',
+        )
+    for setting in required:
+        if setting not in html:
+            raise AssertionError(f"live page read-back is missing: {setting}")
 
 
 def main() -> int:
@@ -104,21 +213,8 @@ def main() -> int:
                     force_download=True,
                 )
                 html = Path(local_page).read_text(encoding="utf-8")
-                if 'id="sse-bootstrap"' not in html or "./index.js" not in html:
-                    raise ValueError("page is not the expected NAMMA SuperSplat tour")
-
-                content_match = re.search(r'"contentUrl"\\s*:\\s*"([^"]+)"', html)
-                fmt = "lod" if content_match and "lod-meta.json" in content_match.group(1).lower() else "sog"
-                budget_match = re.search(r'q\\.set\\("budget","(\\d+)"\\)', html)
-                budget = int(budget_match.group(1)) if budget_match else 4
-
-                patched = make_tour.head(html, fmt, budget)
-                if 'localStorage.setItem("quality","performance")' not in patched:
-                    raise ValueError("patched page is missing performance quality default")
-                if 'localStorage.setItem("performanceMode","true")' not in patched:
-                    raise ValueError("patched page is missing universal Performance Mode default")
-                if 'localStorage.setItem("nammaQ","4")' not in patched:
-                    raise ValueError("patched page is missing preference migration marker")
+                patched, kind = patch_page(html)
+                verify_page(patched, kind)
 
                 Path(local_page).write_text(patched, encoding="utf-8")
                 api.upload_file(
@@ -139,12 +235,10 @@ def main() -> int:
                     force_download=True,
                 )
                 verified = Path(verify_page).read_text(encoding="utf-8")
-                assert 'localStorage.setItem("quality","performance")' in verified
-                assert 'localStorage.setItem("performanceMode","true")' in verified
-                assert 'localStorage.setItem("nammaQ","4")' in verified
+                verify_page(verified, kind)
                 url = f"https://{space_repo.replace('/', '-')}.static.hf.space/{folder}/index.html"
                 updated.append(url)
-                print(f"VERIFIED {space_repo}/{page} ({len(refs)} URL record(s))", flush=True)
+                print(f"VERIFIED [{kind}] {url} ({len(refs)} URL record(s))", flush=True)
             except Exception as exc:
                 failures.append(f"{space_repo}/{page}: {exc}")
                 print(f"FAILED {space_repo}/{page}: {exc}", flush=True)
