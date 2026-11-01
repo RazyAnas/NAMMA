@@ -110,7 +110,7 @@ def patch_page(html: str) -> tuple[str, str]:
     raise ValueError("unrecognized live tour template; refusing to modify it")
 
 
-def verify_page(html: str, kind: str) -> None:
+def verify_page_settings(html: str, kind: str) -> None:
     if kind == "SuperSplat":
         required = (
             'localStorage.setItem("quality","performance")',
@@ -214,7 +214,7 @@ def main() -> int:
                 )
                 html = Path(local_page).read_text(encoding="utf-8")
                 patched, kind = patch_page(html)
-                verify_page(patched, kind)
+                verify_page_settings(patched, kind)
 
                 Path(local_page).write_text(patched, encoding="utf-8")
                 api.upload_file(
