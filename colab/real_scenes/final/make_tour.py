@@ -582,12 +582,13 @@ def head(html, fmt, bud=4):
     # streamed LOD: no fixed budget (the viewer sizes it for the device), but 'fullload': the loading screen stays until full
     # detail is in, so nobody sees a blurry room first (owner, 30 Oct: "load full room at once ... else people think it's bad")
     pre = 'if(!q.has("fullload"))q.set("fullload","1");' if fmt == 'lod' else 'if(!q.has("budget"))q.set("budget","%d");' % bud
-    # Defaults per device, written once (marker key), so a visitor's own choice is kept afterwards. Laptop: Quality High (8 M
-    # splats), Performance Mode off. Phone (owner, 31 Oct): Quality Performance, Performance Mode and gaming controls on.
-    pre += ('try{if(localStorage.getItem("nammaQ")!=="3"){var m=/Mobi|Android|iPhone|iPad/.test(navigator.userAgent)||'
-            '(navigator.maxTouchPoints>1&&/Macintosh/.test(navigator.userAgent));localStorage.setItem("quality",m?"performance":"high");'
-            'localStorage.setItem("performanceMode",m?"true":"false");if(m)localStorage.setItem("gamingControls","true");'
-            'localStorage.setItem("controlsPanelOpen","false");localStorage.setItem("nammaQ","3");}}catch(e){}')   # one help card: ours
+    # NAMMA default: Performance quality + Performance Mode on for every device. Bump the marker so
+    # visitors who previously received the Android-only default also get the updated setting once.
+    # Touch devices still get gaming controls; desktop keyboard/mouse controls remain unchanged.
+    pre += ('try{if(localStorage.getItem("nammaQ")!=="4"){var m=/Mobi|Android|iPhone|iPad/.test(navigator.userAgent)||'
+            '(navigator.maxTouchPoints>1&&/Macintosh/.test(navigator.userAgent));localStorage.setItem("quality","performance");'
+            'localStorage.setItem("performanceMode","true");if(m)localStorage.setItem("gamingControls","true");'
+            'localStorage.setItem("controlsPanelOpen","false");localStorage.setItem("nammaQ","4");}}catch(e){}')   # one help card: ours
     # The viewer draws the room while it streams in (pieces popping in behind the loading bar); hide the 3D view until the
     # viewer reports it loaded (all detail in, with fullload), at most 2 min; dark meanwhile. Owner, 31 Oct: a clear loading
     # state in the centre of the screen -> our spinner + the viewer's own percent, until loaded; a hint if it stalls.
