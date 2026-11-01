@@ -1,0 +1,29 @@
+name: Enable Performance Mode on all active NAMMA tours
+on:
+  push:
+    branches:
+      - claude/wonderful-cori-i3fn41
+    paths:
+      - colab/real_scenes/v3/PERFORMANCE_ALL.json
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  enable-performance:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          sparse-checkout: |
+            colab/real_scenes/v3
+            colab/real_scenes/final
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Install dependencies
+        run: pip install -q huggingface_hub numpy
+      - name: Update every currently live tour without changing its URL
+        env:
+          HF_TOKEN: ${{ secrets.HF_TOKEN || secrets.HUGGINGFACE_WRITE_TOKEN }}
+        run: python colab/real_scenes/v3/performance_all.py
