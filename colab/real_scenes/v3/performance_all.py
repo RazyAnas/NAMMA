@@ -63,19 +63,22 @@ def patch_supersplat(html: str) -> str:
 def patch_world(html: str) -> str:
     """Enable equivalent performance defaults on the lightweight Three.js World viewer."""
     old_renderer = "new THREE.WebGLRenderer({antialias:true})"
+    fast_renderer = "new THREE.WebGLRenderer({antialias:false, powerPreference:'high-performance'})"
     old_ratio = "r.setPixelRatio(Math.min(devicePixelRatio, 2))"
-    if old_renderer not in html or old_ratio not in html:
+    fast_ratio = "r.setPixelRatio(Math.min(devicePixelRatio || 1, 1.5))"
+
+    # Idempotent: this page may already have received the universal performance update.
+    if old_renderer in html:
+        patched = html.replace(old_renderer, fast_renderer, 1)
+    elif fast_renderer in html:
+        patched = html
+    else:
         raise ValueError("unrecognized NAMMA World renderer; refusing a blind edit")
 
-    patched = html.replace(
-        old_renderer,
-        "new THREE.WebGLRenderer({antialias:false, powerPreference:'high-performance'})",
-        1,
-    ).replace(
-        old_ratio,
-        "r.setPixelRatio(Math.min(devicePixelRatio || 1, 1.5))",
-        1,
-    )
+    if old_ratio in patched:
+        patched = patched.replace(old_ratio, fast_ratio, 1)
+    elif fast_ratio not in patched:
+        raise ValueError("unrecognized NAMMA World pixel-ratio setting; refusing a blind edit")
     if 'localStorage.setItem("nammaQ","4")' not in patched:
         preference_script = (
             '<script>(function(){try{if(localStorage.getItem("nammaQ")!=="4"){'
@@ -116,6 +119,7 @@ def verify_page_settings(html: str, kind: str) -> None:
             'localStorage.setItem("quality","performance")',
             'localStorage.setItem("performanceMode","true")',
             'localStorage.setItem("nammaQ","4")',
+            'q.set("showcollision","0")',
         )
     else:
         required = (
