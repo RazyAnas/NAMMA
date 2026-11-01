@@ -4,5 +4,6 @@
   "default_quality": "performance",
   "performance_mode": true,
   "device_scope": "all devices",
-  "preserve_existing_tour_urls": true
+  "preserve_existing_tour_urls": true,
+  "run_revision": "f6270686c140992f9b1c51450425a2a00e0cc710"
 }
