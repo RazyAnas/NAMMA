@@ -43,7 +43,7 @@ def patch_html(text: str) -> str:
         count=1,
         flags=re.S,
     )
-    marker = '        <p class="microcopy">Sign in with the NAMMA Hugging Face account. Selected panoramas are downloaded and uploaded directly in this browser; no Terminal, local launcher or pasted token is required.</p>'
+    marker = '<p class="microcopy">Sign in with the NAMMA Hugging Face account. Selected panoramas are downloaded and uploaded directly in this browser; no Terminal, local launcher or pasted token is required.</p>'
     if marker not in text:
         text = text.replace(
             OLD_DOWNLOADER_COPY,
