@@ -1,0 +1,402 @@
+"""GitHub Actions orchestrator for an independent NAMMA panorama job.
+
+Trigger: a new JSON request under panorama_v1/jobs/ on main or the feature branch.
+Input images live in a private Hugging Face dataset; the GPU work runs in a dedicated
+Kaggle kernel; the static tour is added under panorama/<job_id>/ in NAMMA's HF Space.
+"""
+from __future__ import annotations
+
+import base64
+import json
+import os
+import re
+import shutil
+import subprocess
+import sys
+import time
+from pathlib import Path
+
+HERE = Path(__file__).resolve().parent
+REPO_ROOT = HERE.parents[3]
+T0 = time.time()
+OUT = Path("out")
+OUTPUT_DATASET = os.environ.get("PANORAMA_OUTPUT_DATASET", "anasrazy/namma-panorama-out")
+TOUR_SPACE = os.environ.get("PANORAMA_TOUR_SPACE", "anasrazy/namma-tour")
+
+
+def say(*args):
+    print(f"[{(time.time() - T0) / 60:6.1f} min]", *args, flush=True)
+
+
+def command(args, check=True, cwd=None):
+    p = subprocess.run(list(map(str, args)), cwd=cwd, capture_output=True, text=True)
+    out = (p.stdout + p.stderr).strip()
+    if check and p.returncode:
+        raise RuntimeError(f"Command failed: {' '.join(map(str, args[:3]))}: {out[-1800:]}")
+    return p.returncode, out
+
+
+def kaggle(*args, check=True):
+    return command(["kaggle", *args], check=check)
+
+
+def wait_dataset(dataset_id, minutes=45):
+    start = time.time()
+    last = ""
+    while time.time() - start < minutes * 60:
+        time.sleep(20)
+        rc, last = kaggle("datasets", "status", dataset_id, check=False)
+        if rc == 0 and last.strip().lower().endswith("ready"):
+            time.sleep(30)
+            say("Kaggle dataset ready:", dataset_id)
+            return
+    raise RuntimeError(f"Kaggle input dataset did not become ready: {last[-500:]}")
+
+
+def job_file_from_event() -> Path:
+    explicit = os.environ.get("PANORAMA_JOB_FILE", "").strip()
+    if explicit:
+        p = (REPO_ROOT / explicit).resolve()
+        if REPO_ROOT.resolve() not in p.parents or not p.is_file():
+            raise RuntimeError(f"PANORAMA_JOB_FILE is not a repository job file: {explicit}")
+        return p
+    event_path = os.environ.get("GITHUB_EVENT_PATH")
+    if not event_path:
+        raise RuntimeError("Set PANORAMA_JOB_FILE or run inside a GitHub Actions event.")
+    event = json.loads(Path(event_path).read_text(encoding="utf-8"))
+    files = []
+    for commit in event.get("commits", []):
+        files.extend(commit.get("added", []))
+        files.extend(commit.get("modified", []))
+    head = event.get("head_commit") or {}
+    files.extend(head.get("added", []))
+    files.extend(head.get("modified", []))
+    jobs = sorted({x for x in files if x.startswith("colab/real_scenes/panorama_v1/jobs/") and x.endswith(".json")})
+    if len(jobs) != 1:
+        raise RuntimeError(f"Expected exactly one new panorama job manifest in this commit; found {jobs}.")
+    p = (REPO_ROOT / jobs[0]).resolve()
+    if REPO_ROOT.resolve() not in p.parents or not p.is_file():
+        raise RuntimeError(f"Job manifest is missing: {jobs[0]}")
+    return p
+
+
+def validate_job(job: dict) -> dict:
+    job_id = str(job.get("job_id", ""))
+    if not re.fullmatch(r"[a-zA-Z0-9][a-zA-Z0-9-]{2,50}", job_id):
+        raise ValueError("job_id must contain 3-51 letters, digits or hyphens.")
+    hf_dataset = str(job.get("hf_dataset", ""))
+    bundle_path = str(job.get("bundle_path", ""))
+    if not re.fullmatch(r"[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+", hf_dataset):
+        raise ValueError("hf_dataset must be an owner/dataset repository id.")
+    if not bundle_path or bundle_path.startswith("/") or ".." in Path(bundle_path).parts:
+        raise ValueError("bundle_path must be a safe path inside the HF dataset.")
+    params = job.get("parameters", {})
+    if not isinstance(params, dict):
+        raise ValueError("parameters must be a JSON object.")
+    # Constrain job parameters before writing them into Kaggle's JOB_CFG.
+    allowed = {
+        "image_size": (384, 1536), "view_count": (6, 24),
+        "max_panoramas": (8, 200), "steps": (5000, 60000),
+        "max_splats": (100000, 3000000),
+        "sequence_window": (4, 40), "retrieval_count": (0, 30)
+    }
+    safe = {}
+    for key, bounds in allowed.items():
+        if key in params:
+            value = int(params[key])
+            if not bounds[0] <= value <= bounds[1]:
+                raise ValueError(f"{key} must be in {bounds[0]}..{bounds[1]}.")
+            safe[key] = value
+    for key, bounds in {"hfov_deg": (40.0, 90.0), "camera_height_m": (0.5, 5.0)}.items():
+        if key in params:
+            value = float(params[key])
+            if not bounds[0] <= value <= bounds[1]:
+                raise ValueError(f"{key} must be in {bounds[0]}..{bounds[1]}.")
+            safe[key] = value
+    return {
+        "job_id": job_id,
+        "hf_dataset": hf_dataset,
+        "bundle_path": bundle_path,
+        "parameters": safe,
+        "output_dataset": job.get("output_dataset", OUTPUT_DATASET),
+        "tour_space": job.get("tour_space", TOUR_SPACE)
+    }
+
+
+def hf_client(token):
+    from huggingface_hub import HfApi
+    return HfApi(token=token)
+
+
+def update_status(api, repo_id, job_id, status, **extra):
+    payload = {
+        "job_id": job_id, "pipeline": "panorama_v1", "status": status,
+        "updated_at_utc": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+        **extra
+    }
+    api.upload_file(
+        path_or_fileobj=json.dumps(payload, indent=2).encode("utf-8"),
+        path_in_repo=f"{job_id}/status.json", repo_id=repo_id,
+        repo_type="dataset", commit_message=f"panorama {job_id}: {status}"
+    )
+    say("status:", status)
+
+
+def upload_input_bundle(api, job, token, dataset_id):
+    from huggingface_hub import hf_hub_download
+    from huggingface_hub.utils import EntryNotFoundError
+    source = hf_hub_download(
+        repo_id=job["hf_dataset"], filename=job["bundle_path"],
+        repo_type="dataset", token=token, local_dir="hf-input"
+    )
+    folder = Path("kaggle-input")
+    folder.mkdir(exist_ok=True)
+    shutil.copy2(source, folder / "bundle.zip")
+    for name in ("prepare_panorama.py", "sfm_hloc.py", "make_tour.py"):
+        shutil.copy2(HERE / name, folder / name)
+    metadata = {
+        "title": f"NAMMA panorama job {job['job_id']}",
+        "id": dataset_id,
+        "licenses": [{"name": "other"}]
+    }
+    (folder / "dataset-metadata.json").write_text(json.dumps(metadata), encoding="utf-8")
+    rc, state = kaggle("datasets", "status", dataset_id, check=False)
+    if rc == 0 and state.strip().lower().endswith("ready"):
+        kaggle("datasets", "version", "-p", folder, "-m", f"NAMMA panorama {job['job_id']}", "-q")
+    else:
+        kaggle("datasets", "create", "-p", folder, "-q")
+    wait_dataset(dataset_id)
+
+
+def push_kernel(job, dataset_id, kaggle_user):
+    kernel_id = f"{kaggle_user}/namma-panorama-{job['job_id'][:35]}".lower()
+    folder = Path("kaggle-kernel")
+    folder.mkdir(exist_ok=True)
+    source = (HERE / "run.py").read_text(encoding="utf-8")
+    marker = 'import glob, json, os, re, shutil, subprocess, sys, time, zipfile\n'
+    if source.count(marker) != 1:
+        raise RuntimeError("Could not safely inject the job settings into panorama_v1/run.py.")
+    injected = source.replace(
+        marker,
+        marker + f'os.environ["JOB_CFG"] = {json.dumps(json.dumps(dict(job["parameters"], job_id=job["job_id"])))}\n',
+        1
+    )
+    (folder / "run.py").write_text(injected, encoding="utf-8")
+    metadata = {
+        "id": kernel_id,
+        "title": f"NAMMA panorama {job['job_id']}",
+        "code_file": "run.py",
+        "language": "python",
+        "kernel_type": "script",
+        "is_private": True,
+        "enable_gpu": True,
+        "enable_internet": True,
+        "machine_shape": "NvidiaTeslaT4",
+        "dataset_sources": [dataset_id],
+        "kernel_sources": []
+    }
+    (folder / "kernel-metadata.json").write_text(json.dumps(metadata, indent=2), encoding="utf-8")
+    say("Pushing independent Kaggle kernel:", kernel_id, "input:", dataset_id)
+    say(kaggle("kernels", "push", "-p", folder, "-q")[1][-500:])
+    return kernel_id
+
+
+def wait_kernel(kernel_id, minutes=330):
+    start = time.time()
+    seen_running = False
+    last = ""
+    while time.time() - start < minutes * 60:
+        time.sleep(60)
+        rc, status = kaggle("kernels", "status", kernel_id, check=False)
+        if rc:
+            say("Kaggle status query failed:", status[-160:])
+            continue
+        low = status.lower()
+        if low != last:
+            say("Kaggle status:", low[-160:])
+            last = low
+        if "running" in low or "queued" in low:
+            seen_running = True
+        if "error" in low or "cancel" in low:
+            raise RuntimeError(f"Kaggle panorama kernel ended unsuccessfully: {status[-600:]}")
+        if "complete" in low and seen_running:
+            return
+    raise RuntimeError(f"Kaggle panorama kernel did not complete within {minutes} minutes; last status: {last}")
+
+
+def ensure_lfs(api, space, token):
+    from huggingface_hub import hf_hub_download
+    try:
+        p = hf_hub_download(repo_id=space, filename=".gitattributes", repo_type="space", token=token)
+        current = Path(p).read_text(encoding="utf-8", errors="replace")
+    except Exception:
+        current = ""
+    patterns = ("*.ply", "*.sog", "*.spz", "*.glb", "*.bin", "*.jpg", "*.png", "*.webp", "*.mp4")
+    missing = [f"{x} filter=lfs diff=lfs merge=lfs -text" for x in patterns if f"{x} filter=lfs" not in current]
+    if missing:
+        updated = current.rstrip() + ("\n" if current.strip() else "") + "\n".join(missing) + "\n"
+        api.upload_file(
+            path_or_fileobj=updated.encode("utf-8"), path_in_repo=".gitattributes",
+            repo_id=space, repo_type="space",
+            commit_message="Configure LFS for NAMMA panorama tour assets"
+        )
+
+
+def publish_tour(api, space, job_id, output_dir, token):
+    from huggingface_hub import CommitOperationAdd
+    tour = output_dir / "tour"
+    required = ("plan.json", "settings.json", "tour.json")
+    for name in required:
+        if not (tour / name).is_file():
+            raise RuntimeError(f"Panorama tour is missing {name}.")
+    # The static tour uses NAMMA's existing SuperSplat viewer package/exporter, read-only.
+    # It does not invoke or modify any video-to-3D reconstruction stage.
+    ensure_lfs(api, space, token)
+    api.create_repo(repo_id=space, repo_type="space", space_sdk="static", private=False, exist_ok=True)
+    node_root = Path("panorama-tour-builder")
+    node_root.mkdir(exist_ok=True)
+    command(["npm", "init", "-y"], cwd=node_root)
+    command([
+        "npm", "install", "--silent", "--no-audit", "--no-fund",
+        "playcanvas@2.23.2", "@playcanvas/supersplat-viewer@1.37.0",
+        "@playcanvas/splat-transform@3.10.1"
+    ], cwd=node_root)
+    public = node_root / "node_modules" / "@playcanvas" / "supersplat-viewer" / "public"
+    transform = node_root / "node_modules" / ".bin" / "splat-transform"
+    for f in ("index.html", "index.css", "index.js"):
+        if not (public / f).is_file():
+            raise RuntimeError(f"SuperSplat viewer package is missing public/{f}.")
+    # build() consumes the transform in tour/plan.json and emits a static viewer folder.
+    import numpy, scipy, plyfile, trimesh  # noqa: F401
+    sys.path.insert(0, str(HERE))
+    import make_tour
+    os.environ["TOUR_FORMAT"] = "cply"
+    os.environ["TOUR_SH"] = "3"
+    os.environ["TOUR_CROP"] = "0"
+    os.environ["TOUR_SMEAR"] = "0"
+    make_tour.build(str(output_dir), str(tour), str(public), str(transform))
+    dest = f"panorama/{job_id}"
+    api.upload_folder(
+        folder_path=str(tour), path_in_repo=dest,
+        repo_id=space, repo_type="space",
+        ignore_patterns=["plan.json", "clean.ply", "full_t.ply"],
+        commit_message=f"Publish NAMMA Street View panorama tour {job_id}"
+    )
+    return f"https://{space.replace('/', '-')}.static.hf.space/{dest}/index.html"
+
+
+def publish_results(api, repo_id, job_id, output_dir, tour_url):
+    from huggingface_hub import HfApi
+    api.create_repo(repo_id=repo_id, repo_type="dataset", private=True, exist_ok=True)
+    curated = Path("panorama-results")
+    if curated.exists():
+        shutil.rmtree(curated)
+    curated.mkdir()
+    names = ["panorama_summary.json", "manifest.json", "views_manifest.json",
+             "sfm_report.json", "camera_poses.json"]
+    for name in names:
+        src = output_dir / name
+        if src.is_file():
+            shutil.copy2(src, curated / name)
+    for name in ("model.ply", "metrics.json", "train.log"):
+        src = output_dir / "full" / name
+        if src.is_file():
+            shutil.copy2(src, curated / name)
+    for name in ("plan.json", "settings.json", "tour.json"):
+        src = output_dir / "tour" / name
+        if src.is_file():
+            (curated / "tour").mkdir(exist_ok=True)
+            shutil.copy2(src, curated / "tour" / name)
+    (curated / "tour_url.txt").write_text(tour_url + "\n", encoding="utf-8")
+    (curated / "README.md").write_text(
+        "# NAMMA Panorama v1 results\n\n"
+        f"Job: {job_id}\n\n"
+        f"Tour: {tour_url}\n\n"
+        "The reconstruction used perspective views generated from the source 360-degree panoramas. "
+        "Inspect sfm_report.json and panorama_summary.json before treating the scene as metrically accurate. "
+        "The viewer is an appearance model; it does not imply complete collision geometry.\n",
+        encoding="utf-8"
+    )
+    # Ensure large model outputs use LFS in the private results dataset too.
+    ensure_lfs(api, repo_id, os.environ.get("HF_TOKEN", ""))
+    api.upload_folder(
+        folder_path=str(curated), path_in_repo=job_id,
+        repo_id=repo_id, repo_type="dataset",
+        commit_message=f"Store NAMMA panorama results {job_id}"
+    )
+
+
+def main():
+    from huggingface_hub import HfApi
+    from kaggle.api.kaggle_api_extended import KaggleApi
+
+    hf_token = os.environ.get("HF_TOKEN")
+    if not hf_token:
+        raise RuntimeError("HF_TOKEN repository secret is required.")
+    if not os.environ.get("KAGGLE_API_TOKEN"):
+        raise RuntimeError("KAGGLE_API_TOKEN repository secret is required.")
+    job_path = job_file_from_event()
+    raw_job = json.loads(job_path.read_text(encoding="utf-8"))
+    job = validate_job(raw_job)
+    api = HfApi(token=hf_token)
+    output_dataset = job["output_dataset"]
+    api.create_repo(repo_id=output_dataset, repo_type="dataset", private=True, exist_ok=True)
+    update_status(api, output_dataset, job["job_id"], "staging",
+                  source_dataset=job["hf_dataset"], source_bundle=job["bundle_path"])
+
+    kaggle_api = KaggleApi()
+    kaggle_api.authenticate()
+    kaggle_user = kaggle_api.config_values["username"]
+    ds_slug = f"namma-panorama-{job['job_id'][:35]}".lower()
+    dataset_id = f"{kaggle_user}/{ds_slug}"
+    upload_input_bundle(api, job, hf_token, dataset_id)
+    update_status(api, output_dataset, job["job_id"], "queued", kaggle_dataset=dataset_id)
+
+    kernel_id = push_kernel(job, dataset_id, kaggle_user)
+    update_status(api, output_dataset, job["job_id"], "training", kaggle_kernel=kernel_id)
+    wait_kernel(kernel_id)
+    OUT.mkdir(exist_ok=True)
+    kaggle("kernels", "output", kernel_id, "-p", OUT, "-o", "--page-size", "200")
+    summary = OUT / "panorama_summary.json"
+    failure = OUT / "failure.json"
+    if failure.is_file():
+        raise RuntimeError("Kaggle panorama pipeline failed: " + failure.read_text(encoding="utf-8")[-2000:])
+    if not summary.is_file() or not (OUT / "full" / "model.ply").is_file():
+        raise RuntimeError("Kaggle finished without panorama_summary.json and full/model.ply.")
+    update_status(api, output_dataset, job["job_id"], "publishing")
+    tour_url = publish_tour(api, job["tour_space"], job["job_id"], OUT, hf_token)
+    publish_results(api, output_dataset, job["job_id"], OUT, tour_url)
+    update_status(api, output_dataset, job["job_id"], "complete",
+                  tour_url=tour_url, results=f"https://huggingface.co/datasets/{output_dataset}/tree/main/{job['job_id']}")
+    summary_obj = json.loads(summary.read_text(encoding="utf-8"))
+    summary_obj["tour_url"] = tour_url
+    (summary.parent / "panorama_summary.json").write_text(json.dumps(summary_obj, indent=2), encoding="utf-8")
+    summary_md = os.environ.get("GITHUB_STEP_SUMMARY")
+    if summary_md:
+        with open(summary_md, "a", encoding="utf-8") as f:
+            f.write(f"## NAMMA panorama job {job['job_id']}\n\n")
+            f.write(f"**Tour:** {tour_url}\n\n")
+            f.write(f"**Registered views:** {summary_obj['registered_views']} / {summary_obj['perspective_views']}\n\n")
+            f.write(f"**Source panoramas:** {summary_obj['source_panoramas']}\n\n")
+            f.write(f"**Private results:** https://huggingface.co/datasets/{output_dataset}/tree/main/{job['job_id']}\n")
+
+
+if __name__ == "__main__":
+    try:
+        main()
+    except Exception as exc:
+        say("PANORAMA ORCHESTRATION FAILED:", type(exc).__name__, str(exc))
+        try:
+            from huggingface_hub import HfApi
+            token = os.environ.get("HF_TOKEN")
+            if token:
+                # The job manifest can be parsed even if validation/staging failed.
+                p = job_file_from_event()
+                jid = json.loads(p.read_text(encoding="utf-8")).get("job_id", "unknown")
+                repo = json.loads(p.read_text(encoding="utf-8")).get("output_dataset", OUTPUT_DATASET)
+                api = HfApi(token=token)
+                api.create_repo(repo_id=repo, repo_type="dataset", private=True, exist_ok=True)
+                update_status(api, repo, jid, "failed", error=f"{type(exc).__name__}: {exc}"[:1500])
+        except Exception as status_exc:
+            say("Could not update failure status:", str(status_exc)[:300])
+        raise
