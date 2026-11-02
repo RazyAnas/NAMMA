@@ -198,7 +198,7 @@ def push_kernel(job, dataset_id, kaggle_user):
     }
     (folder / "kernel-metadata.json").write_text(json.dumps(metadata, indent=2), encoding="utf-8")
     say("Pushing independent Kaggle kernel:", kernel_id, "input:", dataset_id)
-    say(kaggle("kernels", "push", "-p", folder, "-q")[1][-500:])
+    say(kaggle("kernels", "push", "-p", folder)[1][-500:])
     return kernel_id
 
 
