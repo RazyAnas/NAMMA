@@ -114,7 +114,7 @@ def install_gsplat():
         "ninja", "gsplat==1.5.3", "viser", "tyro", "torchmetrics[image]",
         "tensorboard", "tensorly", "scikit-learn", "imageio[ffmpeg]",
         "pyyaml", "matplotlib", "splines", "plyfile", "scikit-image",
-        "trimesh", "opencv-python-headless", "Pillow", "scipy",
+        "trimesh", "opencv-python-headless", "Pillow", "scipy", "pycolmap",
         "fast-simplification", "tqdm", "typing_extensions"
     ]
     # Keep Kaggle's preinstalled CUDA PyTorch pinned, exactly as the established
