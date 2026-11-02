@@ -132,7 +132,7 @@ def build_plan(data_dir: Path, run_dir: Path, tour_dir: Path, examples_dir: Path
     _, _, vh = np.linalg.svd(centred_h, full_matrices=False)
     axis1 = vh[0] - up * float(vh[0] @ up)
     axis1 /= max(np.linalg.norm(axis1), 1e-9)
-    axis2 = np.cross(up, axis1)
+    axis2 = np.cross(axis1, up)
     axis2 /= max(np.linalg.norm(axis2), 1e-9)
     source_xy = np.stack([centres @ axis1, centres @ axis2], axis=1)
 
@@ -159,8 +159,6 @@ def build_plan(data_dir: Path, run_dir: Path, tour_dir: Path, examples_dir: Path
     rotation[0] = q[0, 0] * axis1 + q[1, 0] * axis2
     rotation[1] = up
     rotation[2] = q[0, 1] * axis1 + q[1, 1] * axis2
-    if np.linalg.det(rotation) < 0:
-        rotation[2] *= -1
     translation = np.array([t2[0], camera_height_m - scale * np.median(centres @ up), t2[1]], dtype=np.float64)
 
     transform_points = (points @ rotation.T + translation) * scale
