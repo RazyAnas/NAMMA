@@ -67,7 +67,29 @@ Example manifest:
 
 The example has two entries only to explain the fields; a real job needs at least 8 panoramas and should generally use 20-100+ well-overlapping positions. Latitude and longitude are optional, but strongly recommended. Without GPS, the tour still renders but its world scale is arbitrary. Images should be equirectangular, approximately 2:1 aspect ratio, reasonably sharp, and taken from distinct positions along the same connected scene. Avoid large gaps, repeated identical views, and routes with long stretches of blank walls.
 
-The selector/downloader should export its chosen panoramas into this bundle. The current release's submission helper can also make a minimal manifest from a folder of panorama images; that convenience mode has no GPS alignment unless a manifest is supplied.
+The selector/downloader should export its chosen panoramas into this bundle. The selector integration patch below adds per-panorama GPS coordinates and order to the JSON export, so the uploader can match the downloaded `<pano_id>.jpg` files and preserve route alignment. Without that metadata, the tour still renders but has arbitrary scale/orientation.
+
+## Add the Start 3D Rendering action to the Street View Selector
+
+The Street View Selector is hosted separately in the Hugging Face Space `anasrazy/namma-tour`. Deploy its integration from this branch:
+
+```bash
+hf auth login
+python3 -m pip install "huggingface_hub>=0.28"
+python3 colab/real_scenes/panorama_v1/deploy_selector_integration.py
+```
+
+The deployer verifies that the logged-in account is `anasrazy` and updates only these three Space files: `streetview-selector/index.html`, `streetview-selector/app.js`, and `streetview-selector/style.css`. It does not change the root tour viewer, existing tours, Space README/settings, or any video-pipeline file.
+
+After deployment, select at least 8 panorama positions, download their JPEGs using the existing downloader, and click **Start 3D Rendering**. The browser downloads a local `.sh` launcher. Run it in Terminal; it asks for your Hugging Face and GitHub tokens without displaying them, uploads the selected JPEGs and metadata, and queues a panorama job on this branch. It does not store tokens in the browser or embed them in the generated script.
+
+The launcher targets `feature/streetview-panorama-3d` while this is being tested. After this branch is merged into `main`, redeploy the selector integration with:
+
+```bash
+NAMMA_PANORAMA_BRANCH=main python3 colab/real_scenes/panorama_v1/deploy_selector_integration.py
+```
+
+This updates the generated launcher to fetch the submission helper from `main` and queue jobs on `main`.
 
 ## Submit a job
 
@@ -124,4 +146,4 @@ The Kaggle runner requires an NVIDIA GPU and stops if Kaggle assigns CPU only. T
 
 ## Tests
 
-The panorama test workflow installs only the panorama test dependencies and runs `pytest tests/panorama_v1`. It does not execute the video tests or video pipeline.
+The panorama test workflow installs only panorama test dependencies, compiles the panorama modules, and runs `pytest -q --confcutdir=tests/panorama_v1 tests/panorama_v1`. The `confcutdir` setting prevents the repository-wide application/video test fixture from loading. It does not execute the video tests or video pipeline.
