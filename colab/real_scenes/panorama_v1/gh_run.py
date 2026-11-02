@@ -154,6 +154,7 @@ def upload_input_bundle(api, job, token, dataset_id):
     shutil.copy2(source, folder / "bundle.zip")
     for name in ("prepare_panorama.py", "sfm_hloc.py", "make_tour.py"):
         shutil.copy2(HERE / name, folder / name)
+    shutil.copytree(HERE / "fused_ssim_shim", folder / "fused_ssim_shim", dirs_exist_ok=True)
     metadata = {
         "title": f"NAMMA panorama job {job['job_id']}",
         "id": dataset_id,
@@ -251,8 +252,8 @@ def publish_tour(api, space, job_id, output_dir, token):
             raise RuntimeError(f"Panorama tour is missing {name}.")
     # The static tour uses NAMMA's existing SuperSplat viewer package/exporter, read-only.
     # It does not invoke or modify any video-to-3D reconstruction stage.
-    ensure_lfs(api, space, token)
     api.create_repo(repo_id=space, repo_type="space", space_sdk="static", private=False, exist_ok=True)
+    ensure_lfs(api, space, token)
     node_root = Path("panorama-tour-builder")
     node_root.mkdir(exist_ok=True)
     command(["npm", "init", "-y"], cwd=node_root)
