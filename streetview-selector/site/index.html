@@ -72,9 +72,11 @@
         <div id="resultsList" class="results-list"><div class="empty-state">Your discovered Street View panoramas will appear here.</div></div>
         <div id="detailsCard" class="details-card hidden"></div>
         <button id="exportBtn" class="button button-outline button-wide" disabled>Export route + selected panorama IDs (.json)</button>
+        <button id="downloadSelectedBtn" class="button button-lime button-wide" disabled>Prepare selected panorama downloader <span>↓</span></button>
+        <p class="microcopy">Creates a Mac shell script containing the selected panorama IDs. Run it in Terminal; it installs streetview-dl, asks for a Map Tiles API key, and saves the resulting images in Downloads.</p>
       </section>
 
-      <div class="policy-note"><b>Google imagery handling</b><p>This tool previews Street View through Google's viewer and displays metadata returned by the API. It does not bulk-download, save, or export Google's panorama images. The export contains your drawn route and selected panorama IDs only.</p></div>
+      <div class="policy-note"><b>Downloader requirements</b><p>The generated Mac script runs locally. It requires Python 3, internet access, and a Google API key enabled for Map Tiles API. If your browser key is restricted to website referrers, create a separate API-restricted key for the CLI.</p></div>
     </aside>
 
     <section class="map-area">
