@@ -87,7 +87,7 @@ python colab/real_scenes/panorama_v1/submit_job.py \
   --input /path/to/downloaded/panoramas \
   --scene-name "My Street View route" \
   --steps 30000 \
-  --max-panoramas 200
+  --max-panoramas 100
 ```
 
 The default target is `feature/streetview-panorama-3d`. After this branch is merged, submit future jobs with `--branch main`. The helper uploads the ZIP to `anasrazy/namma-panorama-inbox`, then creates a single job manifest under `panorama_v1/jobs/`. Only that job-manifest path triggers the panorama workflow.
