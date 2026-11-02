@@ -126,6 +126,10 @@ def install_gsplat():
     ).stdout.strip()
     pin.write_text(f"torch=={torch_version}\\n", encoding="utf-8")
     run([sys.executable, "-m", "pip", "install", "-q", "-c", pin, *packages])
+    run([
+        sys.executable, "-m", "pip", "install", "-q", "--no-deps",
+        "git+https://github.com/nerfstudio-project/nerfview@4538024fe0d15fd1a0e4d760f3695fc44ca72787"
+    ])
     warm = subprocess.run([sys.executable, "-c", "import torch; assert torch.cuda.is_available(); import gsplat; print(torch.__version__, torch.cuda.get_device_name(0))"],
                           capture_output=True, text=True)
     if warm.returncode:
@@ -207,7 +211,7 @@ def main():
         "--eval-steps", str(steps),
         "--save-steps", str(steps),
         "--ply-steps", str(steps),
-        "--save-ply", "--disable-viewer",
+        "--save-ply", "--disable-viewer", "--disable-video",
         "--use-bilateral-grid",
         "--strategy.cap-max", str(cap)
     ]
