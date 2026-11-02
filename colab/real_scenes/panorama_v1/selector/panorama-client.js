@@ -161,7 +161,7 @@ async function pollJob(jobId, token) {
   const statusPath = jobId + "/status.json";
   const started = Date.now();
   while (Date.now() - started < 6 * 60 * 60 * 1000) {
-    await new Promise((resolve) => window.setTimeout(resolve, 30000));
+    await new Promise((resolve) => window.setTimeout(resolve, 20000));
     const blob = await downloadFile({
       repo: OUTPUT_REPO,
       path: statusPath,
@@ -227,11 +227,7 @@ async function submitPanoramaJob(selection, settings = {}) {
       panoramaSelection: selection,
       settings
     }));
-    const loginUrl = await oauthLoginUrl({
-      scopes: window.huggingface && window.huggingface.variables
-        ? window.huggingface.variables.OAUTH_SCOPES
-        : undefined
-    });
+    const loginUrl = await oauthLoginUrl();
     window.location.assign(loginUrl);
     return;
   }
@@ -329,24 +325,6 @@ window.NAMMA_START_PANORAMA = (selection, settings) =>
     failStatus(error);
     throw error;
   });
-
-const startButton = $("downloadSelectedBtn");
-if (startButton) {
-  startButton.addEventListener("click", () => {
-    const selected = window.NAMMA_GET_SELECTED_PANORAMAS
-      ? window.NAMMA_GET_SELECTED_PANORAMAS()
-      : null;
-    if (!selected || selected.length < 8) {
-      renderStatus("Select at least 8 panoramas in route order before starting 3D reconstruction.", 0);
-      return;
-    }
-    submitPanoramaJob(selected, {
-      zoom: Number($("downloadZoom").value),
-      columns: Number($("downloadCols").value),
-      rows: Number($("downloadRows").value)
-    }).catch(failStatus);
-  });
-}
 
 try {
   await authenticateAndResume();
