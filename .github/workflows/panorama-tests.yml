@@ -34,4 +34,4 @@ jobs:
         run: |
           python -m py_compile colab/real_scenes/panorama_v1/*.py
       - name: Run panorama-only unit tests
-        run: pytest -q tests/panorama_v1
+        run: pytest -q --confcutdir=tests/panorama_v1 tests/panorama_v1
