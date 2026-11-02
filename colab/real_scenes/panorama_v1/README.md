@@ -1,149 +1,92 @@
-# NAMMA Panorama v1 — Street View panoramas to 3D
+# NAMMA Panorama v1 — online Street View to 3D
 
-This directory is an independent reconstruction pipeline. It is designed to run beside NAMMA's existing video-to-3D flow without editing or invoking that flow.
+This is a separate 360°-panorama-to-3D pipeline for NAMMA. Its user-facing entry point is the existing online Street View Selector. There is no Terminal, local launcher, manual file download, or pasted API token in the normal user flow.
 
-## Isolation boundary
+## Isolation from the video pipeline
 
-The panorama pipeline is contained in this directory plus one new GitHub Actions workflow:
+All panorama reconstruction code lives under `colab/real_scenes/panorama_v1/`. Its jobs, Kaggle datasets, GPU kernels, Hugging Face inbox/output, and GitHub Actions workflows are separate from the video-to-3D system.
 
-- `.github/workflows/namma-panorama.yml`
-- `colab/real_scenes/panorama_v1/**`
+The panorama code does not import or execute the video capture, frame extraction, SfM, or training pipeline under `colab/real_scenes/v3/`. The video workflow `.github/workflows/namma-v3.yml` and every existing file under `v3/` remain untouched. The static tour exporter calls the existing read-only generic PLY-to-viewer builder in `colab/real_scenes/final/make_tour.py`; no file in `final/` is modified.
 
-It does **not** modify or read the video pipeline's `colab/real_scenes/v3/RUN.json`, `v3/run.py`, `v3/gh_run.py`, `v3/inbox.py`, `.github/workflows/namma-v3.yml`, or the video inbox. Its Kaggle kernel ID, job files, status path and output dataset are separate.
+## Online user flow
 
-The static tour exporter imports the existing read-only SuperSplat tour builder in `colab/real_scenes/final/make_tour.py` so panorama results open in the same NAMMA viewer. It only calls its generic PLY-to-static-viewer build function; it does not call any video capture, SfM, frame extraction or training stage. No file in `final/` is modified.
+Open the Street View Selector:
 
-## What the pipeline does
+<https://anasrazy-namma-tour.static.hf.space/streetview-selector/>
 
-1. Accepts a set of 360-degree equirectangular panoramas and a JSON manifest.
-2. Generates 12 overlapping pinhole perspective views from each panorama.
-3. Extracts ALIKED features, matches them with LightGlue, adds NetVLAD retrieval pairs, and runs COLMAP structure-from-motion.
-4. Creates one shared COLMAP camera model and estimates camera poses/3D points across panorama positions.
-5. Trains a separate gsplat 3D Gaussian model on Kaggle GPU.
-6. Fits a route alignment to GPS coordinates when enough panorama positions have GPS metadata.
-7. Exports a route-oriented static NAMMA tour, the raw PLY model, SfM diagnostics and a training log.
+1. Connect the map with the Google Maps key, draw the road, and scan it for Street View panorama positions.
+2. Select at least 8 panorama positions in route order. The pipeline accepts up to 200.
+3. Keep the default capture quality at **Zoom 4, 44 × 22 tiles (968 tiles per panorama)**. The downloader's limit is 1,000 tiles per panorama.
+4. Click **Start 3D Rendering online** and sign in with the Hugging Face account that owns the NAMMA private inbox.
+5. The browser calls the Street View downloader, validates each returned 2:1 panorama, and uploads it directly into the private Hugging Face inbox. It uploads the route manifest and publishes the job request last.
+6. The cloud worker stages the uploaded images into a private Kaggle dataset, runs the independent GPU reconstruction, then publishes a static tour and private diagnostics.
 
-A panorama gives a complete view from one camera centre, not depth from every direction. Multiple spatially separated panoramas are essential: the reconstruction gets parallax from the movement between Street View camera positions, not from the 12 synthetic crops of one panorama. Synthetic crops from a single pano have the same camera centre.
+The selector uses Hugging Face's browser OAuth flow with the Space's existing read/write repository scopes. The access token stays in memory in the page and is not written into browser storage, a source file, or a downloadable script. The browser checks that the authenticated owner is `anasrazy` before accepting a submission.
 
-## Panorama bundle format
+The live Space deployer updates only these four files in `anasrazy/namma-tour`:
 
-Create a ZIP with this layout:
+- `streetview-selector/index.html`
+- `streetview-selector/app.js`
+- `streetview-selector/style.css`
+- `streetview-selector/panorama-client.js`
 
-```text
-bundle.zip
-├── manifest.json
-└── panoramas/
-    ├── pano_00001.jpg
-    ├── pano_00002.jpg
-    └── ...
-```
+It does not change the main tour viewer, existing published tours, Space OAuth settings, or video code.
 
-Example manifest:
+## Queue activation
 
-```json
-{
-  "schema_version": 1,
-  "scene_name": "Koramangala street route",
-  "panoramas": [
-    {
-      "pano_id": "pano-id-1",
-      "image": "panoramas/pano_00001.jpg",
-      "sequence": 0,
-      "lat": 12.9352,
-      "lon": 77.6245,
-      "heading_deg": 82.0
-    },
-    {
-      "pano_id": "pano-id-2",
-      "image": "panoramas/pano_00002.jpg",
-      "sequence": 1,
-      "lat": 12.9353,
-      "lon": 77.6247,
-      "heading_deg": 84.0
-    }
-  ]
-}
-```
+The browser writes to the private inbox `anasrazy/namma-panorama-inbox`. The default-branch GitHub Actions worker polls this inbox every five minutes and processes one pending panorama job at a time. The scheduled worker becomes active once this feature branch is merged into `main`, because GitHub scheduled workflows run from the default branch. The draft PR is not merged yet.
 
-The example has two entries only to explain the fields; a real job needs at least 8 panoramas and should generally use 20-100+ well-overlapping positions. Latitude and longitude are optional, but strongly recommended. Without GPS, the tour still renders but its world scale is arbitrary. Images should be equirectangular, approximately 2:1 aspect ratio, reasonably sharp, and taken from distinct positions along the same connected scene. Avoid large gaps, repeated identical views, and routes with long stretches of blank walls.
-
-The selector/downloader should export its chosen panoramas into this bundle. The selector integration patch below adds per-panorama GPS coordinates and order to the JSON export, so the uploader can match the downloaded `<pano_id>.jpg` files and preserve route alignment. Without that metadata, the tour still renders but has arbitrary scale/orientation.
-
-## Add the Start 3D Rendering action to the Street View Selector
-
-The Street View Selector is hosted separately in the Hugging Face Space `anasrazy/namma-tour`. Deploy its integration from this branch:
-
-```bash
-hf auth login
-python3 -m pip install "huggingface_hub>=0.28"
-python3 colab/real_scenes/panorama_v1/deploy_selector_integration.py
-```
-
-The deployer verifies that the logged-in account is `anasrazy` and updates only these three Space files: `streetview-selector/index.html`, `streetview-selector/app.js`, and `streetview-selector/style.css`. It does not change the root tour viewer, existing tours, Space README/settings, or any video-pipeline file.
-
-After deployment, select at least 8 panorama positions, download their JPEGs using the existing downloader, and click **Start 3D Rendering**. The browser downloads a local `.sh` launcher. Run it in Terminal; it asks for your Hugging Face and GitHub tokens without displaying them, uploads the selected JPEGs and metadata, and queues a panorama job on this branch. It does not store tokens in the browser or embed them in the generated script.
-
-The launcher targets `feature/streetview-panorama-3d` while this is being tested. After this branch is merged into `main`, redeploy the selector integration with:
-
-```bash
-NAMMA_PANORAMA_BRANCH=main python3 colab/real_scenes/panorama_v1/deploy_selector_integration.py
-```
-
-This updates the generated launcher to fetch the submission helper from `main` and queue jobs on `main`.
-
-## Submit a job
-
-Set repository secrets in **RazyAnas/NAMMA → Settings → Secrets and variables → Actions**:
-
-- `KAGGLE_API_TOKEN`: Kaggle API token with permission to create datasets and private GPU kernels.
-- `HF_TOKEN`: Hugging Face write token. It needs write access to the private input/output datasets and the `anasrazy/namma-tour` Space. A legacy `HUGGINGFACE_WRITE_TOKEN` secret is also accepted.
-
-For the first run, create a local Hugging Face write token and a GitHub fine-grained token with **Contents: Read and write** on `RazyAnas/NAMMA`. Do not commit or share either token.
-
-On macOS/Linux, from the repository checkout:
-
-```bash
-export HF_TOKEN='your-hugging-face-write-token'
-export GITHUB_TOKEN='your-github-contents-token'
-python colab/real_scenes/panorama_v1/submit_job.py \
-  --input /path/to/downloaded/panoramas \
-  --scene-name "My Street View route" \
-  --steps 30000 \
-  --max-panoramas 100
-```
-
-The default target is `feature/streetview-panorama-3d`. After this branch is merged, submit future jobs with `--branch main`. The helper uploads the ZIP to `anasrazy/namma-panorama-inbox`, then creates a single job manifest under `panorama_v1/jobs/`. Only that job-manifest path triggers the panorama workflow.
-
-The workflow creates its own private Kaggle input dataset and kernel, waits for the GPU job, publishes the static tour under:
+The private result dataset is `anasrazy/namma-panorama-out`. A job status file is published at `<job_id>/status.json`. After a successful run, the public static tour is published at:
 
 `https://anasrazy-namma-tour.static.hf.space/panorama/<job_id>/index.html`
 
-It stores the raw PLY model, logs and diagnostics under the private dataset `anasrazy/namma-panorama-out/<job_id>`. A job status JSON is also written to `<job_id>/status.json`.
+The selector polls the job status and shows **Open 3D tour** when the published link is ready. A queued or failed job does not get a made-up viewer URL.
 
-## Initial reconstruction settings
+## Reconstruction pipeline
 
-| Setting | Default | Meaning |
-|---|---:|---|
-| Panoramas | up to 200 | Maximum input positions consumed |
-| Perspective views | 12 per panorama | Overlapping horizontal views around 360° |
-| View image size | 768 × 576 | Resolution supplied to SfM and training |
-| Horizontal field of view | 60° | Perspective crop field of view |
-| SfM sequence window | 18 | Nearby views paired for matching |
-| Retrieval neighbours | 10 | Additional long-range matching pairs |
-| Gaussian training | 30,000 steps | Dedicated gsplat MCMC run |
-| Splat cap | 1.5 million | Upper limit for the Gaussian representation |
+1. Read the uploaded 360° equirectangular panoramas and their GPS coordinates/order.
+2. Generate 12 overlapping perspective views per panorama. Each view is 1280 × 960 pixels.
+3. Extract ALIKED features, match with LightGlue, add NetVLAD retrieval pairs, and run COLMAP structure-from-motion.
+4. Estimate camera poses and 3D points across the spatially separated panorama positions.
+5. Train a Gaussian-splat model on an NVIDIA GPU in Kaggle.
+6. Fit route alignment against GPS when enough reliable coordinates are available.
+7. Export the raw PLY model, held-out quality metrics, SfM diagnostics, logs, and a route-oriented NAMMA static tour.
 
-The Kaggle runner requires an NVIDIA GPU and stops if Kaggle assigns CPU only. The first run compiles/warms the gsplat CUDA extension. Runtime depends on panorama count, feature matching, Kaggle queue and GPU availability; no completion time is guaranteed.
+The synthetic perspective views created from one panorama all share the same camera centre. They do not create depth by themselves. Actual 3D depth comes from parallax between the different Street View camera positions, so choose a route with many distinct, overlapping panoramas rather than widely separated points.
 
-## What the first release does not claim
+## Video-pipeline quality target
 
-- One panorama cannot produce a complete 3D reconstruction by itself.
-- The 12 perspective images from one panorama are not 12 independent camera positions.
-- GPS helps position and scale the route, but noisy or mismatched coordinates can make the metric fit inaccurate. Check `tour.json` and `gps_alignment_rms_m`.
-- A Gaussian appearance model is not a watertight mesh. This first panorama release publishes orbit/route viewing, not collision-safe walking or a certified geometry model.
-- Moving vehicles, pedestrians, changing storefronts, glass, repetitive facades and sparse coverage can cause reconstruction artifacts.
-- The external Street View downloader is an image source, not part of the reconstruction engine. Its availability, output quality and service rules remain separate constraints.
+The panorama trainer uses the same core full-run training budget as NAMMA's video pipeline:
 
-## Tests
+| Setting | Panorama target |
+|---|---:|
+| Input perspective-view resolution | 1280 × 960 |
+| Perspective views per panorama | 12 |
+| Training iterations | 30,000 |
+| Maximum Gaussian splats | 1.5 million |
+| Appearance correction | Bilateral grid |
+| Depth loss | Enabled when every registered training view has 3D points |
+| Validation | Held-out PSNR, SSIM and LPIPS when supported by the run |
 
-The panorama test workflow installs only panorama test dependencies, compiles the panorama modules, and runs `pytest -q --confcutdir=tests/panorama_v1 tests/panorama_v1`. The `confcutdir` setting prevents the repository-wide application/video test fixture from loading. It does not execute the video tests or video pipeline.
+This matches the video pipeline's core quality settings; it does **not** guarantee identical visual quality. A quality claim requires a completed GPU run, its held-out metrics, and an actual inspection of the published tour. Weak coverage, poor overlap, motion, reflections, repetitive buildings, or inaccurate GPS can still reduce the result.
+
+The Kaggle runner requires an NVIDIA GPU and stops if it receives CPU-only hardware. A model is not considered complete until the held-out metrics and the exported `full/model.ply` exist and the static NAMMA viewer can open the scene.
+
+## Panorama input requirements
+
+- 8–200 positions per route; 20–100 well-overlapping viewpoints is a better target for most routes.
+- Full 2:1 equirectangular images, preferably at least 2048 × 1024 pixels.
+- Preserve sequence order and latitude/longitude for route alignment.
+- Avoid large spatial gaps, duplicated images, blurred captures, and unrelated scenes.
+- The online Street View downloader uses an unofficial external tile service. Its output, availability, and rate limits are separate from the reconstruction pipeline and may change.
+
+## What this first release does not claim
+
+- One panorama cannot provide a full 3D reconstruction.
+- A Gaussian appearance model is not a watertight mesh. This release supports orbit/route viewing, not collision-safe walking or engineering-grade geometry.
+- GPS-based scale and orientation can be inaccurate when the pano metadata is noisy or mismatched.
+- Quality parity with a specific video tour is only established after held-out metrics and visual inspection, not from configuration alone.
+
+## Tests and isolation checks
+
+The panorama test workflow compiles and tests only `panorama_v1`. It uses a test configuration boundary so repository-wide video/application fixtures are not imported. The GPU quality benchmark is separate from unit tests: passing unit tests does not mean that a 3D model has been trained.
