@@ -111,15 +111,21 @@ def install_gsplat():
              "https://github.com/nerfstudio-project/gsplat", str(gsplat_root)])
     (gsplat_root / "examples" / "datasets" / "__init__.py").touch()
     packages = [
-        "ninja", "tyro", "tensorboard", "tensorly", "scikit-learn",
-        "imageio[ffmpeg]", "pyyaml", "matplotlib", "splines", "plyfile",
-        "scikit-image", "trimesh", "opencv-python-headless", "Pillow",
-        "scipy", "fast-simplification"
+        "ninja", "gsplat==1.5.3", "viser", "tyro", "torchmetrics[image]",
+        "tensorboard", "tensorly", "scikit-learn", "imageio[ffmpeg]",
+        "pyyaml", "matplotlib", "splines", "plyfile", "scikit-image",
+        "trimesh", "opencv-python-headless", "Pillow", "scipy",
+        "fast-simplification", "tqdm", "typing_extensions"
     ]
-    run([sys.executable, "-m", "pip", "install", "-q", *packages])
-    # Use the source checkout for the trainer examples and the same pinned gsplat version.
-    run([sys.executable, "-m", "pip", "install", "-q", "--no-deps",
-         "gsplat==1.5.3"])
+    # Keep Kaggle's preinstalled CUDA PyTorch pinned, exactly as the established
+    # NAMMA gsplat runner does; only install the trainer's other dependencies.
+    pin = ROOT / "torch-pin.txt"
+    torch_version = subprocess.run(
+        [sys.executable, "-c", "import torch; print(torch.__version__)"],
+        capture_output=True, text=True, check=True
+    ).stdout.strip()
+    pin.write_text(f"torch=={torch_version}\\n", encoding="utf-8")
+    run([sys.executable, "-m", "pip", "install", "-q", "-c", pin, *packages])
     warm = subprocess.run([sys.executable, "-c", "import torch; assert torch.cuda.is_available(); import gsplat; print(torch.__version__, torch.cuda.get_device_name(0))"],
                           capture_output=True, text=True)
     if warm.returncode:
@@ -182,6 +188,17 @@ def main():
     result = ROOT / "train-full"
     train_log = OUT / "full" / "train.log"
     (OUT / "full").mkdir(parents=True, exist_ok=True)
+    train_env = os.environ.copy()
+    native_ssim = subprocess.run(
+        [sys.executable, "-c", "import fused_ssim"],
+        capture_output=True, text=True
+    )
+    if native_ssim.returncode != 0:
+        shim = HERE / "fused_ssim_shim"
+        if not (shim / "fused_ssim.py").is_file():
+            raise RuntimeError("Fused SSIM is unavailable and the panorama fallback shim is missing.")
+        train_env["PYTHONPATH"] = str(shim) + os.pathsep + train_env.get("PYTHONPATH", "")
+        say("Using the bundled pure-PyTorch SSIM fallback.")
     cmd = [
         sys.executable, examples / "simple_trainer.py", "mcmc",
         "--data-dir", data, "--data-factor", "1",
@@ -194,7 +211,7 @@ def main():
         "--use-bilateral-grid",
         "--strategy.cap-max", str(cap)
     ]
-    run(cmd, cwd=examples, log=train_log)
+    run(cmd, cwd=examples, env=train_env, log=train_log)
     ply_files = sorted(
         result.glob("ply/point_cloud_*.ply"),
         key=lambda p: int(re.search(r"point_cloud_(\d+)\.ply$", p.name).group(1))
