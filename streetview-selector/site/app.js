@@ -539,8 +539,16 @@
   $("undoBtn").addEventListener("click", undoPoint);
   $("clearBtn").addEventListener("click", clearRoute);
   $("scanBtn").addEventListener("click", scanRoute);
-  $("selectAllBtn").addEventListener("click", () => { state.results.forEach((item) => item.selected = true); renderResults(); });
-  $("selectNoneBtn").addEventListener("click", () => { state.results.forEach((item) => item.selected = false); renderResults(); });
+  $("selectAllBtn").addEventListener("click", () => {
+    state.results.forEach((item) => { item.selected = true; updatePanoramaMarker(item); });
+    renderResults();
+    toast("All discovered panorama markers selected.");
+  });
+  $("selectNoneBtn").addEventListener("click", () => {
+    state.results.forEach((item) => { item.selected = false; updatePanoramaMarker(item); });
+    renderResults();
+    toast("All discovered panorama markers deselected.");
+  });
   $("exportBtn").addEventListener("click", exportSelected);
   $("closePreview").addEventListener("click", () => {
     $("previewModal").classList.add("hidden");
