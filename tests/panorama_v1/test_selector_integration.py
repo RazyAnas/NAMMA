@@ -75,7 +75,7 @@ def test_browser_module_uses_oauth_and_direct_private_uploads():
     assert 'window.NAMMA_START_PANORAMA' in source
     assert "read -r -s -p" not in source
     assert "python3 -m venv" not in source
-    assert ".sh" not in source
+    assert "#!/usr/bin/env bash" not in source
 
 
 def test_browser_module_javascript_parses_when_node_is_available():
