@@ -6,7 +6,7 @@
   "parameters": {
     "steps": 30000,
     "max_panoramas": 100,
-    "image_size": 768,
+    "image_size": 1280,
     "view_count": 12,
     "hfov_deg": 60.0,
     "sequence_window": 18,
