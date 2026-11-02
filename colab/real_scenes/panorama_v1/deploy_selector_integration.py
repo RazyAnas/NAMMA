@@ -169,7 +169,7 @@ def patch_html(text: str) -> str:
     return text.replace(HTML_ANCHOR, HTML_ANCHOR + HTML_PANEL, 1)
 
 
-def patch_app(text: str) -> str:
+def patch_app(text: str, pipeline_branch: str) -> str:
     if EXPORT_OLD in text:
         text = text.replace(EXPORT_OLD, EXPORT_NEW, 1)
     elif 'panoramas: selected.map((item, sequence)' not in text:
@@ -190,6 +190,14 @@ def patch_app(text: str) -> str:
         if text.count(EVENT_ANCHOR) != 1:
             raise ValueError("Could not find the downloader button event binding in app.js.")
         text = text.replace(EVENT_ANCHOR, EVENT_REPLACEMENT, 1)
+    text = text.replace(
+        "https://raw.githubusercontent.com/RazyAnas/NAMMA/feature/streetview-panorama-3d/colab/",
+        "https://raw.githubusercontent.com/RazyAnas/NAMMA/" + pipeline_branch + "/colab/"
+    )
+    text = text.replace(
+        "--branch 'feature/streetview-panorama-3d'",
+        "--branch '" + pipeline_branch + "'"
+    )
     return text
 
 
@@ -224,7 +232,12 @@ def main() -> None:
         html_old = html_path.read_text(encoding="utf-8")
         app_old = app_path.read_text(encoding="utf-8")
         css_old = css_path.read_text(encoding="utf-8")
-        html_new, app_new, css_new = patch_html(html_old), patch_app(app_old), patch_css(css_old)
+        pipeline_branch = os.environ.get("NAMMA_PANORAMA_BRANCH", "feature/streetview-panorama-3d")
+        if pipeline_branch not in ("feature/streetview-panorama-3d", "main"):
+            raise SystemExit("NAMMA_PANORAMA_BRANCH must be feature/streetview-panorama-3d or main.")
+        html_new = patch_html(html_old)
+        app_new = patch_app(app_old, pipeline_branch)
+        css_new = patch_css(css_old)
         if (html_new, app_new, css_new) == (html_old, app_old, css_old):
             print("The panorama rendering integration is already deployed; no files changed.")
             return
