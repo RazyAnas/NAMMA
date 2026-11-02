@@ -210,7 +210,6 @@ def main():
     shutil.copy2(data / "manifest.json", OUT / "manifest.json")
     shutil.copytree(data / "images", OUT / "images", dirs_exist_ok=True)
     shutil.copytree(sparse, OUT / "sparse" / "0", dirs_exist_ok=True)
-    shutil.copy2(train_log, OUT / "full" / "train.log")
 
     # Prepare route cameras and a metric similarity transform for the static tour.
     sys.path.insert(0, str(examples))
