@@ -443,6 +443,7 @@
     $("scanBtn").disabled = false;
     $("scanBtn").innerHTML = "Scan selected route <span>→</span>";
     $("exportBtn").disabled = !state.results.some((item) => item.selected);
+    $("downloadSelectedBtn").disabled = !state.results.some((item) => item.selected);
     renderResults();
     if (!state.results.length) {
       toast("No Street View panoramas found near this path. Draw closer to the blue roads or increase search radius.");
@@ -527,6 +528,70 @@
     URL.revokeObjectURL(url);
   }
 
+  function downloadSelectedWithStreetViewDl() {
+    const selected = state.results.filter((item) => item.selected);
+    if (!selected.length) return;
+    const ids = selected.map((item) => item.panoId);
+    if (ids.some((id) => !/^[A-Za-z0-9_-]+$/.test(id))) {
+      toast("One or more panorama IDs contain unexpected characters. Nothing was generated.");
+      return;
+    }
+    const urls = ids.map((id) => "https://www.google.com/maps?api=1&map_action=pano&panoid=" + id);
+    const scriptLines = [
+      "#!/usr/bin/env bash",
+      "set -euo pipefail",
+      "",
+      'echo "NAMMA · Street View panorama downloader"',
+      'echo "Selected panoramas: ' + ids.length + '"',
+      "",
+      'if ! command -v python3 >/dev/null 2>&1; then',
+      '  echo "Python 3 is required. Install it from https://www.python.org/downloads/macos/"',
+      "  exit 1",
+      "fi",
+      "",
+      'WORK_DIR="$(mktemp -d "${TMPDIR:-/tmp}/namma-streetview-dl.XXXXXX")"',
+      'trap \'rm -rf "$WORK_DIR"\' EXIT',
+      'OUT_DIR="$HOME/Downloads/NAMMA-StreetView-$(date +%Y%m%d-%H%M%S)"',
+      'mkdir -p "$OUT_DIR"',
+      'URL_FILE="$WORK_DIR/panorama-urls.txt"',
+      "",
+      'cat > "$URL_FILE" <<\'NAMMA_PANORAMA_URLS\'',
+      ...urls,
+      "NAMMA_PANORAMA_URLS",
+      "",
+      'echo "Installing streetview-dl in a temporary Python environment..."',
+      'python3 -m venv "$WORK_DIR/venv"',
+      'source "$WORK_DIR/venv/bin/activate"',
+      'python -m pip install --upgrade pip',
+      'python -m pip install streetview-dl',
+      "",
+      'echo "Enter a Google API key with Map Tiles API enabled."',
+      'echo "A browser-referrer-restricted key may not work from Terminal."',
+      'read -r -s -p "Google Map Tiles API key: " GOOGLE_MAPS_API_KEY',
+      'echo ""',
+      'if [ -z "$GOOGLE_MAPS_API_KEY" ]; then echo "No API key supplied."; exit 1; fi',
+      'export GOOGLE_MAPS_API_KEY',
+      "",
+      'echo "Saving panorama images to: $OUT_DIR"',
+      'streetview-dl --batch "$URL_FILE" --output-dir "$OUT_DIR" --quality high --metadata --no-crop --verbose',
+      "",
+      'echo "Finished. Output folder: $OUT_DIR"',
+      'open "$OUT_DIR" 2>/dev/null || true',
+      ""
+    ];
+    const script = scriptLines.join("\n");
+    const blob = new Blob([script], { type: "text/x-shellscript;charset=utf-8" });
+    const url = URL.createObjectURL(blob);
+    const anchor = document.createElement("a");
+    const stamp = new Date().toISOString().replace(/[:.]/g, "-").slice(0, 19);
+    anchor.href = url;
+    anchor.download = "namma-streetview-dl-" + stamp + ".sh";
+    document.body.appendChild(anchor);
+    anchor.click();
+    anchor.remove();
+    URL.revokeObjectURL(url);
+    toast("Downloader script prepared for " + ids.length + " selected panoramas. Run it with bash from Terminal.");
+  }
   $("connectBtn").addEventListener("click", loadGoogleMaps);
   $("apiKey").addEventListener("keydown", (event) => { if (event.key === "Enter") loadGoogleMaps(); });
   $("drawBtn").addEventListener("click", () => { if (state.map && !state.routeMode) setRouteMode(true); });
@@ -550,6 +615,7 @@
     toast("All discovered panorama markers deselected.");
   });
   $("exportBtn").addEventListener("click", exportSelected);
+  $("downloadSelectedBtn").addEventListener("click", downloadSelectedWithStreetViewDl);
   $("closePreview").addEventListener("click", () => {
     $("previewModal").classList.add("hidden");
     if (state.panorama) state.panorama.setVisible(false);
