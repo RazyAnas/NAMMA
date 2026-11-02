@@ -42,7 +42,7 @@ jobs:
         run: pip install --disable-pip-version-check -q huggingface_hub
       - name: Deploy selector into NAMMA's existing public static Space
         env:
-          HF_TOKEN: \${{ secrets.HF_TOKEN || secrets.HUGGINGFACE_WRITE_TOKEN }}
+          HF_TOKEN: ${{ secrets.HF_TOKEN || secrets.HUGGINGFACE_WRITE_TOKEN }}
         run: |
           python - <<'PY'
           import os
