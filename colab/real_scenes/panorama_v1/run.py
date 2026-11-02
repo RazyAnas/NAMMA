@@ -157,7 +157,7 @@ def main():
     data = ROOT / "data"
     prep = prepare_panorama.make_views(
         source, data,
-        image_size=int(JOB_CFG.get("image_size", 768)),
+        image_size=int(JOB_CFG.get("image_size", 1280)),
         view_count=int(JOB_CFG.get("view_count", 12)),
         hfov_deg=float(JOB_CFG.get("hfov_deg", 60.0)),
         max_panoramas=int(JOB_CFG.get("max_panoramas", 100))
@@ -215,6 +215,21 @@ def main():
         "--use-bilateral-grid",
         "--strategy.cap-max", str(cap)
     ]
+    sfm_report = json.loads((OUT / "sfm_report.json").read_text(encoding="utf-8"))
+    depth_loss_enabled = int(sfm_report.get("images_without_3d_points", 1)) == 0
+    if depth_loss_enabled:
+        cmd.insert(cmd.index("--strategy.cap-max"), "--depth-loss")
+    say(
+        "Video-parity training profile:",
+        json.dumps({
+            "image_size": prep["image_width"],
+            "steps": steps,
+            "max_splats": cap,
+            "bilateral_grid": True,
+            "depth_loss": depth_loss_enabled
+        }),
+        flush=True
+    )
     run(cmd, cwd=examples, env=train_env, log=train_log)
     ply_files = sorted(
         result.glob("ply/point_cloud_*.ply"),
@@ -225,7 +240,18 @@ def main():
     shutil.copy2(ply_files[-1], OUT / "full" / "model.ply")
 
     stats = sorted(result.glob("stats/val_step*.json"))
-    metrics = json.loads(stats[-1].read_text(encoding="utf-8")) if stats else {}
+    if not stats:
+        raise RuntimeError("gsplat completed without held-out validation metrics; refusing to publish an unverified model.")
+    metrics = json.loads(stats[-1].read_text(encoding="utf-8"))
+    metrics.update({
+        "quality_profile": "namma-video-parity",
+        "image_width": int(prep["image_width"]),
+        "image_height": int(prep["image_height"]),
+        "training_steps": steps,
+        "splat_cap": cap,
+        "bilateral_grid": True,
+        "depth_loss": depth_loss_enabled
+    })
     (OUT / "full" / "metrics.json").write_text(json.dumps(metrics, indent=2), encoding="utf-8")
     shutil.copy2(data / "views_manifest.json", OUT / "views_manifest.json")
     shutil.copy2(data / "manifest.json", OUT / "manifest.json")
@@ -238,7 +264,6 @@ def main():
     tour_dir = OUT / "tour"
     tour_info = panorama_tour.build_plan(data, OUT, tour_dir, examples,
                                          float(JOB_CFG.get("camera_height_m", 2.2)))
-    sfm_report = json.loads((OUT / "sfm_report.json").read_text(encoding="utf-8"))
     summary = {
         "pipeline": "panorama_v1",
         "job_id": JOB_CFG.get("job_id"),
@@ -249,6 +274,9 @@ def main():
         "points3D": sfm_report["points3D"],
         "training_steps": steps,
         "max_splats": cap,
+        "depth_loss_enabled": depth_loss_enabled,
+        "quality_profile": "namma-video-parity",
+        "validation_metrics": metrics,
         "exported_ply": str(OUT / "full" / "model.ply"),
         "tour": tour_info,
         "elapsed_minutes": round((time.time() - T0) / 60, 1)
