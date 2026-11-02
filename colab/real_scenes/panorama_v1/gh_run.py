@@ -263,6 +263,15 @@ def wait_kernel(kernel_id, minutes=330):
     start = time.time()
     seen_running = False
     last = ""
+
+    def fetch_failure_logs():
+        rc, logs = kaggle("kernels", "logs", kernel_id, check=False)
+        Path("out").mkdir(exist_ok=True)
+        log_path = Path("out") / "kaggle_kernel.log"
+        log_path.write_text(logs or f"Kaggle logs command returned exit code {rc}.", encoding="utf-8")
+        say("Kaggle execution logs saved to", log_path)
+        return logs
+
     while time.time() - start < minutes * 60:
         time.sleep(60)
         rc, status = kaggle("kernels", "status", kernel_id, check=False)
@@ -276,10 +285,18 @@ def wait_kernel(kernel_id, minutes=330):
         if "running" in low or "queued" in low:
             seen_running = True
         if "error" in low or "cancel" in low:
-            raise RuntimeError(f"Kaggle panorama kernel ended unsuccessfully: {status[-600:]}")
+            logs = fetch_failure_logs()
+            raise RuntimeError(
+                f"Kaggle panorama kernel ended unsuccessfully: {status[-600:]}\\n"
+                f"Kaggle kernel log tail:\\n{(logs or '[no execution logs returned]')[-12000:]}"
+            )
         if "complete" in low and seen_running:
             return
-    raise RuntimeError(f"Kaggle panorama kernel did not complete within {minutes} minutes; last status: {last}")
+    logs = fetch_failure_logs()
+    raise RuntimeError(
+        f"Kaggle panorama kernel did not complete within {minutes} minutes; last status: {last}\\n"
+        f"Kaggle kernel log tail:\\n{(logs or '[no execution logs returned]')[-12000:]}"
+    )
 
 
 def ensure_lfs(api, space, token, repo_type="space"):
