@@ -39,8 +39,7 @@ def run_sfm(images: Path, output: Path, sequence_window: int = 18,
         if len(bits) == 2 and bits[0] != bits[1]:
             pairs.add(tuple(sorted((bits[0], bits[1]))))
     pairs_path = output / "pairs.txt"
-    pairs_path.write_text("
-".join(f"{a} {b}" for a, b in sorted(pairs)), encoding="utf-8")
+    pairs_path.write_text("\n".join(f"{a} {b}" for a, b in sorted(pairs)), encoding="utf-8")
     print(f"Matching {len(names)} perspective images with {len(pairs)} pairs", flush=True)
 
     features = extract_features.main(local_cfg, images, output)
