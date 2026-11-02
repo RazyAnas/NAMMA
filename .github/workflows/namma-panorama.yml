@@ -10,18 +10,22 @@ on:
       - feature/streetview-panorama-3d
     paths:
       - "colab/real_scenes/panorama_v1/jobs/*.json"
+      - "colab/real_scenes/panorama_v1/poll_inbox.py"
+      - "colab/real_scenes/panorama_v1/gh_run.py"
   workflow_dispatch:
     inputs:
       job_file:
         description: "Repository path to an existing panorama job JSON"
         required: true
         type: string
+  schedule:
+    - cron: "*/5 * * * *"
 
 permissions:
   contents: read
 
 concurrency:
-  group: namma-panorama-${{ github.ref }}-${{ github.run_id }}
+  group: namma-panorama-queue
   cancel-in-progress: false
 
 jobs:
@@ -52,5 +56,10 @@ jobs:
           python -m pip install --upgrade pip
           python -m pip install "kaggle==2.2.5" "huggingface_hub>=0.28" six numpy scipy plyfile trimesh
 
-      - name: Run panorama-only Kaggle job and publish the tour
+      - name: Poll private inbox for browser-submitted jobs
+        if: github.event_name == 'schedule'
+        run: python colab/real_scenes/panorama_v1/poll_inbox.py
+
+      - name: Run an explicitly committed panorama job
+        if: github.event_name != 'schedule'
         run: python colab/real_scenes/panorama_v1/gh_run.py
