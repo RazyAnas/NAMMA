@@ -42,31 +42,52 @@ jobs:
         run: pip install --disable-pip-version-check -q huggingface_hub
       - name: Deploy static files to the dedicated Hugging Face Space
         env:
-          HF_TOKEN: \${{ secrets.HF_TOKEN || secrets.HUGGINGFACE_WRITE_TOKEN }}
+          HF_TOKEN_PRIMARY: \${{ secrets.HF_TOKEN }}
+          HF_TOKEN_SECONDARY: \${{ secrets.HUGGINGFACE_WRITE_TOKEN }}
         run: |
           python - <<'PY'
           import os
           from huggingface_hub import HfApi
 
-          token = os.environ.get("HF_TOKEN")
-          if not token:
-              raise SystemExit("Missing HF_TOKEN or HUGGINGFACE_WRITE_TOKEN repository secret.")
-
-          api = HfApi(token=token)
           repo_id = "anasrazy/namma-streetview-selector"
-          api.upload_folder(
-              folder_path="streetview-selector/site",
-              path_in_repo=".",
-              repo_id=repo_id,
-              repo_type="space",
-              commit_message="Deploy NAMMA Street View Selector from GitHub Actions",
-          )
-          files = api.list_repo_files(repo_id=repo_id, repo_type="space")
-          required = {"index.html", "app.js", "style.css"}
-          missing = required.difference(files)
-          if missing:
-              raise SystemExit("HF upload verification failed; missing: " + ", ".join(sorted(missing)))
-          print("HF Space files verified:", ", ".join(sorted(required)))
+          candidates = [
+              ("HF_TOKEN", os.environ.get("HF_TOKEN_PRIMARY")),
+              ("HUGGINGFACE_WRITE_TOKEN", os.environ.get("HF_TOKEN_SECONDARY")),
+          ]
+          errors = []
+          deployed = False
+
+          for label, token in candidates:
+              if not token:
+                  continue
+              try:
+                  api = HfApi(token=token)
+                  identity = api.whoami()
+                  print("Trying Hugging Face credential:", label, "account:", identity.get("name", "unknown"))
+                  api.upload_folder(
+                      folder_path="streetview-selector/site",
+                      path_in_repo=".",
+                      repo_id=repo_id,
+                      repo_type="space",
+                      commit_message="Deploy NAMMA Street View Selector from GitHub Actions",
+                  )
+                  files = api.list_repo_files(repo_id=repo_id, repo_type="space")
+                  required = {"index.html", "app.js", "style.css"}
+                  missing = required.difference(files)
+                  if missing:
+                      raise RuntimeError("HF upload verification failed; missing: " + ", ".join(sorted(missing)))
+                  print("HF Space files verified:", ", ".join(sorted(required)))
+                  deployed = True
+                  break
+              except Exception as exc:
+                  message = str(exc).replace(token, "[REDACTED]")[:500]
+                  errors.append(label + ": " + type(exc).__name__ + ": " + message)
+                  print(label, "could not deploy:", type(exc).__name__, message)
+
+          if not deployed:
+              if not any(token for _, token in candidates):
+                  raise SystemExit("Neither HF_TOKEN nor HUGGINGFACE_WRITE_TOKEN is configured in GitHub Actions secrets.")
+              raise SystemExit("No configured Hugging Face token could write to " + repo_id + ". " + " | ".join(errors))
           PY
       - name: Smoke-test hosted page
         run: |
@@ -84,10 +105,10 @@ jobs:
                       if response.status == 200 and "NAMMA" in body and "Coverage Selector" in body:
                           print("Hosted Space returned HTTP 200 and the expected app title.")
                           raise SystemExit(0)
-                      last_error = f"Unexpected response: HTTP {response.status}"
+                      last_error = "Unexpected response: HTTP " + str(response.status)
               except Exception as exc:
                   last_error = str(exc)
-              print(f"Attempt {attempt + 1}/12: {last_error}")
+              print("Attempt " + str(attempt + 1) + "/12: " + str(last_error))
               time.sleep(5)
           raise SystemExit("Hosted Space smoke test failed: " + str(last_error))
           PY

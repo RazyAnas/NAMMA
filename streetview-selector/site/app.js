@@ -38,11 +38,13 @@
     window.initNammaGoogleMaps = initMap;
     const script = document.createElement("script");
     script.src = "https://maps.googleapis.com/maps/api/js?key=" + encodeURIComponent(key) +
-      "&callback=initNammaGoogleMaps&libraries=geometry&v=weekly";
+      "&callback=initNammaGoogleMaps&libraries=geometry,streetView&v=weekly";
     script.async = true;
     script.defer = true;
     script.onerror = () => {
       state.mapsScriptAdded = false;
+      $("connectBtn").disabled = false;
+      $("connectBtn").textContent = "Connect";
       setError("Google Maps could not load. Check your key, billing, HTTP referrer restrictions and Maps JavaScript API access.");
     };
     document.head.appendChild(script);
@@ -53,29 +55,35 @@
 
   function initMap() {
     if (state.map) return;
-    state.map = new google.maps.Map($("map"), {
-      center: VIT, zoom: 16, mapTypeId: "roadmap",
-      streetViewControl: false, mapTypeControl: true, fullscreenControl: true,
-      clickableIcons: false, disableDoubleClickZoom: true
-    });
-    state.service = new google.maps.StreetViewService();
-    state.panorama = new google.maps.StreetViewPanorama($("panorama"), {
-      addressControl: true, linksControl: true, panControl: true,
-      enableCloseButton: false, fullscreenControl: true
-    });
-    state.coverage = new google.maps.StreetViewCoverageLayer();
-    state.coverage.setMap(state.map);
-    state.map.addListener("click", (event) => {
-      if (state.routeMode) addRoutePoint(event.latLng);
-      else inspectPoint(event.latLng);
-    });
-    $("mapPlaceholder").classList.add("hidden");
-    $("connectionLabel").textContent = "GOOGLE MAPS CONNECTED";
-    $("connectionLabel").style.color = "#caff70";
-    $("connectBtn").textContent = "Connected";
-    $("drawBtn").disabled = false;
-    $("connectBtn").disabled = false;
-    toast("Blue road lines show Street View coverage. Draw only along the covered roads.");
+    try {
+      state.map = new google.maps.Map($("map"), {
+        center: VIT, zoom: 16, mapTypeId: "roadmap",
+        streetViewControl: false, mapTypeControl: true, fullscreenControl: true,
+        clickableIcons: false, disableDoubleClickZoom: true
+      });
+      state.service = new google.maps.StreetViewService();
+      state.panorama = new google.maps.StreetViewPanorama($("panorama"), {
+        addressControl: true, linksControl: true, panControl: true,
+        enableCloseButton: false, fullscreenControl: true
+      });
+      state.coverage = new google.maps.StreetViewCoverageLayer();
+      state.coverage.setMap(state.map);
+      state.map.addListener("click", (event) => {
+        if (state.routeMode) addRoutePoint(event.latLng);
+        else inspectPoint(event.latLng);
+      });
+      $("mapPlaceholder").classList.add("hidden");
+      $("connectionLabel").textContent = "GOOGLE MAPS CONNECTED";
+      $("connectionLabel").style.color = "#caff70";
+      $("connectBtn").textContent = "Connected";
+      $("drawBtn").disabled = false;
+      $("connectBtn").disabled = false;
+      toast("Blue road lines show Street View coverage. Draw only along the covered roads.");
+    } catch (error) {
+      $("connectBtn").disabled = false;
+      $("connectBtn").textContent = "Connect";
+      setError("Google Maps loaded, but Street View could not initialize: " + (error && error.message ? error.message : String(error)));
+    }
   }
 
   function setRouteMode(enabled) {
@@ -97,8 +105,7 @@
     else {
       state.routeLine = new google.maps.Polyline({
         map: state.map, path: state.routePoints, clickable: false,
-        strokeColor: "#caff70", strokeOpacity: 0.98, strokeWeight: 5,
-        zIndex: 20
+        strokeColor: "#caff70", strokeOpacity: 0.98, strokeWeight: 5, zIndex: 20
       });
     }
     const marker = new google.maps.Marker({
@@ -198,8 +205,7 @@
     if (existing) return existing;
     const location = data.location.latLng;
     const item = {
-      panoId: panoId,
-      lat: location.lat(), lng: location.lng(),
+      panoId: panoId, lat: location.lat(), lng: location.lng(),
       date: data.imageDate || "Not provided by Google",
       description: data.location.description || "Street View panorama",
       links: Array.isArray(data.links) ? data.links.length : 0,
@@ -229,7 +235,7 @@
     const spacing = Number($("spacing").value);
     const radius = Number($("radius").value);
     const samples = sampleRoute(state.routePoints, spacing);
-    let checked = 0, hits = 0;
+    let checked = 0;
     $("progressCount").textContent = "0 / " + samples.length;
     $("progressText").textContent = "Checking panorama coverage…";
     $("progressBar").style.width = "0%";
@@ -238,11 +244,7 @@
       const responses = await Promise.all(batch.map((point) => getPanoramaAt(point, radius)));
       responses.forEach((response) => {
         checked += 1;
-        if (response.status === "OK" && response.data && response.data.location) {
-          const before = state.results.length;
-          addPanorama(response.data);
-          if (state.results.length > before) hits += 1;
-        }
+        if (response.status === "OK" && response.data && response.data.location) addPanorama(response.data);
       });
       $("progressCount").textContent = checked + " / " + samples.length;
       $("progressText").textContent = state.results.length + " unique panoramas found";
@@ -252,7 +254,6 @@
     $("resultsSubtitle").textContent = "SCAN COMPLETE";
     $("scanBtn").disabled = false;
     $("scanBtn").innerHTML = "Scan selected route <span>→</span>";
-    $("foundCount").textContent = String(state.results.length);
     $("exportBtn").disabled = state.results.length === 0;
     renderResults();
     if (!state.results.length) toast("No panoramas found on this route. Try a larger search radius or check that your path follows blue coverage.");
@@ -349,10 +350,7 @@
 
   $("connectBtn").addEventListener("click", loadGoogleMaps);
   $("apiKey").addEventListener("keydown", (event) => { if (event.key === "Enter") loadGoogleMaps(); });
-  $("drawBtn").addEventListener("click", () => {
-    if (!state.map) return;
-    if (!state.routeMode) setRouteMode(true);
-  });
+  $("drawBtn").addEventListener("click", () => { if (state.map && !state.routeMode) setRouteMode(true); });
   $("finishBtn").addEventListener("click", () => {
     if (state.routePoints.length < 2) return;
     setRouteMode(false);
@@ -369,7 +367,5 @@
     $("previewModal").classList.add("hidden");
     if (state.panorama) state.panorama.setVisible(false);
   });
-  document.addEventListener("keydown", (event) => {
-    if (event.key === "Escape") $("closePreview").click();
-  });
+  document.addEventListener("keydown", (event) => { if (event.key === "Escape") $("closePreview").click(); });
 })();
