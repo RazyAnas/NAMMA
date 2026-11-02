@@ -4,7 +4,7 @@
   const $ = (id) => document.getElementById(id);
   const state = {
     map: null, service: null, panorama: null, coverage: null,
-    routeMode: false, routePoints: [], routeLine: null, routeMarkers: [],
+    routeMode: false, pendingRoutePoint: false, routePoints: [], routePanoIds: [], routeLine: null, routeMarkers: [],
     results: [], resultMarkers: [], selectedPanoId: null, mapsScriptAdded: false
   };
   const VIT = { lat: 12.9698, lng: 79.1559 };
@@ -69,8 +69,9 @@
       state.coverage = new google.maps.StreetViewCoverageLayer();
       state.coverage.setMap(state.map);
       state.map.addListener("click", (event) => {
-        if (state.routeMode) addRoutePoint(event.latLng);
-        else inspectPoint(event.latLng);
+        // A map click is useful only while drawing. Never turn arbitrary map clicks
+        // into results: drawing clicks are verified against Street View coverage.
+        if (state.routeMode) void addRoutePoint(event.latLng);
       });
       $("mapPlaceholder").classList.add("hidden");
       $("connectionLabel").textContent = "GOOGLE MAPS CONNECTED";
@@ -96,29 +97,76 @@
     $("drawHint").textContent = enabled
       ? "Click along the blue Street View coverage lines to add route points. Press Finish when done."
       : "Connect the map, press Start drawing, then click along the blue roads. Press Finish when the route is complete.";
-    if (enabled) toast("Route drawing enabled. Click the map to add points.");
+    if (enabled) toast("Click directly on a blue Street View road. Each click is checked; uncovered clicks are rejected and valid points snap to the actual panorama location.");
   }
 
-  function addRoutePoint(latLng) {
-    state.routePoints.push(latLng);
-    if (state.routeLine) state.routeLine.setPath(state.routePoints);
-    else {
-      state.routeLine = new google.maps.Polyline({
-        map: state.map, path: state.routePoints, clickable: false,
-        strokeColor: "#caff70", strokeOpacity: 0.98, strokeWeight: 5, zIndex: 20
-      });
+  async function addRoutePoint(clickedLatLng) {
+    // Google exposes StreetViewCoverageLayer as a visual overlay, not as selectable
+    // line geometry. Validate each map click against nearby panorama metadata and
+    // snap the accepted vertex to Google's actual panorama coordinates.
+    if (state.pendingRoutePoint) {
+      toast("Checking the previous selection. Please wait.");
+      return;
     }
-    const marker = new google.maps.Marker({
-      map: state.map, position: latLng, clickable: false,
-      icon: { path: google.maps.SymbolPath.CIRCLE, scale: 4.5, fillColor: "#17200f",
-        fillOpacity: 1, strokeColor: "#caff70", strokeWeight: 2 },
-      zIndex: 30
-    });
-    state.routeMarkers.push(marker);
-    updateRouteStats();
-    $("finishBtn").disabled = state.routePoints.length < 2;
-    $("undoBtn").disabled = false;
-    $("clearBtn").disabled = false;
+    state.pendingRoutePoint = true;
+    $("finishBtn").disabled = true;
+    toast("Checking whether this point is on Street View coverage…");
+
+    try {
+      const PICK_RADIUS_METERS = 15;
+      const response = await getPanoramaAt(clickedLatLng, PICK_RADIUS_METERS);
+      if (!state.routeMode) return;
+
+      if (response.status !== "OK" || !response.data || !response.data.location) {
+        toast("Not selectable: no Street View panorama within 15 m. Click directly on a blue covered road.");
+        return;
+      }
+
+      const data = response.data;
+      const panoId = data.location.pano;
+      const snappedPosition = data.location.latLng;
+      const snapDistance = google.maps.geometry.spherical.computeDistanceBetween(clickedLatLng, snappedPosition);
+      if (!panoId || snapDistance > PICK_RADIUS_METERS) {
+        toast("Not selectable: the nearest panorama is too far away. Choose a blue coverage line.");
+        return;
+      }
+      if (state.routePanoIds.includes(panoId)) {
+        toast("That panorama is already part of your selected route. Choose another point along the blue line.");
+        return;
+      }
+
+      // Store the real panorama position, never the arbitrary mouse-click location.
+      state.routePanoIds.push(panoId);
+      const panoramaItem = addPanorama(data);
+      if (panoramaItem) panoramaItem.selected = true;
+      state.routePoints.push(snappedPosition);
+
+      if (state.routeLine) state.routeLine.setPath(state.routePoints);
+      else {
+        state.routeLine = new google.maps.Polyline({
+          map: state.map, path: state.routePoints, clickable: false,
+          strokeColor: "#caff70", strokeOpacity: 0.98, strokeWeight: 5, zIndex: 20
+        });
+      }
+      const marker = new google.maps.Marker({
+        map: state.map, position: snappedPosition, clickable: false,
+        icon: { path: google.maps.SymbolPath.CIRCLE, scale: 4.5, fillColor: "#17200f",
+          fillOpacity: 1, strokeColor: "#caff70", strokeWeight: 2 },
+        zIndex: 30
+      });
+      state.routeMarkers.push(marker);
+      renderResults();
+      updateRouteStats();
+      $("finishBtn").disabled = state.routePoints.length < 2;
+      $("undoBtn").disabled = false;
+      $("clearBtn").disabled = false;
+      toast("Covered road point accepted and snapped to panorama " + panoId.slice(0, 12) + "…");
+    } catch (error) {
+      toast("Street View coverage check failed. Check your Maps API key and try again.");
+    } finally {
+      state.pendingRoutePoint = false;
+      $("finishBtn").disabled = !state.routeMode || state.routePoints.length < 2;
+    }
   }
 
   function updateRouteStats() {
@@ -132,6 +180,15 @@
   function undoPoint() {
     if (!state.routePoints.length) return;
     state.routePoints.pop();
+    const removedPanoId = state.routePanoIds.pop();
+    if (removedPanoId && !state.routePanoIds.includes(removedPanoId)) {
+      const resultIndex = state.results.findIndex((item) => item.panoId === removedPanoId);
+      if (resultIndex >= 0) {
+        if (state.results[resultIndex].marker) state.results[resultIndex].marker.setMap(null);
+        state.results.splice(resultIndex, 1);
+        renderResults();
+      }
+    }
     const marker = state.routeMarkers.pop();
     if (marker) marker.setMap(null);
     if (state.routeLine) {
@@ -152,6 +209,7 @@
     state.routeMarkers = [];
     state.routeLine = null;
     state.routePoints = [];
+    state.routePanoIds = [];
     state.results.forEach((item) => { if (item.marker) item.marker.setMap(null); });
     state.results = [];
     renderResults();
@@ -310,19 +368,6 @@
     $("previewModal").classList.remove("hidden");
     state.panorama.setPano(item.panoId);
     state.panorama.setVisible(true);
-  }
-
-  function inspectPoint(position) {
-    getPanoramaAt(position, Number($("radius").value)).then((response) => {
-      if (response.status !== "OK" || !response.data) {
-        toast("No Street View panorama found near this map point.");
-        return;
-      }
-      const item = addPanorama(response.data);
-      renderResults();
-      showDetails(item);
-      toast("Street View panorama found. It has been added to the results.");
-    }).catch(() => toast("Could not inspect this point. Check the Maps API configuration."));
   }
 
   function exportSelected() {
