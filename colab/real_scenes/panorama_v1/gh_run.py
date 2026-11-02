@@ -267,15 +267,25 @@ def publish_tour(api, space, job_id, output_dir, token):
     for f in ("index.html", "index.css", "index.js"):
         if not (public / f).is_file():
             raise RuntimeError(f"SuperSplat viewer package is missing public/{f}.")
-    # build() consumes the transform in tour/plan.json and emits a static viewer folder.
+    # Load NAMMA's generic PLY-to-static-viewer exporter by an explicit file path.
+    # The panorama branch also has a make_tour.py (route-plan generation), so a
+    # normal import would silently load the wrong module.
+    import importlib.util
     import numpy, scipy, plyfile, trimesh  # noqa: F401
-    sys.path.insert(0, str(HERE))
-    import make_tour
+    final_dir = REPO_ROOT / "colab" / "real_scenes" / "final"
+    if not (final_dir / "make_tour.py").is_file():
+        raise RuntimeError("The generic NAMMA static-tour exporter is missing.")
+    sys.path.insert(0, str(final_dir))
+    spec = importlib.util.spec_from_file_location("namma_static_tour_builder", final_dir / "make_tour.py")
+    if spec is None or spec.loader is None:
+        raise RuntimeError("Could not load NAMMA's static-tour exporter.")
+    static_tour_builder = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(static_tour_builder)
     os.environ["TOUR_FORMAT"] = "cply"
     os.environ["TOUR_SH"] = "3"
     os.environ["TOUR_CROP"] = "0"
     os.environ["TOUR_SMEAR"] = "0"
-    make_tour.build(str(output_dir), str(tour), str(public), str(transform))
+    static_tour_builder.build(str(output_dir), str(tour), str(public), str(transform))
     dest = f"panorama/{job_id}"
     api.upload_folder(
         folder_path=str(tour), path_in_repo=dest,
