@@ -1,0 +1,39 @@
+name: Deploy NAMMA browser-only panorama selector
+
+on:
+  push:
+    branches:
+      - feature/streetview-panorama-3d
+    paths:
+      - "colab/real_scenes/panorama_v1/selector/panorama-client.js"
+      - "colab/real_scenes/panorama_v1/deploy_selector_integration.py"
+      - ".github/workflows/namma-panorama-deploy.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: namma-panorama-selector-deploy
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      HF_TOKEN: ${{ secrets.HF_TOKEN || secrets.HUGGINGFACE_WRITE_TOKEN || secrets.HF_TOKEN_backup || secrets.HUGGINGFACE_WRITE_TOKEN_backup || secrets.HF_TOKEN_BACKUP || secrets.HUGGINGFACE_WRITE_TOKEN_BACKUP }}
+    steps:
+      - name: Check out the isolated panorama branch
+        uses: actions/checkout@v4
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Install Hugging Face deploy client
+        run: python -m pip install --upgrade "huggingface_hub>=0.28"
+      - name: Verify deployment credential
+        run: |
+          test -n "$HF_TOKEN" || { echo "Missing Hugging Face write token secret."; exit 1; }
+      - name: Deploy the browser-only selector integration
+        run: python colab/real_scenes/panorama_v1/deploy_selector_integration.py
