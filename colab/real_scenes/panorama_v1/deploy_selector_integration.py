@@ -1,70 +1,78 @@
-"""Deploy the secure panorama rendering launcher to the existing NAMMA static Space.
+"""Deploy the browser-only panorama submitter into NAMMA's existing static Space.
 
-Only streetview-selector/index.html, app.js and style.css are changed.
+Only these four frontend files are committed:
+  streetview-selector/index.html
+  streetview-selector/app.js
+  streetview-selector/style.css
+  streetview-selector/panorama-client.js
+
+The Space already has Hugging Face OAuth enabled with read-repos/write-repos scopes.
+No personal token is embedded in or persisted by the browser client.
 """
 from __future__ import annotations
 
 import os
+import re
 import tempfile
 from pathlib import Path
 
 SPACE = "anasrazy/namma-tour"
+REPO_ROOT = Path(__file__).resolve().parents[3]
+CLIENT_SOURCE = Path(__file__).resolve().parent / "selector" / "panorama-client.js"
 FILES = (
     "streetview-selector/index.html",
     "streetview-selector/app.js",
     "streetview-selector/style.css",
+    "streetview-selector/panorama-client.js",
 )
 
-HTML_ANCHOR = (
-    '<p class="microcopy">Uses the public Hugging Face Gradio downloader for the selected panorama IDs. '
-    "No Google Maps Platform Map Tiles API key is requested for downloading. Test a few panoramas first; "
-    "high zoom can take a long time.</p>"
+OLD_DOWNLOADER_COPY = (
+    'Uses the public Hugging Face Gradio downloader for the selected panorama IDs. '
+    'No Google Maps Platform Map Tiles API key is requested for downloading. '
+    'Test a few panoramas first; high zoom can take a long time.'
 )
-HTML_PANEL = """
-        <div class="panorama-render-panel">
-          <div class="panel-heading"><span>05</span><div><b>Reconstruct a 3D tour</b><small>PANORAMAS → GAUSSIAN SPLATTING</small></div></div>
-          <p class="microcopy">Select at least 8 panorama positions and download their images above. For a meaningful street scene, 20–100+ well-spaced panoramas are recommended.</p>
-          <button id="start3DRenderBtn" class="button button-lime button-wide" disabled>Start 3D Rendering <span>↗</span></button>
-          <p id="panoramaRenderStatus" class="microcopy">This creates a local Terminal launcher. It keeps write tokens out of the browser and submits the selected images to NAMMA's separate panorama pipeline.</p>
-        </div>
-"""
 
-EXPORT_OLD = '''  function exportSelected() {
-    const ids = state.results.filter((item) => item.selected).map((item) => item.panoId);
-    if (!ids.length) return;
-    const payload = {
-      format: "namma-streetview-route-v1",
-      created_at: new Date().toISOString(),
-      route: {
-        type: "LineString",
-        coordinates: state.routePoints.map((point) => [point.lng(), point.lat()])
-      },
-      panorama_ids: ids
-    };
-'''
-EXPORT_NEW = '''  function exportSelected() {
-    const selected = state.results
-      .filter((item) => item.selected)
-      .sort((a, b) => a.routeOrder - b.routeOrder);
-    const ids = selected.map((item) => item.panoId);
-    if (!ids.length) return;
-    const payload = {
-      format: "namma-streetview-route-v1",
-      created_at: new Date().toISOString(),
-      route: {
-        type: "LineString",
-        coordinates: state.routePoints.map((point) => [point.lng(), point.lat()])
-      },
-      panorama_ids: ids,
-      panoramas: selected.map((item, sequence) => ({
-        pano_id: item.panoId,
-        lat: item.lat,
-        lon: item.lng,
-        sequence: sequence
-      }))
-    };
-'''
-START_FUNCTION = r'''  function start3DRendering() {
+def patch_html(text: str) -> str:
+    if 'id="panoramaJobProgress"' in text and 'panorama-client.js' in text:
+        return text
+    if 'id="downloadSelectedBtn"' not in text:
+        raise ValueError("The live selector download button was not found.")
+
+    text = re.sub(
+        r'(<button id="downloadSelectedBtn"[^>]*>).*?(</button>)',
+        r'\1Start 3D Rendering online <span>↗</span>\2',
+        text,
+        count=1,
+        flags=re.S,
+    )
+    text = text.replace(
+        OLD_DOWNLOADER_COPY,
+        "Sign in with the NAMMA Hugging Face account. Selected panoramas are downloaded and uploaded directly in this browser; no Terminal, local launcher or pasted token is required.",
+        1,
+    )
+    marker = '        <p class="microcopy">Sign in with the NAMMA Hugging Face account. Selected panoramas are downloaded and uploaded directly in this browser; no Terminal, local launcher or pasted token is required.</p>'
+    if marker not in text:
+        raise ValueError("Could not replace the old downloader instructions in index.html.")
+    status = """
+        <div id="panoramaJobProgress" class="progress-wrap hidden">
+          <div class="progress-track"><div id="panoramaJobBar"></div></div>
+          <div><span id="panoramaJobText">Preparing online panorama reconstruction…</span><b id="panoramaJobCount"></b></div>
+          <a id="panoramaJobLink" class="panorama-job-link hidden" href="#" rel="noopener noreferrer">Open 3D tour ↗</a>
+        </div>"""
+    text = text.replace(marker, marker + status, 1)
+    if '<script type="module" src="./panorama-client.js"></script>' not in text:
+        text = text.replace(
+            '<script src="./app.js"></script>',
+            '<script src="./app.js"></script>\n  <script type="module" src="./panorama-client.js"></script>',
+            1,
+        )
+    if 'type="module" src="./panorama-client.js"' not in text:
+        raise ValueError("Could not load panorama-client.js from index.html.")
+    return text
+
+def patch_app(text: str) -> str:
+    pattern = re.compile(r"  function downloadSelectedWithHfSpace\(\) \{[\s\S]*?\n  \}\n")
+    replacement = """  function downloadSelectedWithHfSpace() {
     const selected = state.results
       .filter((item) => item.selected)
       .sort((a, b) => a.routeOrder - b.routeOrder);
@@ -73,192 +81,124 @@ START_FUNCTION = r'''  function start3DRendering() {
       return;
     }
     if (selected.length > 200) {
-      toast("The first panorama pipeline supports up to 200 panorama positions per job.");
+      toast("The current panorama pipeline supports up to 200 positions per job.");
       return;
     }
     if (selected.some((item) => !/^[A-Za-z0-9_-]+$/.test(item.panoId))) {
-      toast("A panorama ID contains unexpected characters. Nothing was generated.");
+      toast("A panorama ID contains unexpected characters. Nothing was uploaded.");
       return;
     }
-    const payload = {
-      format: "namma-streetview-route-v1",
-      created_at: new Date().toISOString(),
-      route: {
-        type: "LineString",
-        coordinates: state.routePoints.map((point) => [point.lng(), point.lat()])
-      },
-      panorama_ids: selected.map((item) => item.panoId),
-      panoramas: selected.map((item, sequence) => ({
-        pano_id: item.panoId, lat: item.lat, lon: item.lng, sequence: sequence
-      }))
+    if (typeof window.NAMMA_START_PANORAMA !== "function") {
+      toast("The online panorama module is still loading. Please try again.");
+      return;
+    }
+    const settings = {
+      zoom: Number($("downloadZoom").value),
+      columns: Number($("downloadCols").value),
+      rows: Number($("downloadRows").value)
     };
-    const selectionBase64 = btoa(unescape(encodeURIComponent(JSON.stringify(payload))));
-    const submitUrl = "https://raw.githubusercontent.com/RazyAnas/NAMMA/feature/streetview-panorama-3d/colab/real_scenes/panorama_v1/submit_job.py";
-    const shell = [
-      "#!/usr/bin/env bash",
-      "set -euo pipefail",
-      "echo 'NAMMA · Street View panorama to 3D'",
-      "echo 'Selected panorama positions: " + selected.length + "'",
-      "echo 'Pipeline: panorama crops → camera reconstruction → Gaussian splat training → NAMMA tour'",
-      "echo ''",
-      "if ! command -v python3 >/dev/null 2>&1; then echo 'Python 3 is required.'; exit 1; fi",
-      "WORK_DIR=\"$(mktemp -d -t namma-panorama-XXXXXX)\"",
-      "trap 'rm -rf \"$WORK_DIR\"' EXIT",
-      "OUT_DIR=\"$HOME/Downloads/NAMMA-StreetView-HFSPACE\"",
-      "read -r -p \"Panorama image folder [$OUT_DIR]: \" INPUT_DIR",
-      "if [ -z \"$INPUT_DIR\" ]; then INPUT_DIR=\"$OUT_DIR\"; fi",
-      "if [ ! -d \"$INPUT_DIR\" ]; then echo \"Image folder not found: $INPUT_DIR\"; exit 1; fi",
-      "python3 -c \"import pathlib,sys; p=pathlib.Path(sys.argv[1]); n=sum(1 for x in p.iterdir() if x.is_file() and x.suffix.lower() in ('.jpg','.jpeg','.png')); print('Image files found:',n); sys.exit(0 if n >= 8 else 2)\" \"$INPUT_DIR\" || { echo 'Download at least 8 panorama images first.'; exit 1; }",
-      "echo ''",
-      "read -r -s -p 'Hugging Face write token: ' HF_TOKEN; printf '\\n'",
-      "read -r -s -p 'GitHub token (Contents: read/write on RazyAnas/NAMMA): ' GITHUB_TOKEN; printf '\\n'",
-      "if [ -z \"$HF_TOKEN\" ] || [ -z \"$GITHUB_TOKEN\" ]; then echo 'Both tokens are required.'; exit 1; fi",
-      "export HF_TOKEN GITHUB_TOKEN",
-      "python3 -m venv \"$WORK_DIR/venv\"",
-      "source \"$WORK_DIR/venv/bin/activate\"",
-      "python -m pip install --upgrade pip",
-      "python -m pip install 'huggingface_hub>=0.28'",
-      "curl -fsSL '" + submitUrl + "' -o \"$WORK_DIR/submit_job.py\"",
-      "printf '%s' '" + selectionBase64 + "' | python3 -c \"import base64,sys; sys.stdout.buffer.write(base64.b64decode(sys.stdin.read()))\" > \"$WORK_DIR/vit-streetview-route-selection.json\"",
-      "python \"$WORK_DIR/submit_job.py\" --input \"$INPUT_DIR\" --selection-json \"$WORK_DIR/vit-streetview-route-selection.json\" --scene-name 'NAMMA Street View route' --steps 30000 --max-panoramas 200 --image-size 768 --view-count 12 --branch 'feature/streetview-panorama-3d'",
-      "unset HF_TOKEN GITHUB_TOKEN",
-      "echo ''",
-      "echo 'The panorama job has been submitted. Follow the NAMMA Panorama workflow in GitHub Actions.'",
-      "echo 'The final tour link and private results will be published when the GPU job completes.'",
-      ""
-    ].join("\n");
-    const blob = new Blob([shell], { type: "text/x-shellscript;charset=utf-8" });
-    const url = URL.createObjectURL(blob);
-    const anchor = document.createElement("a");
-    const stamp = new Date().toISOString().replace(/[:.]/g, "-").slice(0, 19);
-    anchor.href = url;
-    anchor.download = "namma-start-panorama-3d-" + stamp + ".sh";
-    document.body.appendChild(anchor);
-    anchor.click();
-    anchor.remove();
-    URL.revokeObjectURL(url);
-    $("panoramaRenderStatus").textContent =
-      "Launcher prepared for " + selected.length + " panoramas. Download their JPEGs first, then run the .sh file in Terminal; tokens are entered privately there.";
-    toast("Prepared the panorama 3D launcher for " + selected.length + " selected positions.");
+    const payload = selected.map((item, sequence) => ({
+      panoId: item.panoId,
+      lat: item.lat,
+      lng: item.lng,
+      sequence: sequence
+    }));
+    $("downloadSelectedBtn").disabled = true;
+    window.NAMMA_START_PANORAMA(payload, settings)
+      .catch((error) => {
+        const message = error && error.message ? error.message : String(error);
+        toast("Online 3D submission failed: " + message);
+      })
+      .finally(() => {
+        $("downloadSelectedBtn").disabled =
+          state.results.filter((item) => item.selected).length < 8;
+      });
   }
-'''
-RENDER_DISABLED_ANCHOR = '''    $("exportBtn").disabled = !state.results.some((item) => item.selected);
-    if (!state.results.length) {'''
-RENDER_DISABLED_REPLACEMENT = '''    $("exportBtn").disabled = !state.results.some((item) => item.selected);
-    $("start3DRenderBtn").disabled = state.results.filter((item) => item.selected).length < 8;
-    if (!state.results.length) {'''
-EVENT_ANCHOR = '''  $("downloadSelectedBtn").addEventListener("click", downloadSelectedWithHfSpace);
-'''
-EVENT_REPLACEMENT = '''  $("downloadSelectedBtn").addEventListener("click", downloadSelectedWithHfSpace);
-  $("start3DRenderBtn").addEventListener("click", start3DRendering);
-'''
-CSS_APPEND = """
-/* Independent panorama-to-3D launch panel */
-.panorama-render-panel{border-top:1px solid #303a2d;padding:17px 0 18px}
-.panorama-render-panel .panel-heading{margin-bottom:10px}
-.panorama-render-panel #start3DRenderBtn{margin-top:12px}
-.panorama-render-panel #panoramaRenderStatus{color:#b8c99f}
 """
-
-
-def patch_html(text: str) -> str:
-    if 'id="start3DRenderBtn"' in text:
-        return text
-    if HTML_ANCHOR not in text:
-        raise ValueError("Could not find the Street View downloader section in index.html.")
-    return text.replace(HTML_ANCHOR, HTML_ANCHOR + HTML_PANEL, 1)
-
-
-def patch_app(text: str, pipeline_branch: str) -> str:
-    if EXPORT_OLD in text:
-        text = text.replace(EXPORT_OLD, EXPORT_NEW, 1)
-    elif 'panoramas: selected.map((item, sequence)' not in text:
-        raise ValueError("Could not identify the current exportSelected() function in app.js.")
-
-    if "function start3DRendering()" not in text:
-        marker = "  const downloadPresets ="
-        if text.count(marker) != 1:
-            raise ValueError("Could not find the downloader setup section in app.js.")
-        text = text.replace(marker, START_FUNCTION + "\n" + marker, 1)
-
-    if RENDER_DISABLED_REPLACEMENT not in text:
-        if text.count(RENDER_DISABLED_ANCHOR) != 1:
-            raise ValueError("Could not find the renderResults() enable/disable logic in app.js.")
-        text = text.replace(RENDER_DISABLED_ANCHOR, RENDER_DISABLED_REPLACEMENT, 1)
-
-    if 'addEventListener("click", start3DRendering)' not in text:
-        if text.count(EVENT_ANCHOR) != 1:
-            raise ValueError("Could not find the downloader button event binding in app.js.")
-        text = text.replace(EVENT_ANCHOR, EVENT_REPLACEMENT, 1)
-    text = text.replace(
-        "https://raw.githubusercontent.com/RazyAnas/NAMMA/feature/streetview-panorama-3d/colab/",
-        "https://raw.githubusercontent.com/RazyAnas/NAMMA/" + pipeline_branch + "/colab/"
-    )
-    text = text.replace(
-        "--branch 'feature/streetview-panorama-3d'",
-        "--branch '" + pipeline_branch + "'"
-    )
-    return text
-
+    updated, count = pattern.subn(lambda _: replacement, text, count=1)
+    if count != 1:
+        raise ValueError("Could not safely replace the old Terminal launcher function in app.js.")
+    if "document.createElement(\"a\")" in replacement or ".sh" in replacement:
+        raise ValueError("Local launcher code unexpectedly remained in the replacement.")
+    return updated
 
 def patch_css(text: str) -> str:
-    if "Independent panorama-to-3D launch panel" in text:
+    if "Browser-only NAMMA panorama job progress" in text:
         return text
-    return text.rstrip() + "\n" + CSS_APPEND
+    return text.rstrip() + """
 
+/* Browser-only NAMMA panorama job progress */
+.panorama-job-link{display:inline-block;margin-top:9px;color:#caff70;font:600 10px "DM Sans";text-decoration:none}
+.panorama-job-link:hover{text-decoration:underline}
+#panoramaJobBar.is-indeterminate{width:35%;animation:namma-panorama-progress 1.25s ease-in-out infinite}
+@keyframes namma-panorama-progress{0%{transform:translateX(-110%)}100%{transform:translateX(310%)}}
+"""
 
 def main() -> None:
-    token = os.environ.get("HF_TOKEN")
-    try:
-        from huggingface_hub import CommitOperationAdd, HfApi, snapshot_download
-    except ImportError as exc:
-        raise SystemExit("Install huggingface_hub first: python3 -m pip install huggingface_hub") from exc
+    token = os.environ.get("HF_TOKEN", "").strip()
+    if not token:
+        raise SystemExit("HF_TOKEN / HUGGINGFACE_WRITE_TOKEN GitHub Action secret is missing.")
+    if not CLIENT_SOURCE.is_file():
+        raise SystemExit(f"Browser module is missing: {CLIENT_SOURCE}")
 
-    api = HfApi(token=token) if token else HfApi()
+    from huggingface_hub import CommitOperationAdd, HfApi, snapshot_download
+
+    api = HfApi(token=token)
     identity = api.whoami()
     username = identity.get("name") or identity.get("user", {}).get("name")
     if username != "anasrazy":
-        raise SystemExit(f"Log in as anasrazy before deploying; current account is {username!r}.")
+        raise SystemExit(f"Refusing to deploy with Hugging Face account {username!r}; expected 'anasrazy'.")
 
-    with tempfile.TemporaryDirectory(prefix="namma-selector-patch-") as tmp:
-        local = Path(snapshot_download(
-            repo_id=SPACE, repo_type="space", token=token,
-            allow_patterns=list(FILES), local_dir=tmp
+    with tempfile.TemporaryDirectory(prefix="namma-panorama-selector-") as tmp:
+        root = Path(snapshot_download(
+            repo_id=SPACE,
+            repo_type="space",
+            token=token,
+            allow_patterns=list(FILES[:3]),
+            local_dir=tmp,
         ))
-        html_path, app_path, css_path = (local / name for name in FILES)
+        html_path, app_path, css_path = (root / name for name in FILES[:3])
         for path in (html_path, app_path, css_path):
             if not path.is_file():
-                raise SystemExit(f"Space file was not downloaded: {path}")
-        html_old = html_path.read_text(encoding="utf-8")
-        app_old = app_path.read_text(encoding="utf-8")
-        css_old = css_path.read_text(encoding="utf-8")
-        pipeline_branch = os.environ.get("NAMMA_PANORAMA_BRANCH", "feature/streetview-panorama-3d")
-        if pipeline_branch not in ("feature/streetview-panorama-3d", "main"):
-            raise SystemExit("NAMMA_PANORAMA_BRANCH must be feature/streetview-panorama-3d or main.")
-        html_new = patch_html(html_old)
-        app_new = patch_app(app_old, pipeline_branch)
-        css_new = patch_css(css_old)
-        if (html_new, app_new, css_new) == (html_old, app_old, css_old):
-            print("The panorama rendering integration is already deployed; no files changed.")
-            return
-        html_path.write_text(html_new, encoding="utf-8")
-        app_path.write_text(app_new, encoding="utf-8")
-        css_path.write_text(css_new, encoding="utf-8")
+                raise SystemExit(f"Live selector file was not downloaded: {path}")
+
+        old = {
+            "html": html_path.read_text(encoding="utf-8"),
+            "app": app_path.read_text(encoding="utf-8"),
+            "css": css_path.read_text(encoding="utf-8"),
+        }
+        new = {
+            "html": patch_html(old["html"]),
+            "app": patch_app(old["app"]),
+            "css": patch_css(old["css"]),
+        }
+        client_text = CLIENT_SOURCE.read_text(encoding="utf-8")
+        if "oauthHandleRedirectIfPresent" not in client_text or "uploadFilesWithProgress" not in client_text:
+            raise SystemExit("The browser client is missing the expected OAuth or direct-upload flow.")
+
+        for path, key in zip((html_path, app_path, css_path), ("html", "app", "css")):
+            path.write_text(new[key], encoding="utf-8")
+        client_path = root / FILES[3]
+        client_path.parent.mkdir(parents=True, exist_ok=True)
+        client_path.write_text(client_text, encoding="utf-8")
+
         operations = [
             CommitOperationAdd(path_in_repo=FILES[0], path_or_fileobj=str(html_path)),
             CommitOperationAdd(path_in_repo=FILES[1], path_or_fileobj=str(app_path)),
             CommitOperationAdd(path_in_repo=FILES[2], path_or_fileobj=str(css_path)),
+            CommitOperationAdd(path_in_repo=FILES[3], path_or_fileobj=str(client_path)),
         ]
         commit = api.create_commit(
-            repo_id=SPACE, repo_type="space", operations=operations,
-            commit_message="Add secure Start 3D Rendering action to Street View Selector"
+            repo_id=SPACE,
+            repo_type="space",
+            operations=operations,
+            commit_message="Replace terminal launcher with browser-only panorama submission",
         )
-        print("Updated only:")
+        print("Updated only the Street View selector frontend:")
         for name in FILES:
             print(" -", name)
         print("Space commit:", getattr(commit, "oid", str(commit)))
         print("Open: https://anasrazy-namma-tour.static.hf.space/streetview-selector/")
-
 
 if __name__ == "__main__":
     main()
