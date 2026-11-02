@@ -78,14 +78,28 @@ def smooth_rows(values: np.ndarray, radius: int = 2) -> np.ndarray:
     return np.stack([np.convolve(padded[:, k], weights, mode="valid") for k in range(values.shape[1])], axis=1)
 
 
+def load_panorama_metadata(data_dir: Path) -> tuple[dict, dict]:
+    """Load the manifests written by prepare_panorama.make_views() from its output directory."""
+    data_dir = Path(data_dir)
+    views_path = data_dir / "views_manifest.json"
+    source_path = data_dir / "manifest.json"
+    if not views_path.is_file() or not source_path.is_file():
+        missing = [str(p) for p in (views_path, source_path) if not p.is_file()]
+        raise FileNotFoundError("Panorama metadata missing: " + ", ".join(missing))
+    views_meta = json.loads(views_path.read_text(encoding="utf-8"))
+    source_manifest = json.loads(source_path.read_text(encoding="utf-8"))
+    if not isinstance(source_manifest.get("panoramas"), list):
+        raise ValueError("Source panorama manifest has no panoramas array.")
+    return views_meta, source_manifest
+
+
 def build_plan(data_dir: Path, run_dir: Path, tour_dir: Path, examples_dir: Path,
                camera_height_m: float = 2.2) -> dict:
     sys.path.insert(0, str(examples_dir))
     from datasets.colmap import Parser
 
     data_dir, run_dir, tour_dir = map(Path, (data_dir, run_dir, tour_dir))
-    views_meta = json.loads((data_dir.parent / "views_manifest.json").read_text(encoding="utf-8"))
-    source_manifest = json.loads((data_dir.parent / "manifest.json").read_text(encoding="utf-8"))
+    views_meta, source_manifest = load_panorama_metadata(data_dir)
     panoramas = source_manifest["panoramas"]
     parser = Parser(str(data_dir), factor=1, normalize=True, test_every=8)
     names = list(parser.image_names)
