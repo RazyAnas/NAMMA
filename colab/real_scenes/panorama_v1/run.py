@@ -3,7 +3,7 @@
 This is a standalone panorama-to-Gaussian-Splat runner. It does not import, call,
 patch, or write into colab/real_scenes/v3 or the video capture pipeline.
 """
-import glob, json, os, shutil, subprocess, sys, time, zipfile
+import glob, json, os, re, shutil, subprocess, sys, time, zipfile
 from pathlib import Path
 
 JOB_CFG = json.loads(os.environ.get("JOB_CFG", "{}"))
@@ -14,6 +14,16 @@ T0 = time.time()
 ROOT.mkdir(parents=True, exist_ok=True)
 OUT.mkdir(parents=True, exist_ok=True)
 HERE = Path(__file__).resolve().parent
+
+
+def find_code_root() -> Path:
+    matches = [p.parent for p in INPUT.glob('**/prepare_panorama.py')]
+    for candidate in matches:
+        if (candidate / 'sfm_hloc.py').is_file() and (candidate / 'make_tour.py').is_file():
+            return candidate
+    if (HERE / 'prepare_panorama.py').is_file():
+        return HERE
+    raise RuntimeError('Panorama pipeline helper modules are missing from the Kaggle input dataset.')
 
 
 def say(*args):
@@ -119,6 +129,9 @@ def install_gsplat():
 
 
 def main():
+    global HERE
+    HERE = find_code_root()
+    sys.path.insert(0, str(HERE))
     say("NAMMA Panorama v1 starting", json.dumps(JOB_CFG, sort_keys=True))
     # A Kaggle GPU is a hard requirement. Never silently fall back to CPU.
     import torch
@@ -225,7 +238,6 @@ def main():
 
 
 if __name__ == "__main__":
-    import re
     try:
         main()
     except Exception as exc:
