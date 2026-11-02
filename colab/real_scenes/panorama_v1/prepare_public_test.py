@@ -161,8 +161,8 @@ def main() -> None:
     if output:
         with open(output, "a", encoding="utf-8") as handle:
             handle.write(f"job_file={job_path.relative_to(ROOT).as_posix()}\n")
-            handle.write(f"job_id={job_id}\\n")
-            handle.write(f"panoramas={len(panoramas)}\\n")
+            handle.write(f"job_id={job_id}\n")
+            handle.write(f"panoramas={len(panoramas)}\n")
     print(
         f"Prepared {len(panoramas)} contiguous benchmark panoramas; "
         f"job={job_id}; inbox={INBOX_REPO}/{bundle_repo_path}",
