@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import numpy as np
+import pytest
 
 from make_tour import fit_similarity_2d, robust_fit
 
@@ -21,7 +22,6 @@ def test_fit_similarity_recovers_scale_rotation_and_translation():
 
 
 def test_robust_fit_rejects_a_gps_outlier():
-    import pytest
 
     rng = np.random.default_rng(11)
     source = rng.normal(size=(20, 2))
