@@ -1,0 +1,15 @@
+{
+  "job_id": "replace-with-unique-job-id",
+  "pipeline": "panorama_v1",
+  "hf_dataset": "anasrazy/namma-panorama-inbox",
+  "bundle_path": "replace-with-job-id/bundle.zip",
+  "parameters": {
+    "steps": 30000,
+    "max_panoramas": 100,
+    "image_size": 768,
+    "view_count": 12,
+    "hfov_deg": 60.0,
+    "sequence_window": 18,
+    "retrieval_count": 10
+  }
+}
