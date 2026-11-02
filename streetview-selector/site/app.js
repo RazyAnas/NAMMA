@@ -5,7 +5,7 @@
   const state = {
     map: null, service: null, panorama: null, coverage: null,
     routeMode: false, pendingRoutePoint: false, routePoints: [], routePanoIds: [], routeLine: null, routeMarkers: [],
-    results: [], resultMarkers: [], selectedPanoId: null, mapsScriptAdded: false
+    panoramaTrace: null, scanRouteSamples: [], results: [], resultMarkers: [], selectedPanoId: null, mapsScriptAdded: false
   };
   const VIT = { lat: 12.9698, lng: 79.1559 };
 
@@ -58,8 +58,10 @@
     try {
       state.map = new google.maps.Map($("map"), {
         center: VIT, zoom: 16, mapTypeId: "roadmap",
-        streetViewControl: false, mapTypeControl: true, fullscreenControl: true,
-        clickableIcons: false, disableDoubleClickZoom: true
+        streetViewControl: true,
+        streetViewControlOptions: { position: google.maps.ControlPosition.RIGHT_TOP },
+        mapTypeControl: true, mapTypeControlOptions: { mapTypeIds: ["roadmap", "satellite", "hybrid", "terrain"] },
+        fullscreenControl: true, clickableIcons: false, disableDoubleClickZoom: true
       });
       state.service = new google.maps.StreetViewService();
       state.panorama = new google.maps.StreetViewPanorama($("panorama"), {
@@ -79,7 +81,7 @@
       $("connectBtn").textContent = "Connected";
       $("drawBtn").disabled = false;
       $("connectBtn").disabled = false;
-      toast("Blue road lines show Street View coverage. Draw only along the covered roads.");
+      toast("Use Pegman to reveal Google's blue Street View roads. Draw over those roads; accepted points snap to real panorama positions.");
     } catch (error) {
       $("connectBtn").disabled = false;
       $("connectBtn").textContent = "Connect";
@@ -138,7 +140,10 @@
       // Store the real panorama position, never the arbitrary mouse-click location.
       state.routePanoIds.push(panoId);
       const panoramaItem = addPanorama(data);
-      if (panoramaItem) panoramaItem.selected = true;
+      if (panoramaItem) {
+        panoramaItem.selected = true;
+        updatePanoramaMarker(panoramaItem);
+      }
       state.routePoints.push(snappedPosition);
 
       if (state.routeLine) state.routeLine.setPath(state.routePoints);
@@ -210,6 +215,9 @@
     state.routeLine = null;
     state.routePoints = [];
     state.routePanoIds = [];
+    state.scanRouteSamples = [];
+    if (state.panoramaTrace) state.panoramaTrace.setMap(null);
+    state.panoramaTrace = null;
     state.results.forEach((item) => { if (item.marker) item.marker.setMap(null); });
     state.results = [];
     renderResults();
@@ -256,28 +264,96 @@
     });
   }
 
-  function addPanorama(data) {
-    if (!data || !data.location || !data.location.pano) return null;
+  function panoramaMarkerIcon(selected) {
+    return {
+      path: google.maps.SymbolPath.CIRCLE,
+      scale: selected ? 7 : 6,
+      fillColor: selected ? "#caff70" : "#64748b",
+      fillOpacity: 1,
+      strokeColor: selected ? "#14200e" : "#e2e8f0",
+      strokeWeight: 2
+    };
+  }
+
+  function updatePanoramaMarker(item) {
+    if (!item || !item.marker) return;
+    item.marker.setIcon(panoramaMarkerIcon(item.selected));
+    item.marker.setTitle((item.selected ? "Selected" : "Not selected") +
+      " panorama · click to " + (item.selected ? "deselect " : "select ") + item.panoId);
+  }
+
+  function togglePanoramaSelection(item) {
+    if (!item) return;
+    item.selected = !item.selected;
+    updatePanoramaMarker(item);
+    showDetails(item);
+    renderResults();
+    toast((item.selected ? "Selected " : "Deselected ") + "panorama " + item.panoId.slice(0, 12) + "…");
+  }
+
+  function addPanorama(data, routeOrder) {
+    if (!data || !data.location || !data.location.pano || !data.location.latLng) return null;
     const panoId = data.location.pano;
     const existing = state.results.find((item) => item.panoId === panoId);
-    if (existing) return existing;
+    if (existing) {
+      if (Number.isFinite(routeOrder)) existing.routeOrder = Math.min(existing.routeOrder, routeOrder);
+      return existing;
+    }
     const location = data.location.latLng;
     const item = {
       panoId: panoId, lat: location.lat(), lng: location.lng(),
       date: data.imageDate || "Not provided by Google",
       description: data.location.description || "Street View panorama",
       links: Array.isArray(data.links) ? data.links.length : 0,
+      routeOrder: Number.isFinite(routeOrder) ? routeOrder : Number.MAX_SAFE_INTEGER,
       selected: true, marker: null
     };
     item.marker = new google.maps.Marker({
-      map: state.map, position: location, title: "Street View panorama: " + panoId,
-      icon: { path: google.maps.SymbolPath.CIRCLE, scale: 6,
-        fillColor: "#caff70", fillOpacity: 1, strokeColor: "#182114", strokeWeight: 2 },
-      zIndex: 40
+      map: state.map, position: location, title: "Selected panorama · click to deselect",
+      icon: panoramaMarkerIcon(true), clickable: true, zIndex: 50
     });
-    item.marker.addListener("click", () => showDetails(item));
+    item.marker.addListener("click", () => togglePanoramaSelection(item));
     state.results.push(item);
     return item;
+  }
+
+  function getPanoramaById(panoId) {
+    return new Promise((resolve) => {
+      state.service.getPanorama({ pano: panoId }, (data, status) => {
+        resolve({ data: data || null, status: status });
+      });
+    });
+  }
+
+  function distanceToScanRoute(position, samples) {
+    let bestDistance = Infinity;
+    let bestIndex = 0;
+    for (let i = 0; i < samples.length; i++) {
+      const distance = google.maps.geometry.spherical.computeDistanceBetween(position, samples[i]);
+      if (distance < bestDistance) {
+        bestDistance = distance;
+        bestIndex = i;
+      }
+    }
+    return { distance: bestDistance, index: bestIndex };
+  }
+
+  function redrawPanoramaTrace() {
+    if (state.panoramaTrace) {
+      state.panoramaTrace.setMap(null);
+      state.panoramaTrace = null;
+    }
+    const ordered = state.results
+      .filter((item) => Number.isFinite(item.routeOrder))
+      .sort((a, b) => a.routeOrder - b.routeOrder);
+    if (ordered.length > 1) {
+      state.panoramaTrace = new google.maps.Polyline({
+        map: state.map,
+        path: ordered.map((item) => ({ lat: item.lat, lng: item.lng })),
+        strokeColor: "#20b8ff", strokeOpacity: 0.9, strokeWeight: 4,
+        clickable: false, zIndex: 25
+      });
+    }
   }
 
   async function scanRoute() {
@@ -286,38 +362,94 @@
     $("scanBtn").textContent = "Scanning…";
     $("scanProgress").classList.remove("hidden");
     $("resultsList").innerHTML = "";
-    $("resultsSubtitle").textContent = "SCANNING ROUTE";
+    $("resultsSubtitle").textContent = "DISCOVERING PANORAMAS";
     $("detailsCard").classList.add("hidden");
     state.results.forEach((item) => { if (item.marker) item.marker.setMap(null); });
     state.results = [];
+    if (state.panoramaTrace) state.panoramaTrace.setMap(null);
+    state.panoramaTrace = null;
+
     const spacing = Number($("spacing").value);
     const radius = Number($("radius").value);
-    const samples = sampleRoute(state.routePoints, spacing);
+    state.scanRouteSamples = sampleRoute(state.routePoints, 8);
+    const seedPoints = sampleRoute(state.routePoints, spacing);
+    const routeCorridorMeters = Math.max(18, Math.min(25, radius));
+    const maxPanoramas = 700;
+    const queued = [];
+    const visited = new Set();
     let checked = 0;
-    $("progressCount").textContent = "0 / " + samples.length;
-    $("progressText").textContent = "Checking panorama coverage…";
+
+    $("progressCount").textContent = "0 / " + seedPoints.length;
+    $("progressText").textContent = "Finding panorama sequences along selected roads…";
     $("progressBar").style.width = "0%";
-    for (let i = 0; i < samples.length; i += 4) {
-      const batch = samples.slice(i, i + 4);
+
+    // Seed from several positions on the user's selected road.
+    for (let i = 0; i < seedPoints.length; i += 4) {
+      const batch = seedPoints.slice(i, i + 4);
       const responses = await Promise.all(batch.map((point) => getPanoramaAt(point, radius)));
       responses.forEach((response) => {
         checked += 1;
-        if (response.status === "OK" && response.data && response.data.location) addPanorama(response.data);
+        if (response.status !== "OK" || !response.data || !response.data.location || !response.data.location.latLng) return;
+        const panoId = response.data.location.pano;
+        const routePosition = distanceToScanRoute(response.data.location.latLng, state.scanRouteSamples);
+        if (routePosition.distance > routeCorridorMeters) return;
+        addPanorama(response.data, routePosition.index);
+        visited.add(panoId);
+        (response.data.links || []).forEach((link) => {
+          if (link && link.pano && !visited.has(link.pano)) {
+            visited.add(link.pano);
+            queued.push(link.pano);
+          }
+        });
       });
-      $("progressCount").textContent = checked + " / " + samples.length;
-      $("progressText").textContent = state.results.length + " unique panoramas found";
-      $("progressBar").style.width = Math.round((checked / samples.length) * 100) + "%";
+      $("progressCount").textContent = checked + " / " + seedPoints.length;
+      $("progressText").textContent = state.results.length + " panorama IDs found; following connected Street View panoramas…";
+      $("progressBar").style.width = Math.round((checked / seedPoints.length) * 45) + "%";
       renderResults();
     }
-    $("resultsSubtitle").textContent = "SCAN COMPLETE";
+
+    // Follow adjacent panorama IDs; keep only those close to the selected route.
+    let expanded = 0;
+    while (queued.length && state.results.length < maxPanoramas && expanded < maxPanoramas * 3) {
+      const batchIds = queued.splice(0, 4);
+      const responses = await Promise.all(batchIds.map((id) => getPanoramaById(id)));
+      responses.forEach((response) => {
+        expanded += 1;
+        if (response.status !== "OK" || !response.data || !response.data.location || !response.data.location.latLng) return;
+        const data = response.data;
+        const panoId = data.location.pano;
+        const routePosition = distanceToScanRoute(data.location.latLng, state.scanRouteSamples);
+        if (routePosition.distance > routeCorridorMeters) return;
+        const wasKnown = state.results.some((item) => item.panoId === panoId);
+        addPanorama(data, routePosition.index);
+        if (!wasKnown) {
+          (data.links || []).forEach((link) => {
+            if (link && link.pano && !visited.has(link.pano)) {
+              visited.add(link.pano);
+              queued.push(link.pano);
+            }
+          });
+        }
+      });
+      $("progressText").textContent = state.results.length + " unique panoramas · exploring connected views…";
+      $("progressCount").textContent = expanded + " link checks";
+      $("progressBar").style.width = (45 + Math.min(54, Math.round((expanded / (maxPanoramas * 3)) * 54))) + "%";
+      renderResults();
+    }
+
+    state.results.sort((a, b) => a.routeOrder - b.routeOrder);
+    redrawPanoramaTrace();
+    $("resultsSubtitle").textContent = "SCAN COMPLETE · " + state.results.length + " UNIQUE PANORAMAS";
     $("scanBtn").disabled = false;
     $("scanBtn").innerHTML = "Scan selected route <span>→</span>";
-    $("exportBtn").disabled = state.results.length === 0;
+    $("exportBtn").disabled = !state.results.some((item) => item.selected);
     renderResults();
-    if (!state.results.length) toast("No panoramas found on this route. Try a larger search radius or check that your path follows blue coverage.");
-    else toast("Found " + state.results.length + " unique panorama IDs along " + samples.length + " checked points.");
+    if (!state.results.length) {
+      toast("No Street View panoramas found near this path. Draw closer to the blue roads or increase search radius.");
+    } else {
+      toast("Found " + state.results.length + " unique panoramas. Click each map marker or checkbox to select/deselect it.");
+    }
   }
-
   function renderResults() {
     $("foundCount").textContent = String(state.results.length);
     $("selectedCount").textContent = String(state.results.filter((item) => item.selected).length);
@@ -336,7 +468,9 @@
     ).join("");
     $("resultsList").querySelectorAll("input[data-index]").forEach((input) => {
       input.addEventListener("change", () => {
-        state.results[Number(input.dataset.index)].selected = input.checked;
+        const item = state.results[Number(input.dataset.index)];
+        item.selected = input.checked;
+        updatePanoramaMarker(item);
         renderResults();
       });
     });

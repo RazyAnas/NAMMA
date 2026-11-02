@@ -24,7 +24,7 @@
       <div class="intro-block">
         <div class="eyebrow">CAMPUS RECONSTRUCTION / 01</div>
         <h1>Street View<br><em>Coverage Selector</em></h1>
-        <p>See Google's blue Street View coverage on the 2D map. Draw over covered campus roads, scan for available panoramas, inspect them, and export the route plus panorama IDs.</p>
+        <p>See Google's blue Street View roads on the 2D map. Draw along covered roads, discover connected panoramas along the route, then click any panorama marker or checkbox to select it individually.</p>
       </div>
 
       <section class="panel">
@@ -48,7 +48,7 @@
           <button id="clearBtn" class="button button-quiet" disabled>Clear route</button>
         </div>
         <div id="routeStats" class="stat-strip"><div><strong id="routeDistance">0 m</strong><span>ROUTE LENGTH</span></div><div><strong id="routeVertices">0</strong><span>POINTS MARKED</span></div></div>
-        <p id="drawHint" class="microcopy">Connect the map, press Start drawing, then click along the blue roads. Press Finish when the route is complete.</p>
+        <p id="drawHint" class="microcopy">Connect the map, press Start drawing, then click only on blue Street View roads. Each accepted click snaps to a real panorama; scanning discovers the connected panorama sequence.</p>
       </section>
 
       <section class="panel">
@@ -80,7 +80,7 @@
     <section class="map-area">
       <div id="map"></div>
       <div class="map-top-left"><span class="map-live"></span><div><b>VIT VELLORE</b><small>STREET VIEW COVERAGE MAP</small></div></div>
-      <div class="map-legend"><span class="legend-line"></span><span>Street View coverage</span><span class="legend-route"></span><span>Your selected path</span><span class="legend-dot"></span><span>Panorama found</span></div>
+      <div class="map-legend"><span class="legend-line"></span><span>Street View roads</span><span class="legend-trace"></span><span>Found pano path</span><span class="legend-dot"></span><span>Selected pano</span><span class="legend-off"></span><span>Not selected</span></div>
       <div id="mapToast" class="map-toast hidden"></div>
       <div id="mapPlaceholder" class="map-placeholder"><div class="placeholder-icon">⌖</div><b>Connect Google Maps to begin</b><span>The map opens centred on VIT Vellore. Blue lines indicate Google Street View coverage.</span></div>
     </section>
