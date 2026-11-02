@@ -41,7 +41,7 @@ jobs:
       - name: Install panorama orchestration dependencies
         run: |
           python -m pip install --upgrade pip
-          python -m pip install "kaggle==2.2.5" "huggingface_hub>=0.28" pillow numpy scipy plyfile trimesh
+          python -m pip install "kaggle==2.2.5" "huggingface_hub>=0.28" six pillow numpy scipy plyfile trimesh
 
       - name: Verify cloud credentials are available
         run: |
@@ -49,13 +49,13 @@ jobs:
           test -n "$KAGGLE_API_TOKEN" || { echo "Missing KAGGLE_API_TOKEN / KAGGLE_TOKEN secret (including *_backup variants)."; exit 1; }
           echo "Both cloud credentials are present; their values are not printed."
 
-      - name: Build a 40-panorama benchmark bundle from GGPS FTP
-        id: prepare
-        run: python colab/real_scenes/panorama_v1/prepare_public_test.py
+      - name: Reuse the staged 40-panorama GGPS FTP benchmark
+        run: |
+          echo "Using the already uploaded 40-panorama bundle from the successful staging step."
 
       - name: Run full-resolution NAMMA panorama reconstruction on Kaggle GPU
         env:
-          PANORAMA_JOB_FILE: ${{ steps.prepare.outputs.job_file }}
+          PANORAMA_JOB_FILE: colab/real_scenes/panorama_v1/jobs/ggps-ftp-20261102-161501.json
         run: python colab/real_scenes/panorama_v1/gh_run.py
 
       - name: Preserve job diagnostics
