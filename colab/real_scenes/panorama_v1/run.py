@@ -70,11 +70,51 @@ def safe_extract(bundle: Path, destination: Path):
 
 
 def find_bundle() -> Path:
-    candidates = list(INPUT.glob("**/bundle.zip")) + list(INPUT.glob("**/*.zip"))
+    # Kaggle may expose an uploaded ZIP as a regular file or unpack its members.
+    # Use a neutral extension for new datasets and accept legacy .zip files too.
+    candidates = (
+        list(INPUT.glob("**/bundle.namma"))
+        + list(INPUT.glob("**/bundle.zip"))
+        + list(INPUT.glob("**/*.zip"))
+    )
     candidates = [p for p in candidates if p.is_file()]
-    if not candidates:
-        raise RuntimeError("No panorama ZIP found in the attached Kaggle input dataset.")
-    return max(candidates, key=lambda p: p.stat().st_size)
+    if candidates:
+        return max(candidates, key=lambda p: p.stat().st_size)
+
+    # Fallback when Kaggle has unpacked the archive into a directory.
+    for manifest_path in INPUT.glob("**/manifest.json"):
+        try:
+            manifest_bytes = manifest_path.read_bytes()
+            manifest = json.loads(manifest_bytes)
+            panoramas = manifest.get("panoramas", [])
+            if not 8 <= len(panoramas) <= 200:
+                continue
+            archive_path = ROOT / "bundle-repacked-from-kaggle-input.namma"
+            with zipfile.ZipFile(archive_path, "w", compression=zipfile.ZIP_STORED) as archive:
+                archive.writestr("manifest.json", manifest_bytes)
+                root = manifest_path.parent.resolve()
+                for entry in panoramas:
+                    relative = Path(str(entry.get("image", "")))
+                    if relative.is_absolute() or ".." in relative.parts:
+                        raise RuntimeError("Unsafe panorama image path in Kaggle input manifest.")
+                    image_path = (root / relative).resolve()
+                    if root not in image_path.parents or not image_path.is_file():
+                        raise RuntimeError(f"Missing panorama image in unpacked Kaggle input: {relative}")
+                    archive.write(image_path, arcname=relative.as_posix())
+            say("Repacked Kaggle-unpacked panorama data into", archive_path)
+            return archive_path
+        except Exception as exc:
+            say("Ignoring incomplete unpacked panorama manifest", manifest_path, ":", str(exc)[:300])
+
+    inventory = [
+        str(path.relative_to(INPUT))
+        for path in INPUT.rglob("*")
+        if path.is_file()
+    ][:80]
+    raise RuntimeError(
+        "No panorama bundle or unpacked manifest found in the attached Kaggle input dataset. "
+        "Input inventory: " + json.dumps(inventory)
+    )
 
 
 def install_sfm_environment():
