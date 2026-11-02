@@ -104,16 +104,12 @@ def build_plan(data_dir: Path, run_dir: Path, tour_dir: Path, examples_dir: Path
 
     # Each set of perspective crops shares a physical camera centre. Median aggregation
     # suppresses small per-view drift introduced by bundle adjustment.
-    centres, forwards, pano_order = [], [], []
+    centres, pano_order = [], []
     for pi in pano_indices:
         ix = by_pano[pi]
         centres.append(np.median(cameras[ix, :3, 3], axis=0))
-        fwd = np.mean(cameras[ix, :3, 2], axis=0)
-        fwd /= max(np.linalg.norm(fwd), 1e-9)
-        forwards.append(fwd)
         pano_order.append(pi)
     centres = np.asarray(centres, dtype=np.float64)
-    forwards = np.asarray(forwards, dtype=np.float64)
 
     # Synthetic crops share a vertical axis. Estimate it from their camera-down vectors;
     # PCA of the camera centres is the fallback for unusual or heavily rolled captures.
@@ -135,6 +131,23 @@ def build_plan(data_dir: Path, run_dir: Path, tour_dir: Path, examples_dir: Path
     axis2 = np.cross(axis1, up)
     axis2 /= max(np.linalg.norm(axis2), 1e-9)
     source_xy = np.stack([centres @ axis1, centres @ axis2], axis=1)
+
+    # The average forward vectors of all synthetic views at one panorama cancel
+    # (the views surround 360 degrees). Use the ordered physical pano centres to
+    # form a stable route tangent instead.
+    forwards = []
+    for i in range(len(centres)):
+        if i == 0:
+            direction = centres[min(1, len(centres) - 1)] - centres[0]
+        elif i == len(centres) - 1:
+            direction = centres[-1] - centres[-2]
+        else:
+            direction = centres[i + 1] - centres[i - 1]
+        direction = direction - up * float(direction @ up)
+        if np.linalg.norm(direction) < 1e-8:
+            direction = axis1.copy()
+        forwards.append(direction / max(np.linalg.norm(direction), 1e-9))
+    forwards = np.asarray(forwards, dtype=np.float64)
 
     gps, origin = gps_to_enu(panoramas)
     paired = [(k, pano_order.index(pi), gps[pi]) for k, pi in enumerate(pano_order) if pi in gps]
