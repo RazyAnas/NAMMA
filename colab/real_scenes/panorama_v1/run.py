@@ -160,7 +160,7 @@ def main():
         image_size=int(JOB_CFG.get("image_size", 768)),
         view_count=int(JOB_CFG.get("view_count", 12)),
         hfov_deg=float(JOB_CFG.get("hfov_deg", 60.0)),
-        max_panoramas=int(JOB_CFG.get("max_panoramas", 200))
+        max_panoramas=int(JOB_CFG.get("max_panoramas", 100))
     )
     say("prepared", prep["source_panoramas"], "panoramas ->", prep["perspective_views"], "views")
 
