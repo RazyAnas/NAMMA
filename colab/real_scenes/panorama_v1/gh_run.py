@@ -17,7 +17,7 @@ import time
 from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
-REPO_ROOT = HERE.parents[3]
+REPO_ROOT = HERE.parents[2]
 T0 = time.time()
 OUT = Path("out")
 OUTPUT_DATASET = os.environ.get("PANORAMA_OUTPUT_DATASET", "anasrazy/namma-panorama-out")
@@ -224,10 +224,10 @@ def wait_kernel(kernel_id, minutes=330):
     raise RuntimeError(f"Kaggle panorama kernel did not complete within {minutes} minutes; last status: {last}")
 
 
-def ensure_lfs(api, space, token):
+def ensure_lfs(api, space, token, repo_type="space"):
     from huggingface_hub import hf_hub_download
     try:
-        p = hf_hub_download(repo_id=space, filename=".gitattributes", repo_type="space", token=token)
+        p = hf_hub_download(repo_id=space, filename=".gitattributes", repo_type=repo_type, token=token)
         current = Path(p).read_text(encoding="utf-8", errors="replace")
     except Exception:
         current = ""
@@ -237,8 +237,8 @@ def ensure_lfs(api, space, token):
         updated = current.rstrip() + ("\n" if current.strip() else "") + "\n".join(missing) + "\n"
         api.upload_file(
             path_or_fileobj=updated.encode("utf-8"), path_in_repo=".gitattributes",
-            repo_id=space, repo_type="space",
-            commit_message="Configure LFS for NAMMA panorama tour assets"
+            repo_id=space, repo_type=repo_type,
+            commit_message="Configure LFS for NAMMA panorama assets"
         )
 
 
@@ -318,7 +318,7 @@ def publish_results(api, repo_id, job_id, output_dir, tour_url):
         encoding="utf-8"
     )
     # Ensure large model outputs use LFS in the private results dataset too.
-    ensure_lfs(api, repo_id, os.environ.get("HF_TOKEN", ""))
+    ensure_lfs(api, repo_id, os.environ.get("HF_TOKEN", ""), repo_type="dataset")
     api.upload_folder(
         folder_path=str(curated), path_in_repo=job_id,
         repo_id=repo_id, repo_type="dataset",
