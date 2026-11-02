@@ -172,7 +172,14 @@ def build_plan(data_dir: Path, run_dir: Path, tour_dir: Path, examples_dir: Path
     rotation[0] = q[0, 0] * axis1 + q[1, 0] * axis2
     rotation[1] = up
     rotation[2] = q[0, 1] * axis1 + q[1, 1] * axis2
-    translation = np.array([t2[0], camera_height_m - scale * np.median(centres @ up), t2[1]], dtype=np.float64)
+    # The transform is applied as (points @ R.T + translation) * scale.
+    # GPS translation is already in metres, so convert it back to SfM units
+    # before the final uniform scale; otherwise the offset is scaled twice.
+    translation = np.array([
+        t2[0] / scale,
+        camera_height_m / scale - np.median(centres @ up),
+        t2[1] / scale
+    ], dtype=np.float64)
 
     transform_points = (points @ rotation.T + translation) * scale
     if len(transform_points):
