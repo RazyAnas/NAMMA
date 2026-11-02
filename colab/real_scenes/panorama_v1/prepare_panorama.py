@@ -83,7 +83,7 @@ def perspective_maps(width: int, height: int, source_width: int, source_height: 
     return map_x.astype(np.float32), np.clip(map_y, 0, source_height - 1).astype(np.float32), focal
 
 
-def make_views(root: Path, output: Path, image_size: int = 768, view_count: int = 12,
+def make_views(root: Path, output: Path, image_size: int = 1280, view_count: int = 12,
                hfov_deg: float = 60.0, max_panoramas: int = 200) -> dict[str, Any]:
     manifest = load_manifest(root)
     panos = manifest["panoramas"][:max_panoramas]
@@ -155,7 +155,7 @@ def main() -> None:
     p = argparse.ArgumentParser()
     p.add_argument("--input", type=Path, required=True)
     p.add_argument("--output", type=Path, required=True)
-    p.add_argument("--image-size", type=int, default=768)
+    p.add_argument("--image-size", type=int, default=1280)
     p.add_argument("--view-count", type=int, default=12)
     p.add_argument("--hfov", type=float, default=60.0)
     p.add_argument("--max-panoramas", type=int, default=200)
