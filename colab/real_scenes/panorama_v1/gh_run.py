@@ -190,7 +190,7 @@ def push_kernel(job, dataset_id, kaggle_user):
     (folder / "run.py").write_text(injected, encoding="utf-8")
     metadata = {
         "id": kernel_id,
-        "title": f"NAMMA panorama {job['job_id']} run {attempt} attempt {attempt_no}",
+        "title": " ".join(slug.split("-")),
         "code_file": "run.py",
         "language": "python",
         "kernel_type": "script",
