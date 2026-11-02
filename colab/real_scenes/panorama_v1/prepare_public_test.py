@@ -30,7 +30,7 @@ PANORAMA_COUNT = 40
 
 def natural_key(value: str):
     return [int(part) if part.isdigit() else part.lower()
-            for part in re.split(r"(\\d+)", value)]
+            for part in re.split(r"(\d+)", value)]
 
 
 def main() -> None:
@@ -160,7 +160,7 @@ def main() -> None:
     output = os.environ.get("GITHUB_OUTPUT")
     if output:
         with open(output, "a", encoding="utf-8") as handle:
-            handle.write(f"job_file={job_path.relative_to(ROOT).as_posix()}\\n")
+            handle.write(f"job_file={job_path.relative_to(ROOT).as_posix()}\n")
             handle.write(f"job_id={job_id}\\n")
             handle.write(f"panoramas={len(panoramas)}\\n")
     print(
