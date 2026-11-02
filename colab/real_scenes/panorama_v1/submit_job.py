@@ -4,8 +4,10 @@ Required environment variables:
   HF_TOKEN       write token for the private panorama inbox dataset
   GITHUB_TOKEN   fine-grained PAT with Contents: read/write for RazyAnas/NAMMA
 
-A folder with manifest.json is uploaded as-is. If no manifest exists, the script
-creates one from JPG/PNG filenames; in that case GPS alignment is unavailable.
+A folder with manifest.json is uploaded as-is. Otherwise, --selection-json can
+pair downloaded <pano_id>.jpg files with the selector's GPS metadata. Without
+that selection export, the script creates a manifest from filenames and GPS scale
+alignment is unavailable.
 """
 from __future__ import annotations
 
@@ -27,18 +29,22 @@ DEFAULT_BRANCH = "feature/streetview-panorama-3d"
 DEFAULT_INBOX = "anasrazy/namma-panorama-inbox"
 
 
-def build_bundle(source: Path, destination: Path, scene_name: str) -> int:
+def build_bundle(source: Path, destination: Path, scene_name: str,
+                 selection_json: Path | None = None) -> int:
     source = source.resolve()
     if not source.is_dir():
         raise ValueError(f"Input must be a directory: {source}")
     manifest = source / "manifest.json"
+    if selection_json is None:
+        candidate = source / "vit-streetview-route-selection.json"
+        selection_json = candidate if candidate.is_file() else None
     temp_root = destination.parent / "bundle-build"
     if temp_root.exists():
         shutil.rmtree(temp_root)
     temp_root.mkdir(parents=True)
+
     if manifest.is_file():
-        # Keep the supplied manifest's relative paths unchanged; only include images
-        # and JSON files, not macOS metadata or unrelated downloads.
+        # Preserve an explicit manifest and every referenced image/metadata file.
         entries = [p for p in source.rglob("*") if p.is_file()
                    and not any(part.startswith(".") for part in p.relative_to(source).parts)
                    and p.suffix.lower() in (".jpg", ".jpeg", ".png", ".json")]
@@ -52,27 +58,80 @@ def build_bundle(source: Path, destination: Path, scene_name: str) -> int:
         images = sorted(p for p in source.rglob("*") if p.is_file()
                         and p.suffix.lower() in (".jpg", ".jpeg", ".png")
                         and not any(part.startswith(".") for part in p.relative_to(source).parts))
-        if len(images) < 8:
-            raise ValueError("At least 8 panorama images are required.")
-        if len(images) > 200:
+        if selection_json is not None:
+            selection = json.loads(Path(selection_json).expanduser().resolve().read_text(encoding="utf-8"))
+            records = selection.get("panoramas", [])
+            by_id = {
+                str(item.get("pano_id")): item
+                for item in records if isinstance(item, dict) and item.get("pano_id")
+            }
+            ids = selection.get("panorama_ids")
+            if not isinstance(ids, list) or not ids:
+                ids = [str(item.get("pano_id")) for item in records if item.get("pano_id")]
+            if not ids:
+                raise ValueError("Selection JSON must contain panorama_ids or panoramas[].pano_id.")
+            image_by_stem = {}
+            for image in images:
+                image_by_stem.setdefault(image.stem, image)
+            selected_images = []
+            missing = []
+            for pano_id in ids:
+                found = image_by_stem.get(str(pano_id))
+                if found is None:
+                    missing.append(str(pano_id))
+                else:
+                    selected_images.append((str(pano_id), found, by_id.get(str(pano_id), {})))
+            if missing:
+                raise ValueError(
+                    f"{len(missing)} selected panoramas have no matching JPEG/PNG in {source}; "
+                    f"first missing ID: {missing[0]}"
+                )
+        else:
+            selected_images = [
+                (item.stem, item, {}) for item in images
+            ]
+
+        if len(selected_images) < 8:
+            raise ValueError("At least 8 selected panorama images are required.")
+        if len(selected_images) > 200:
             raise ValueError("The first panorama pipeline release supports at most 200 panoramas per job.")
+
         pano_dir = temp_root / "panoramas"
         pano_dir.mkdir()
         panoramas = []
-        for i, item in enumerate(images):
+        used_ids = set()
+        for i, (pano_id, item, meta) in enumerate(selected_images):
+            pano_id = str(pano_id)
+            if not pano_id or pano_id in used_ids:
+                raise ValueError(f"Empty or duplicate panorama ID: {pano_id!r}")
+            used_ids.add(pano_id)
             safe_name = f"pano_{i:05d}{item.suffix.lower()}"
             shutil.copy2(item, pano_dir / safe_name)
-            panoramas.append({
-                "pano_id": item.stem[:120] or f"pano-{i:05d}",
+            record = {
+                "pano_id": pano_id,
                 "image": f"panoramas/{safe_name}",
                 "sequence": i
-            })
+            }
+            lat = meta.get("lat")
+            lon = meta.get("lon", meta.get("lng"))
+            if (lat is None) != (lon is None):
+                raise ValueError(f"Panorama {pano_id}: both lat and lon are required for GPS alignment.")
+            if lat is not None:
+                record["lat"] = float(lat)
+                record["lon"] = float(lon)
+            if meta.get("heading_deg") is not None:
+                record["heading_deg"] = float(meta["heading_deg"])
+            if meta.get("altitude_m") is not None:
+                record["altitude_m"] = float(meta["altitude_m"])
+            panoramas.append(record)
+
         (temp_root / "manifest.json").write_text(json.dumps({
             "schema_version": 1,
             "scene_name": scene_name,
             "panoramas": panoramas
         }, indent=2), encoding="utf-8")
         count = len(panoramas)
+
     if count < 8:
         raise ValueError("manifest.json contains fewer than 8 panoramas.")
     if count > 200:
@@ -84,7 +143,6 @@ def build_bundle(source: Path, destination: Path, scene_name: str) -> int:
                 z.write(item, item.relative_to(temp_root).as_posix())
     shutil.rmtree(temp_root)
     return count
-
 
 def github_put(repo: str, branch: str, path: str, content: bytes, token: str, message: str) -> dict:
     url = f"https://api.github.com/repos/{repo}/contents/{path}"
@@ -112,6 +170,8 @@ def main() -> None:
     ap = argparse.ArgumentParser(description="Submit a NAMMA Street View panorama reconstruction job.")
     ap.add_argument("--input", type=Path, required=True, help="Folder of panorama JPEGs/PNGs and optional manifest.json")
     ap.add_argument("--scene-name", default="NAMMA Street View scene")
+    ap.add_argument("--selection-json", type=Path, default=None,
+                    help="Street View Selector export containing panorama IDs and GPS positions")
     ap.add_argument("--repo", default=DEFAULT_REPO)
     ap.add_argument("--branch", default=DEFAULT_BRANCH)
     ap.add_argument("--inbox", default=DEFAULT_INBOX)
@@ -138,7 +198,7 @@ def main() -> None:
     temp = Path("namma-panorama-submit")
     temp.mkdir(exist_ok=True)
     bundle = temp / "bundle.zip"
-    count = build_bundle(args.input, bundle, args.scene_name)
+    count = build_bundle(args.input, bundle, args.scene_name, args.selection_json)
 
     from huggingface_hub import HfApi
     api = HfApi(token=hf_token)
