@@ -170,7 +170,12 @@ def upload_input_bundle(api, job, token, dataset_id):
 
 
 def push_kernel(job, dataset_id, kaggle_user):
-    kernel_id = f"{kaggle_user}/namma-panorama-{job['job_id'][:35]}".lower()
+    # A failed/retried workflow must never collide with an old Kaggle kernel.
+    # GitHub gives every workflow execution a unique run ID.
+    attempt = os.environ.get("GITHUB_RUN_ID", str(int(time.time())))[-8:]
+    attempt_no = os.environ.get("GITHUB_RUN_ATTEMPT", "1")[-1:]
+    slug = f"namma-pano-{job['job_id'][:20]}-{attempt}a{attempt_no}".lower()
+    kernel_id = f"{kaggle_user}/{slug}"
     folder = Path("kaggle-kernel")
     folder.mkdir(exist_ok=True)
     source = (HERE / "run.py").read_text(encoding="utf-8")
@@ -185,7 +190,7 @@ def push_kernel(job, dataset_id, kaggle_user):
     (folder / "run.py").write_text(injected, encoding="utf-8")
     metadata = {
         "id": kernel_id,
-        "title": f"NAMMA panorama {job['job_id']}",
+        "title": f"NAMMA panorama {job['job_id']} run {attempt} attempt {attempt_no}",
         "code_file": "run.py",
         "language": "python",
         "kernel_type": "script",
