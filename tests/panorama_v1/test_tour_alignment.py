@@ -31,3 +31,26 @@ def test_robust_fit_rejects_a_gps_outlier():
     assert scale == pytest.approx(1.8, rel=1e-3)
     assert inliers.sum() == 19
     assert rms < 1e-3
+
+def test_load_panorama_metadata_uses_prepare_output_directory(tmp_path):
+    import json
+    from make_tour import load_panorama_metadata
+
+    data_dir = tmp_path / "data"
+    data_dir.mkdir()
+    (data_dir / "views_manifest.json").write_text(
+        json.dumps({"schema_version": 1, "views": []}), encoding="utf-8"
+    )
+    (data_dir / "manifest.json").write_text(
+        json.dumps({"schema_version": 1, "panoramas": [{"pano_id": "p1"}]}),
+        encoding="utf-8"
+    )
+    # Parent-level sentinels make this test catch the previous one-directory-too-high bug.
+    (tmp_path / "views_manifest.json").write_text("{}", encoding="utf-8")
+    (tmp_path / "manifest.json").write_text(
+        json.dumps({"panoramas": [{"pano_id": "wrong-parent"}]}), encoding="utf-8"
+    )
+
+    views, source = load_panorama_metadata(data_dir)
+    assert views["schema_version"] == 1
+    assert source["panoramas"][0]["pano_id"] == "p1"
