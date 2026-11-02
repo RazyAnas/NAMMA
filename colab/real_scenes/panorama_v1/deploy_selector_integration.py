@@ -38,7 +38,7 @@ def patch_html(text: str) -> str:
 
     text = re.sub(
         r'(<button id="downloadSelectedBtn"[^>]*>).*?(</button>)',
-        r'\\1Start 3D Rendering online <span>↗</span>\\2',
+        r'\1Start 3D Rendering online <span>↗</span>\2',
         text,
         count=1,
         flags=re.S,
@@ -62,22 +62,22 @@ def patch_html(text: str) -> str:
         </div>"""
         text = text.replace(marker, marker + status, 1)
 
-    zoom_match = re.search(r'(<select id="downloadZoom">)([\\s\\S]*?)(</select>)', text)
+    zoom_match = re.search(r'(<select id="downloadZoom">)([\s\S]*?)(</select>)', text)
     if not zoom_match:
         raise ValueError("The panorama zoom selector was not found.")
-    zoom_options = re.sub(r'\\sselected(?=[\\s>])', '', zoom_match.group(2))
+    zoom_options = re.sub(r'\sselected(?=[\s>])', '', zoom_match.group(2))
     zoom_options = zoom_options.replace('<option value="4">', '<option value="4" selected>')
     text = text[:zoom_match.start()] + zoom_match.group(1) + zoom_options + zoom_match.group(3) + text[zoom_match.end():]
 
     text, cols = re.subn(
-        r'(<input id="downloadCols"[^>]*value=")\\d+(")',
-        r'\\g<1>44\\2',
+        r'(<input id="downloadCols"[^>]*value=")\d+(")',
+        r'\g<1>44\2',
         text,
         count=1,
     )
     text, rows = re.subn(
-        r'(<input id="downloadRows"[^>]*value=")\\d+(")',
-        r'\\g<1>22\\2',
+        r'(<input id="downloadRows"[^>]*value=")\d+(")',
+        r'\g<1>22\2',
         text,
         count=1,
     )
@@ -85,7 +85,7 @@ def patch_html(text: str) -> str:
         raise ValueError("Could not set the high-resolution 44 × 22 default panorama grid.")
     text = re.sub(
         r'(<p id="downloadQualityHint" class="microcopy">).*?(</p>)',
-        r'\\1Default: 968 tiles per panorama (44 × 22). The downloader limit is 1,000 tiles.\\2',
+        r'\1Default: 968 tiles per panorama (44 × 22). The downloader limit is 1,000 tiles.\2',
         text,
         count=1,
         flags=re.S,
@@ -94,7 +94,7 @@ def patch_html(text: str) -> str:
     if '<script type="module" src="./panorama-client.js"></script>' not in text:
         text = text.replace(
             '<script src="./app.js"></script>',
-            '<script src="./app.js"></script>\\n  <script type="module" src="./panorama-client.js"></script>',
+            '<script src="./app.js"></script>\n  <script type="module" src="./panorama-client.js"></script>',
             1,
         )
     if 'type="module" src="./panorama-client.js"' not in text:
