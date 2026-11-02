@@ -85,11 +85,27 @@ def validate_job(job: dict) -> dict:
     if not re.fullmatch(r"[a-zA-Z0-9][a-zA-Z0-9-]{2,50}", job_id):
         raise ValueError("job_id must contain 3-51 letters, digits or hyphens.")
     hf_dataset = str(job.get("hf_dataset", ""))
-    bundle_path = str(job.get("bundle_path", ""))
     if not re.fullmatch(r"[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+", hf_dataset):
         raise ValueError("hf_dataset must be an owner/dataset repository id.")
-    if not bundle_path or bundle_path.startswith("/") or ".." in Path(bundle_path).parts:
-        raise ValueError("bundle_path must be a safe path inside the HF dataset.")
+
+    bundle_mode = str(job.get("bundle_mode", "zip"))
+    bundle_path = str(job.get("bundle_path", ""))
+    manifest_path = str(job.get("manifest_path", ""))
+    panorama_paths = job.get("panorama_paths", [])
+    if bundle_mode == "zip":
+        if not bundle_path or bundle_path.startswith("/") or ".." in Path(bundle_path).parts:
+            raise ValueError("bundle_path must be a safe path inside the HF dataset.")
+    elif bundle_mode == "loose":
+        if not manifest_path or manifest_path.startswith("/") or ".." in Path(manifest_path).parts:
+            raise ValueError("manifest_path must be a safe path inside the HF dataset.")
+        if not isinstance(panorama_paths, list) or not 8 <= len(panorama_paths) <= 200:
+            raise ValueError("loose jobs require between 8 and 200 panorama_paths.")
+        for path in panorama_paths:
+            if not isinstance(path, str) or not path or path.startswith("/") or ".." in Path(path).parts:
+                raise ValueError("Every panorama path must be a safe relative HF dataset path.")
+    else:
+        raise ValueError("bundle_mode must be 'zip' or 'loose'.")
+
     params = job.get("parameters", {})
     if not isinstance(params, dict):
         raise ValueError("parameters must be a JSON object.")
@@ -116,7 +132,10 @@ def validate_job(job: dict) -> dict:
     return {
         "job_id": job_id,
         "hf_dataset": hf_dataset,
-        "bundle_path": bundle_path,
+        "bundle_mode": bundle_mode,
+        "bundle_path": bundle_path or None,
+        "manifest_path": manifest_path or None,
+        "panorama_paths": panorama_paths,
         "parameters": safe,
         "output_dataset": job.get("output_dataset", OUTPUT_DATASET),
         "tour_space": job.get("tour_space", TOUR_SPACE)
@@ -144,14 +163,47 @@ def update_status(api, repo_id, job_id, status, **extra):
 
 def upload_input_bundle(api, job, token, dataset_id):
     from huggingface_hub import hf_hub_download
-    from huggingface_hub.utils import EntryNotFoundError
-    source = hf_hub_download(
-        repo_id=job["hf_dataset"], filename=job["bundle_path"],
-        repo_type="dataset", token=token, local_dir="hf-input"
-    )
+    import zipfile
+
     folder = Path("kaggle-input")
     folder.mkdir(exist_ok=True)
-    shutil.copy2(source, folder / "bundle.zip")
+    bundle_file = folder / "bundle.zip"
+
+    if job["bundle_mode"] == "zip":
+        source = hf_hub_download(
+            repo_id=job["hf_dataset"], filename=job["bundle_path"],
+            repo_type="dataset", token=token, local_dir="hf-input"
+        )
+        shutil.copy2(source, bundle_file)
+    else:
+        manifest_file = hf_hub_download(
+            repo_id=job["hf_dataset"], filename=job["manifest_path"],
+            repo_type="dataset", token=token, local_dir="hf-input"
+        )
+        manifest_bytes = Path(manifest_file).read_bytes()
+        manifest = json.loads(manifest_bytes)
+        panoramas = manifest.get("panoramas", [])
+        if len(panoramas) != len(job["panorama_paths"]) or not 8 <= len(panoramas) <= 200:
+            raise RuntimeError("Loose inbox job manifest and panorama file count do not match.")
+        seen_images = set()
+        for entry in panoramas:
+            image_path = str(entry.get("image", ""))
+            if not image_path or image_path.startswith("/") or ".." in Path(image_path).parts:
+                raise RuntimeError("A panorama manifest contains an unsafe relative image path.")
+            if image_path in seen_images:
+                raise RuntimeError("The panorama manifest contains duplicate image paths.")
+            seen_images.add(image_path)
+
+        with zipfile.ZipFile(bundle_file, "w", compression=zipfile.ZIP_STORED) as archive:
+            archive.writestr("manifest.json", manifest_bytes)
+            for index, (remote_path, entry) in enumerate(zip(job["panorama_paths"], panoramas), start=1):
+                local = hf_hub_download(
+                    repo_id=job["hf_dataset"], filename=remote_path,
+                    repo_type="dataset", token=token, local_dir="hf-input"
+                )
+                archive.write(local, arcname=entry["image"])
+                say(f"Staged browser-uploaded panorama {index}/{len(panoramas)}")
+
     for name in ("prepare_panorama.py", "sfm_hloc.py", "make_tour.py"):
         shutil.copy2(HERE / name, folder / name)
     shutil.copytree(HERE / "fused_ssim_shim", folder / "fused_ssim_shim", dirs_exist_ok=True)
@@ -358,7 +410,7 @@ def main():
     output_dataset = job["output_dataset"]
     api.create_repo(repo_id=output_dataset, repo_type="dataset", private=True, exist_ok=True)
     update_status(api, output_dataset, job["job_id"], "staging",
-                  source_dataset=job["hf_dataset"], source_bundle=job["bundle_path"])
+                  source_dataset=job["hf_dataset"], source_bundle=job["bundle_path"], source_manifest=job["manifest_path"])
 
     kaggle_api = KaggleApi()
     kaggle_api.authenticate()
