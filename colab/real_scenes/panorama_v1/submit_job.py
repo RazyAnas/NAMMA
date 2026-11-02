@@ -177,7 +177,7 @@ def main() -> None:
     ap.add_argument("--inbox", default=DEFAULT_INBOX)
     ap.add_argument("--steps", type=int, default=30000)
     ap.add_argument("--max-panoramas", type=int, default=100)
-    ap.add_argument("--image-size", type=int, default=768)
+    ap.add_argument("--image-size", type=int, default=1280)
     ap.add_argument("--view-count", type=int, default=12)
     ap.add_argument("--hfov", type=float, default=60.0)
     args = ap.parse_args()
