@@ -167,7 +167,7 @@ def upload_input_bundle(api, job, token, dataset_id):
 
     folder = Path("kaggle-input")
     folder.mkdir(exist_ok=True)
-    bundle_file = folder / "bundle.zip"
+    bundle_file = folder / "bundle.namma"
 
     if job["bundle_mode"] == "zip":
         source = hf_hub_download(
