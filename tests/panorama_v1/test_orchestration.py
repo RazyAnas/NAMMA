@@ -121,8 +121,6 @@ def test_publish_tour_reuses_preflighted_viewer_and_exporter():
 
 
 def test_status_updates_preserve_current_kernel_and_clear_it_for_a_new_retry(tmp_path: Path, monkeypatch):
-    import huggingface_hub
-
     status_file = tmp_path / "status.json"
     status_file.write_text(json.dumps({
         "job_id": "test-job",
@@ -139,7 +137,19 @@ def test_status_updates_preserve_current_kernel_and_clear_it_for_a_new_retry(tmp
         assert kwargs["force_download"] is True
         return str(status_file)
 
-    monkeypatch.setattr(huggingface_hub, "hf_hub_download", fake_download)
+    import sys
+    import types
+
+    fake_hub = types.ModuleType("huggingface_hub")
+    fake_hub.hf_hub_download = fake_download
+    fake_errors = types.ModuleType("huggingface_hub.errors")
+
+    class EntryNotFoundError(Exception):
+        pass
+
+    fake_errors.EntryNotFoundError = EntryNotFoundError
+    monkeypatch.setitem(sys.modules, "huggingface_hub", fake_hub)
+    monkeypatch.setitem(sys.modules, "huggingface_hub.errors", fake_errors)
     monkeypatch.setenv("HF_TOKEN", "test-token")
 
     class FakeApi:
