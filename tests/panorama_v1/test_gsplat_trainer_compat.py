@@ -78,10 +78,10 @@ def test_bilateral_grid_import_is_visible_inside_spawned_runner_workers(tmp_path
     trainer = examples / "simple_trainer.py"
     trainer.write_text(TRAINER_SOURCE, encoding="utf-8")
     (examples / "lib_bilagrid.py").write_text(
-        "class BilateralGrid: pass\\n"
-        "def color_correct(*args): pass\\n"
-        "def slice(*args): pass\\n"
-        "def total_variation_loss(*args): pass\\n",
+        "class BilateralGrid: pass\n"
+        "def color_correct(*args): pass\n"
+        "def slice(*args): pass\n"
+        "def total_variation_loss(*args): pass\n",
         encoding="utf-8",
     )
 
