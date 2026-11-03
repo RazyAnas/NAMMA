@@ -93,26 +93,27 @@ def job_file_from_event() -> Path:
     files.extend(head.get("added", []))
     files.extend(head.get("modified", []))
 
-    # GitHub's push payload can omit its commit file list for API-created commits.
-    # Recover the changed paths from the checked-out commit before failing. This keeps
-    # the queue trigger reliable for browser/API submissions as well as git pushes.
-    if not files:
-        commit_sha = os.environ.get("GITHUB_SHA", "").strip()
-        if commit_sha:
-            changed = subprocess.run(
-                ["git", "show", "--format=", "--name-only", "--diff-filter=ACMR", commit_sha],
-                cwd=REPO_ROOT,
-                capture_output=True,
-                text=True,
-                check=False,
+    # Push payloads can omit paths or aggregate several API-created commits. Prefer
+    # the exact changed-file list for the checked-out GITHUB_SHA so older queued job
+    # manifests cannot be mistaken for the job added by this run.
+    commit_sha = os.environ.get("GITHUB_SHA", "").strip()
+    if commit_sha:
+        changed = subprocess.run(
+            ["git", "show", "--format=", "--name-only", "--diff-filter=ACMR", commit_sha],
+            cwd=REPO_ROOT,
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        if changed.returncode == 0:
+            commit_files = [line.strip() for line in changed.stdout.splitlines() if line.strip()]
+            if commit_files:
+                files = commit_files
+        elif not files:
+            raise RuntimeError(
+                "Push event omitted changed-file metadata and git show failed: "
+                + changed.stderr[-800:]
             )
-            if changed.returncode == 0:
-                files.extend(line.strip() for line in changed.stdout.splitlines() if line.strip())
-            else:
-                raise RuntimeError(
-                    "Push event omitted changed-file metadata and git show failed: "
-                    + changed.stderr[-800:]
-                )
 
     jobs = sorted({x for x in files if x.startswith("colab/real_scenes/panorama_v1/jobs/") and x.endswith(".json")})
     if len(jobs) != 1:
