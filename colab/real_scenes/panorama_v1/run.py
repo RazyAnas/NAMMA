@@ -18,7 +18,7 @@ HERE = Path(__file__).resolve().parent
 
 
 def find_code_root() -> Path:
-    required = ("prepare_panorama.py", "pairing.py", "sfm_hloc.py", "make_tour.py", "gsplat_colmap_compat.py")
+    required = ("prepare_panorama.py", "pairing.py", "sfm_hloc.py", "make_tour.py", "gsplat_colmap_compat.py", "ssim_preflight.py")
 
     def complete(candidate: Path) -> bool:
         return all((candidate / name).is_file() for name in required)
@@ -73,13 +73,16 @@ def preflight_ssim_fallback() -> Path:
     return shim_dir
 
 
-def preflight_gsplat_trainer(gsplat_root: Path) -> None:
-    """Validate the exact MCMC trainer CLI before spending time on COLMAP."""
+def preflight_gsplat_trainer(gsplat_root: Path, ssim_shim_dir: Path) -> None:
+    """Validate the trainer CLI with the same SSIM fallback path used for training."""
+    from ssim_preflight import trainer_preflight_env
+
     trainer = gsplat_root / "examples" / "simple_trainer.py"
     if not trainer.is_file():
         raise RuntimeError(f"gsplat trainer script is missing: {trainer}")
     check = subprocess.run(
         [sys.executable, str(trainer), "mcmc", "--help"],
+        env=trainer_preflight_env(ssim_shim_dir),
         capture_output=True,
         text=True,
     )
@@ -309,7 +312,7 @@ def main():
     ssim_shim = preflight_ssim_fallback()
     gsplat_root = install_gsplat()
     examples = gsplat_root / "examples"
-    preflight_gsplat_trainer(gsplat_root)
+    preflight_gsplat_trainer(gsplat_root, ssim_shim)
     native_ssim_available = preflight_native_ssim()
     sfm_python = install_sfm_environment()
     sfm_out = ROOT / "sfm"
