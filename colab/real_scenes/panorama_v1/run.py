@@ -102,6 +102,28 @@ def preflight_gsplat_trainer(gsplat_root: Path) -> None:
         )
     say("gsplat MCMC trainer CLI preflight passed.")
 
+def preflight_native_ssim() -> bool:
+    """Use native fused_ssim only when the imported extension completes a CUDA operation."""
+    check = subprocess.run(
+        [
+            sys.executable,
+            "-c",
+            "import torch, fused_ssim; "
+            "x=torch.rand((1,3,16,16), device='cuda'); "
+            "y=torch.rand_like(x); "
+            "v=fused_ssim.fused_ssim(x,y); "
+            "assert torch.isfinite(v).item()",
+        ],
+        capture_output=True,
+        text=True,
+    )
+    if check.returncode:
+        say("Native fused_ssim unavailable; embedded fallback selected.")
+        return False
+    say("Native fused_ssim passed its CUDA smoke test.")
+    return True
+
+
 def say(*args):
     print(f"[{(time.time() - T0) / 60:6.1f} min]", *args, flush=True)
 
@@ -286,6 +308,7 @@ def main():
     gsplat_root = install_gsplat()
     examples = gsplat_root / "examples"
     preflight_gsplat_trainer(gsplat_root)
+    native_ssim_available = preflight_native_ssim()
     sfm_python = install_sfm_environment()
     sfm_out = ROOT / "sfm"
     run([sfm_python, HERE / "sfm_hloc.py", "--images", data / "images",
@@ -313,11 +336,7 @@ def main():
     train_log = OUT / "full" / "train.log"
     (OUT / "full").mkdir(parents=True, exist_ok=True)
     train_env = os.environ.copy()
-    native_ssim = subprocess.run(
-        [sys.executable, "-c", "import fused_ssim"],
-        capture_output=True, text=True
-    )
-    if native_ssim.returncode != 0:
+    if not native_ssim_available:
         train_env["PYTHONPATH"] = str(ssim_shim) + os.pathsep + train_env.get("PYTHONPATH", "")
         say("Using the embedded pure-PyTorch SSIM fallback validated before SfM.")
     cmd = [
