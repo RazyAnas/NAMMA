@@ -7,13 +7,17 @@ LEGACY_BACKEND = (
     "import shutil\n"
     "\n"
     "def clean(build_dir):\n"
-    "    shutil.rmtree(build_dir)\n"
+    "    try:\n"
+    "        if build_dir:\n"
+    "            shutil.rmtree(build_dir)\n"
 )
 PATCHED_BACKEND = (
     "import shutil\n"
     "\n"
     "def clean(build_dir):\n"
-    "    shutil.rmtree(build_dir, ignore_errors=True)\n"
+    "    try:\n"
+    "        if build_dir:\n"
+    "            shutil.rmtree(build_dir, ignore_errors=True)\n"
 )
 
 
