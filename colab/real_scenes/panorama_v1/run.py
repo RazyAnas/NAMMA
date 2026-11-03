@@ -263,18 +263,12 @@ def main():
     import torch
     if not torch.cuda.is_available():
         raise RuntimeError("CUDA is unavailable. Enable GPU for the separate namma-panorama kernel.")
-    # These fast GPU/runtime checks must pass before panorama preparation and SfM.
-    ssim_shim = preflight_ssim_fallback()
-    gsplat_root = install_gsplat()
-    examples = gsplat_root / "examples"
-    preflight_gsplat_trainer(gsplat_root)
-
+    # Validate the staged input before installing dependencies or running SfM.
     bundle = find_bundle()
     source = ROOT / "source"
     safe_extract(bundle, source)
     say("input ZIP:", round(bundle.stat().st_size / 1e6, 1), "MB")
 
-    sys.path.insert(0, str(HERE))
     import prepare_panorama
     data = ROOT / "data"
     prep = prepare_panorama.make_views(
@@ -286,6 +280,12 @@ def main():
     )
     say("prepared", prep["source_panoramas"], "panoramas ->", prep["perspective_views"], "views")
 
+    # All expensive environment setup and its smoke tests happen before the
+    # 480-view COLMAP reconstruction, so a missing dependency cannot waste that run.
+    ssim_shim = preflight_ssim_fallback()
+    gsplat_root = install_gsplat()
+    examples = gsplat_root / "examples"
+    preflight_gsplat_trainer(gsplat_root)
     sfm_python = install_sfm_environment()
     sfm_out = ROOT / "sfm"
     run([sfm_python, HERE / "sfm_hloc.py", "--images", data / "images",
