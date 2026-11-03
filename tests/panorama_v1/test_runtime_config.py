@@ -64,6 +64,13 @@ def test_runner_materializes_embedded_ssim_and_smoke_tests_cuda_before_training(
     assert "Fused SSIM is unavailable and the panorama fallback shim is missing" not in runner
 
 
+def test_runner_isolates_the_torch_extension_cache_for_kaggle():
+    root = Path(__file__).resolve().parents[2]
+    runner = (root / "colab/real_scenes/panorama_v1/run.py").read_text(encoding="utf-8")
+    assert 'os.environ["TORCH_EXTENSIONS_DIR"] = str(ROOT / "torch-extensions")' in runner
+    assert 'train_env["TORCH_EXTENSIONS_DIR"] = str(ROOT / "torch-extensions")' in runner
+
+
 def test_route_planner_is_loaded_by_explicit_panorama_file_path():
     root = Path(__file__).resolve().parents[2]
     runner = (root / "colab/real_scenes/panorama_v1/run.py").read_text(encoding="utf-8")
@@ -93,12 +100,15 @@ def test_gpu_and_trainer_preflights_run_before_expensive_sfm():
     assert statement_index("find_bundle") < statement_index("preflight_ssim_fallback")
     assert statement_index("preflight_ssim_fallback") < statement_index("install_gsplat")
     assert statement_index("install_gsplat") < statement_index("preflight_gsplat_trainer")
-    assert statement_index("preflight_gsplat_trainer") < statement_index("preflight_native_ssim")
+    assert statement_index("preflight_gsplat_trainer") < statement_index("preflight_gsplat_cuda_backend")
+    assert statement_index("preflight_gsplat_cuda_backend") < statement_index("preflight_native_ssim")
     assert statement_index("preflight_native_ssim") < statement_index("install_sfm_environment")
     assert statement_index("install_sfm_environment") < statement_index("run")
 
     assert "def preflight_native_ssim()" in runner.read_text(encoding="utf-8")
     assert "v=fused_ssim.fused_ssim(x,y)" in runner.read_text(encoding="utf-8")
+    assert "def preflight_gsplat_cuda_backend()" in runner.read_text(encoding="utf-8")
+    assert "gsplat CUDA backend preflight failed before SfM" in runner.read_text(encoding="utf-8")
 
 
 def test_gsplat_trainer_preflight_checks_every_flag_used_by_training():

@@ -14,11 +14,13 @@ T0 = time.time()
 SSIM_SHIM_SOURCE = "\"\"\"Pure-PyTorch SSIM fallback used when the native CUDA extension is unavailable.\"\"\"\nimport torch\nimport torch.nn.functional as F\n\n\ndef _window(channels, device, dtype):\n    coords = torch.arange(11, device=device, dtype=dtype) - 5\n    one = torch.exp(-(coords * coords) / (2 * 1.5 ** 2))\n    one = one / one.sum()\n    window = one[:, None] @ one[None, :]\n    return window.expand(channels, 1, 11, 11).contiguous()\n\n\ndef fused_ssim(img1, img2, padding=\"same\", train=True):\n    if img1.ndim != 4 or img2.ndim != 4 or img1.shape != img2.shape:\n        raise ValueError(\"fused_ssim expects equally shaped BCHW image tensors.\")\n    channels = img1.shape[1]\n    window = _window(channels, img1.device, img1.dtype)\n    pad = 5 if padding == \"same\" else 0\n    mu1 = F.conv2d(img1, window, padding=pad, groups=channels)\n    mu2 = F.conv2d(img2, window, padding=pad, groups=channels)\n    sigma1 = F.conv2d(img1 * img1, window, padding=pad, groups=channels) - mu1.square()\n    sigma2 = F.conv2d(img2 * img2, window, padding=pad, groups=channels) - mu2.square()\n    sigma12 = F.conv2d(img1 * img2, window, padding=pad, groups=channels) - mu1 * mu2\n    c1, c2 = 0.01 ** 2, 0.03 ** 2\n    numerator = (2 * mu1 * mu2 + c1) * (2 * sigma12 + c2)\n    denominator = (mu1.square() + mu2.square() + c1) * (sigma1 + sigma2 + c2)\n    return (numerator / denominator).mean()\n"
 ROOT.mkdir(parents=True, exist_ok=True)
 OUT.mkdir(parents=True, exist_ok=True)
+# Keep JIT CUDA builds owned by this invocation, never in Kaggle's shared cache.
+os.environ["TORCH_EXTENSIONS_DIR"] = str(ROOT / "torch-extensions")
 HERE = Path(__file__).resolve().parent
 
 
 def find_code_root() -> Path:
-    required = ("prepare_panorama.py", "pairing.py", "sfm_hloc.py", "make_tour.py", "gsplat_colmap_compat.py", "gsplat_trainer_compat.py", "ssim_preflight.py")
+    required = ("prepare_panorama.py", "pairing.py", "sfm_hloc.py", "make_tour.py", "gsplat_colmap_compat.py", "gsplat_trainer_compat.py", "gsplat_cuda_compat.py", "ssim_preflight.py")
 
     def complete(candidate: Path) -> bool:
         return all((candidate / name).is_file() for name in required)
@@ -104,6 +106,36 @@ def preflight_gsplat_trainer(gsplat_root: Path, ssim_shim_dir: Path) -> None:
             + ", ".join(missing)
         )
     say("gsplat MCMC trainer CLI preflight passed.")
+
+
+def preflight_gsplat_cuda_backend() -> None:
+    """Build and exercise gsplat's real CUDA path before the long SfM stage."""
+    check = subprocess.run(
+        [
+            sys.executable,
+            "-c",
+            "import torch; from gsplat import rasterization; "
+            "device='cuda'; "
+            "means=torch.tensor([[0.,0.,2.]],device=device); "
+            "quats=torch.tensor([[1.,0.,0.,0.]],device=device); "
+            "scales=torch.full((1,3),0.1,device=device); "
+            "opacities=torch.ones(1,device=device); "
+            "colors=torch.ones((1,3),device=device); "
+            "viewmats=torch.eye(4,device=device).unsqueeze(0); "
+            "Ks=torch.tensor([[[64.,0.,32.],[0.,64.,32.],[0.,0.,1.]]],device=device); "
+            "image,alpha,_=rasterization(means,quats,scales,opacities,colors,viewmats,Ks,64,64); "
+            "assert torch.isfinite(image).all() and torch.isfinite(alpha).all()",
+        ],
+        env=os.environ.copy(),
+        capture_output=True,
+        text=True,
+    )
+    if check.returncode:
+        details = (check.stderr or check.stdout)[-1800:]
+        raise RuntimeError(
+            "gsplat CUDA backend preflight failed before SfM: " + details
+        )
+    say("gsplat CUDA backend preflight passed.")
 
 def preflight_native_ssim() -> bool:
     """Use native fused_ssim only when the imported extension completes a CUDA operation."""
@@ -253,8 +285,10 @@ def install_gsplat():
     (gsplat_root / "examples" / "datasets" / "__init__.py").touch()
     from gsplat_colmap_compat import patch_gsplat_colmap_parser
     from gsplat_trainer_compat import patch_gsplat_bilateral_grid_import
+    from gsplat_cuda_compat import patch_gsplat_cuda_jit_cache
     patch_gsplat_colmap_parser(gsplat_root)
     patch_gsplat_bilateral_grid_import(gsplat_root)
+    patch_gsplat_cuda_jit_cache(gsplat_root)
     say("gsplat bilateral-grid CLI compatibility patch applied.")
     packages = [
         "ninja", "gsplat==1.5.3", "viser", "tyro", "torchmetrics[image]",
@@ -316,6 +350,7 @@ def main():
     gsplat_root = install_gsplat()
     examples = gsplat_root / "examples"
     preflight_gsplat_trainer(gsplat_root, ssim_shim)
+    preflight_gsplat_cuda_backend()
     native_ssim_available = preflight_native_ssim()
     sfm_python = install_sfm_environment()
     sfm_out = ROOT / "sfm"
@@ -344,6 +379,9 @@ def main():
     train_log = OUT / "full" / "train.log"
     (OUT / "full").mkdir(parents=True, exist_ok=True)
     train_env = os.environ.copy()
+    # Keep gsplat's JIT extension cache inside this isolated panorama job.
+    # This prevents a stale shared Kaggle cache from affecting the trainer.
+    train_env["TORCH_EXTENSIONS_DIR"] = str(ROOT / "torch-extensions")
     if not native_ssim_available:
         train_env["PYTHONPATH"] = str(ssim_shim) + os.pathsep + train_env.get("PYTHONPATH", "")
         say("Using the embedded pure-PyTorch SSIM fallback validated before SfM.")

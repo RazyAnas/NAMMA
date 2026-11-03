@@ -30,6 +30,7 @@ KAGGLE_CODE_FILES = (
     "make_tour.py",
     "gsplat_colmap_compat.py",
     "gsplat_trainer_compat.py",
+    "gsplat_cuda_compat.py",
     "ssim_preflight.py",
 )
 

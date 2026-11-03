@@ -17,6 +17,7 @@ def test_kaggle_staging_contains_every_runtime_module_and_shim(tmp_path: Path):
         "make_tour.py",
         "gsplat_colmap_compat.py",
         "gsplat_trainer_compat.py",
+        "gsplat_cuda_compat.py",
         "ssim_preflight.py",
     }
     for name in KAGGLE_CODE_FILES:
