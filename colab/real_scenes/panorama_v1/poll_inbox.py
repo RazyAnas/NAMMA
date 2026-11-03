@@ -55,6 +55,9 @@ def main() -> int:
     from huggingface_hub import HfApi
 
     api = HfApi(token=token)
+    # The browser may submit the first-ever job before the output repository exists.
+    # Create it before checking for <job_id>/status.json, not only inside gh_run.py.
+    api.create_repo(repo_id=OUTPUT, repo_type="dataset", private=True, exist_ok=True)
     files = api.list_repo_files(repo_id=INBOX, repo_type="dataset")
     candidates = sorted(
         path for path in files
