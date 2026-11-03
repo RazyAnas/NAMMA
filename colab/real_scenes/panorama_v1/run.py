@@ -11,6 +11,7 @@ ROOT = Path("/kaggle/temp/namma-panorama-v1")
 OUT = Path("/kaggle/working/out")
 INPUT = Path("/kaggle/input")
 T0 = time.time()
+SSIM_SHIM_SOURCE = "\"\"\"Pure-PyTorch SSIM fallback used when the native CUDA extension is unavailable.\"\"\"\nimport torch\nimport torch.nn.functional as F\n\n\ndef _window(channels, device, dtype):\n    coords = torch.arange(11, device=device, dtype=dtype) - 5\n    one = torch.exp(-(coords * coords) / (2 * 1.5 ** 2))\n    one = one / one.sum()\n    window = one[:, None] @ one[None, :]\n    return window.expand(channels, 1, 11, 11).contiguous()\n\n\ndef fused_ssim(img1, img2, padding=\"same\", train=True):\n    if img1.ndim != 4 or img2.ndim != 4 or img1.shape != img2.shape:\n        raise ValueError(\"fused_ssim expects equally shaped BCHW image tensors.\")\n    channels = img1.shape[1]\n    window = _window(channels, img1.device, img1.dtype)\n    pad = 5 if padding == \"same\" else 0\n    mu1 = F.conv2d(img1, window, padding=pad, groups=channels)\n    mu2 = F.conv2d(img2, window, padding=pad, groups=channels)\n    sigma1 = F.conv2d(img1 * img1, window, padding=pad, groups=channels) - mu1.square()\n    sigma2 = F.conv2d(img2 * img2, window, padding=pad, groups=channels) - mu2.square()\n    sigma12 = F.conv2d(img1 * img2, window, padding=pad, groups=channels) - mu1 * mu2\n    c1, c2 = 0.01 ** 2, 0.03 ** 2\n    numerator = (2 * mu1 * mu2 + c1) * (2 * sigma12 + c2)\n    denominator = (mu1.square() + mu2.square() + c1) * (sigma1 + sigma2 + c2)\n    return (numerator / denominator).mean()\n"
 ROOT.mkdir(parents=True, exist_ok=True)
 OUT.mkdir(parents=True, exist_ok=True)
 HERE = Path(__file__).resolve().parent
@@ -18,10 +19,9 @@ HERE = Path(__file__).resolve().parent
 
 def find_code_root() -> Path:
     required = ("prepare_panorama.py", "pairing.py", "sfm_hloc.py", "make_tour.py")
+
     def complete(candidate: Path) -> bool:
-        return all((candidate / name).is_file() for name in required) and (
-            candidate / "fused_ssim_shim" / "fused_ssim.py"
-        ).is_file()
+        return all((candidate / name).is_file() for name in required)
 
     matches = [p.parent for p in INPUT.glob("**/prepare_panorama.py")]
     for candidate in matches:
@@ -30,9 +30,20 @@ def find_code_root() -> Path:
     if complete(HERE):
         return HERE
     raise RuntimeError(
-        "Panorama pipeline helpers are incomplete in the Kaggle input dataset. "
-        "Required files: " + ", ".join(required) + ", fused_ssim_shim/fused_ssim.py"
+        "Panorama pipeline helper modules are incomplete in the Kaggle input dataset. "
+        "Required files: " + ", ".join(required)
     )
+
+
+def ensure_ssim_shim() -> Path:
+    """Materialize the fallback from this self-contained runner, not a Kaggle subfolder."""
+    shim_dir = ROOT / "embedded-fused-ssim"
+    shim_dir.mkdir(parents=True, exist_ok=True)
+    shim_file = shim_dir / "fused_ssim.py"
+    shim_file.write_text(SSIM_SHIM_SOURCE, encoding="utf-8")
+    if not shim_file.is_file() or shim_file.read_text(encoding="utf-8") != SSIM_SHIM_SOURCE:
+        raise RuntimeError("Could not materialize the embedded fused_ssim fallback.")
+    return shim_dir
 
 
 def say(*args):
@@ -247,11 +258,29 @@ def main():
         capture_output=True, text=True
     )
     if native_ssim.returncode != 0:
-        shim = HERE / "fused_ssim_shim"
-        if not (shim / "fused_ssim.py").is_file():
-            raise RuntimeError("Fused SSIM is unavailable and the panorama fallback shim is missing.")
+        shim = ensure_ssim_shim()
         train_env["PYTHONPATH"] = str(shim) + os.pathsep + train_env.get("PYTHONPATH", "")
-        say("Using the bundled pure-PyTorch SSIM fallback.")
+        # Exercise the exact import path and CUDA tensor operation before the long trainer starts.
+        shim_check = subprocess.run(
+            [
+                sys.executable,
+                "-c",
+                "import torch, fused_ssim; "
+                "x=torch.rand((1,3,16,16), device='cuda'); "
+                "y=torch.rand_like(x); "
+                "v=fused_ssim.fused_ssim(x,y); "
+                "assert torch.isfinite(v).item()",
+            ],
+            env=train_env,
+            capture_output=True,
+            text=True,
+        )
+        if shim_check.returncode:
+            raise RuntimeError(
+                "Embedded fused_ssim fallback failed its CUDA smoke test: "
+                + (shim_check.stderr or shim_check.stdout)[-1600:]
+            )
+        say("Embedded pure-PyTorch SSIM fallback imported and passed a CUDA smoke test.")
     cmd = [
         sys.executable, examples / "simple_trainer.py", "mcmc",
         "--data-dir", data, "--data-factor", "1",
