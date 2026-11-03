@@ -1,6 +1,6 @@
 from pathlib import Path
 
-from colab.real_scenes.panorama_v1.gsplat_cuda_compat import patch_gsplat_cuda_jit_cache
+from gsplat_cuda_compat import patch_gsplat_cuda_jit_cache
 
 
 def test_patches_only_the_legacy_gsplat_jit_cleanup(tmp_path: Path):
