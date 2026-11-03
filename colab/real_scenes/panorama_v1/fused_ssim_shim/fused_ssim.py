@@ -1,8 +1,4 @@
-"""Pure-PyTorch fallback for gsplat's fused_ssim import.
-
-This slower fallback keeps the dedicated panorama job independent of the optional
-native fused_ssim CUDA extension. The function signature matches gsplat v1.5.3.
-"""
+"""Pure-PyTorch SSIM fallback used when the native CUDA extension is unavailable."""
 import torch
 import torch.nn.functional as F
 
@@ -16,6 +12,8 @@ def _window(channels, device, dtype):
 
 
 def fused_ssim(img1, img2, padding="same", train=True):
+    if img1.ndim != 4 or img2.ndim != 4 or img1.shape != img2.shape:
+        raise ValueError("fused_ssim expects equally shaped BCHW image tensors.")
     channels = img1.shape[1]
     window = _window(channels, img1.device, img1.dtype)
     pad = 5 if padding == "same" else 0
