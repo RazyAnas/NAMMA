@@ -122,3 +122,17 @@ def test_gsplat_trainer_preflight_checks_every_flag_used_by_training():
     )
     for flag in required:
         assert f'"{flag}"' in runner
+
+
+def test_runner_patches_the_installed_gsplat_cuda_backend_after_pip_install():
+    root = Path(__file__).resolve().parents[2]
+    runner = (root / "colab/real_scenes/panorama_v1/run.py").read_text(encoding="utf-8")
+    install = runner.split("def install_gsplat():", 1)[1].split("\ndef main():", 1)[0]
+
+    install_packages = 'run([sys.executable, "-m", "pip", "install", "-q", "-c", pin, *packages])'
+    patch_installed = "patch_gsplat_cuda_jit_cache(installed_gsplat_root)"
+    assert install_packages in install
+    assert "installed_gsplat_root = Path(gsplat.__file__).resolve().parent" in install
+    assert patch_installed in install
+    assert install.index(install_packages) < install.index(patch_installed)
+    assert "gsplat CUDA JIT cleanup patch applied to installed package." in install
