@@ -35,7 +35,7 @@ jobs:
     env:
       HF_TOKEN: ${{ secrets.HF_TOKEN || secrets.HUGGINGFACE_WRITE_TOKEN || secrets.HF_TOKEN_backup || secrets.HUGGINGFACE_WRITE_TOKEN_backup || secrets.HF_TOKEN_BACKUP || secrets.HUGGINGFACE_WRITE_TOKEN_BACKUP }}
       KAGGLE_API_TOKEN: ${{ secrets.KAGGLE_API_TOKEN || secrets.KAGGLE_TOKEN || secrets.KAGGLE_API_TOKEN_backup || secrets.KAGGLE_TOKEN_backup || secrets.KAGGLE_API_TOKEN_BACKUP || secrets.KAGGLE_TOKEN_BACKUP }}
-      PANORAMA_JOB_FILE: ${{ github.event.inputs.job_file }}
+      PANORAMA_JOB_FILE: ${{ github.event.inputs.job_file || 'colab/real_scenes/panorama_v1/jobs/ggps-ftp-20261103-retry-ssim-05.json' }}
     steps:
       - name: Check out the panorama branch
         uses: actions/checkout@v4
