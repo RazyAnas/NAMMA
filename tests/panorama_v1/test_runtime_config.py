@@ -70,3 +70,40 @@ def test_route_planner_is_loaded_by_explicit_panorama_file_path():
     assert 'panorama_tour_path = HERE / "make_tour.py"' in runner
     assert 'spec_from_file_location(\n        "namma_panorama_route_plan"' in runner
     assert "import make_tour as panorama_tour" not in runner
+
+
+def test_gpu_and_trainer_preflights_run_before_expensive_sfm():
+    root = Path(__file__).resolve().parents[2]
+    runner = root / "colab/real_scenes/panorama_v1/run.py"
+    tree = ast.parse(runner.read_text(encoding="utf-8"))
+    main = next(node for node in tree.body
+                if isinstance(node, ast.FunctionDef) and node.name == "main")
+
+    def statement_index(call_name):
+        for index, statement in enumerate(main.body):
+            if any(
+                isinstance(node, ast.Call)
+                and isinstance(node.func, ast.Name)
+                and node.func.id == call_name
+                for node in ast.walk(statement)
+            ):
+                return index
+        raise AssertionError(f"main() does not call {call_name}")
+
+    assert statement_index("preflight_ssim_fallback") < statement_index("find_bundle")
+    assert statement_index("install_gsplat") < statement_index("install_sfm_environment")
+    assert statement_index("preflight_gsplat_trainer") < statement_index("install_sfm_environment")
+    assert statement_index("install_sfm_environment") < statement_index("run")
+
+
+def test_gsplat_trainer_preflight_checks_every_flag_used_by_training():
+    root = Path(__file__).resolve().parents[2]
+    runner = (root / "colab/real_scenes/panorama_v1/run.py").read_text(encoding="utf-8")
+    required = (
+        "--data-dir", "--data-factor", "--result-dir", "--max-steps",
+        "--eval-steps", "--save-steps", "--ply-steps", "--save-ply",
+        "--disable-viewer", "--disable-video", "--use-bilateral-grid",
+        "--strategy.cap-max", "--depth-loss",
+    )
+    for flag in required:
+        assert f'"{flag}"' in runner
