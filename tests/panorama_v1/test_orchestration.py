@@ -118,3 +118,46 @@ def test_publish_tour_reuses_preflighted_viewer_and_exporter():
     }
     assert "ensure_viewer_toolchain" in calls
     assert "preflight_static_exporter" in calls
+
+
+def test_status_updates_preserve_current_kernel_and_clear_it_for_a_new_retry(tmp_path: Path, monkeypatch):
+    import huggingface_hub
+
+    status_file = tmp_path / "status.json"
+    status_file.write_text(json.dumps({
+        "job_id": "test-job",
+        "pipeline": "panorama_v1",
+        "status": "training",
+        "kaggle_dataset": "user/input",
+        "kaggle_kernel": "user/latest-kernel",
+    }), encoding="utf-8")
+
+    def fake_download(**kwargs):
+        assert kwargs["repo_id"] == "user/results"
+        assert kwargs["filename"] == "test-job/status.json"
+        assert kwargs["repo_type"] == "dataset"
+        assert kwargs["force_download"] is True
+        return str(status_file)
+
+    monkeypatch.setattr(huggingface_hub, "hf_hub_download", fake_download)
+    monkeypatch.setenv("HF_TOKEN", "test-token")
+
+    class FakeApi:
+        payload = None
+
+        def upload_file(self, path_or_fileobj, **kwargs):
+            self.payload = json.loads(path_or_fileobj.decode("utf-8"))
+            assert kwargs["path_in_repo"] == "test-job/status.json"
+
+    api = FakeApi()
+    gh_run.update_status(api, "user/results", "test-job", "failed", error="kernel failed")
+    assert api.payload["status"] == "failed"
+    assert api.payload["kaggle_kernel"] == "user/latest-kernel"
+    assert api.payload["error"] == "kernel failed"
+
+    status_file.write_text(json.dumps(api.payload), encoding="utf-8")
+    gh_run.update_status(api, "user/results", "test-job", "staging")
+    assert api.payload["status"] == "staging"
+    assert "kaggle_kernel" not in api.payload
+    assert "kaggle_dataset" not in api.payload
+    assert "error" not in api.payload
