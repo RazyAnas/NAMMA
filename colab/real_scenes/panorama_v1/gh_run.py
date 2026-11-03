@@ -318,6 +318,55 @@ def wait_kernel(kernel_id, minutes=330):
     )
 
 
+def ensure_viewer_toolchain():
+    """Install and verify the exact static viewer/converter before starting Kaggle."""
+    node_root = Path("panorama-tour-builder")
+    node_root.mkdir(exist_ok=True)
+    package_json = node_root / "package.json"
+    if not package_json.is_file():
+        command(["npm", "init", "-y"], cwd=node_root)
+
+    public = node_root / "node_modules" / "@playcanvas" / "supersplat-viewer" / "public"
+    transform = node_root / "node_modules" / ".bin" / "splat-transform"
+    required_public = ("index.html", "index.css", "index.js")
+    if not transform.is_file() or any(not (public / name).is_file() for name in required_public):
+        command([
+            "npm", "install", "--silent", "--no-audit", "--no-fund",
+            "playcanvas@2.23.2", "@playcanvas/supersplat-viewer@1.37.0",
+            "@playcanvas/splat-transform@3.10.1"
+        ], cwd=node_root)
+
+    missing = [name for name in required_public if not (public / name).is_file()]
+    if missing or not transform.is_file():
+        raise RuntimeError(
+            "Static viewer toolchain preflight failed; missing viewer files: "
+            + (", ".join(missing) if missing else "none")
+            + ("; splat-transform executable is missing." if not transform.is_file() else "")
+        )
+    say("Static SuperSplat viewer and splat-transform preflight passed.")
+    return public, transform
+
+
+def preflight_static_exporter():
+    """Import the existing read-only PLY-to-viewer builder without running a build."""
+    import importlib.util
+    import numpy, scipy, plyfile, trimesh  # noqa: F401
+
+    final_dir = REPO_ROOT / "colab" / "real_scenes" / "final"
+    exporter_path = final_dir / "make_tour.py"
+    if not exporter_path.is_file():
+        raise RuntimeError(f"The generic NAMMA static-tour exporter is missing: {exporter_path}")
+    spec = importlib.util.spec_from_file_location("namma_static_tour_builder_preflight", exporter_path)
+    if spec is None or spec.loader is None:
+        raise RuntimeError("Could not load NAMMA's generic static-tour exporter.")
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    if not callable(getattr(module, "build", None)):
+        raise RuntimeError("The generic NAMMA static-tour exporter has no callable build() function.")
+    say("Generic NAMMA static-tour exporter import preflight passed.")
+    return module
+
+
 def ensure_lfs(api, space, token, repo_type="space"):
     from huggingface_hub import hf_hub_download
     try:
@@ -347,33 +396,11 @@ def publish_tour(api, space, job_id, output_dir, token):
     # It does not invoke or modify any video-to-3D reconstruction stage.
     api.create_repo(repo_id=space, repo_type="space", space_sdk="static", private=False, exist_ok=True)
     ensure_lfs(api, space, token)
-    node_root = Path("panorama-tour-builder")
-    node_root.mkdir(exist_ok=True)
-    command(["npm", "init", "-y"], cwd=node_root)
-    command([
-        "npm", "install", "--silent", "--no-audit", "--no-fund",
-        "playcanvas@2.23.2", "@playcanvas/supersplat-viewer@1.37.0",
-        "@playcanvas/splat-transform@3.10.1"
-    ], cwd=node_root)
-    public = node_root / "node_modules" / "@playcanvas" / "supersplat-viewer" / "public"
-    transform = node_root / "node_modules" / ".bin" / "splat-transform"
-    for f in ("index.html", "index.css", "index.js"):
-        if not (public / f).is_file():
-            raise RuntimeError(f"SuperSplat viewer package is missing public/{f}.")
+    public, transform = ensure_viewer_toolchain()
     # Load NAMMA's generic PLY-to-static-viewer exporter by an explicit file path.
     # The panorama branch also has a make_tour.py (route-plan generation), so a
     # normal import would silently load the wrong module.
-    import importlib.util
-    import numpy, scipy, plyfile, trimesh  # noqa: F401
-    final_dir = REPO_ROOT / "colab" / "real_scenes" / "final"
-    if not (final_dir / "make_tour.py").is_file():
-        raise RuntimeError("The generic NAMMA static-tour exporter is missing.")
-    sys.path.insert(0, str(final_dir))
-    spec = importlib.util.spec_from_file_location("namma_static_tour_builder", final_dir / "make_tour.py")
-    if spec is None or spec.loader is None:
-        raise RuntimeError("Could not load NAMMA's static-tour exporter.")
-    static_tour_builder = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(static_tour_builder)
+    static_tour_builder = preflight_static_exporter()
     os.environ["TOUR_FORMAT"] = "cply"
     os.environ["TOUR_SH"] = "3"
     os.environ["TOUR_CROP"] = "0"
@@ -442,6 +469,10 @@ def main():
     job_path = job_file_from_event()
     raw_job = json.loads(job_path.read_text(encoding="utf-8"))
     job = validate_job(raw_job)
+    # Fail on missing Node packages, viewer assets, or exporter imports before paying
+    # for a Kaggle GPU reconstruction. publish_tour reuses the verified toolchain.
+    ensure_viewer_toolchain()
+    preflight_static_exporter()
     api = HfApi(token=hf_token)
     output_dataset = job["output_dataset"]
     api.create_repo(repo_id=output_dataset, repo_type="dataset", private=True, exist_ok=True)
