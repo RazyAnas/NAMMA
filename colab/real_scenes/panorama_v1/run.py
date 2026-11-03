@@ -306,6 +306,15 @@ def install_gsplat():
     ).stdout.strip()
     pin.write_text(f"torch=={torch_version}\n", encoding="utf-8")
     run([sys.executable, "-m", "pip", "install", "-q", "-c", pin, *packages])
+    # The example scripts come from the checkout, but Python imports gsplat
+    # from site-packages. Patch that exact runtime module as well.
+    import gsplat
+    installed_gsplat_root = Path(gsplat.__file__).resolve().parent
+    patch_gsplat_cuda_jit_cache(installed_gsplat_root)
+    installed_backend = installed_gsplat_root / "cuda" / "_backend.py"
+    if "shutil.rmtree(build_dir, ignore_errors=True)" not in installed_backend.read_text(encoding="utf-8"):
+        raise RuntimeError("Installed gsplat CUDA backend did not receive the guarded JIT cleanup patch.")
+    say("gsplat CUDA JIT cleanup patch applied to installed package.")
     run([
         sys.executable, "-m", "pip", "install", "-q", "--no-deps",
         "git+https://github.com/nerfstudio-project/nerfview@4538024fe0d15fd1a0e4d760f3695fc44ca72787"
