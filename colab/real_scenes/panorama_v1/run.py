@@ -18,7 +18,7 @@ HERE = Path(__file__).resolve().parent
 
 
 def find_code_root() -> Path:
-    required = ("prepare_panorama.py", "pairing.py", "sfm_hloc.py", "make_tour.py")
+    required = ("prepare_panorama.py", "pairing.py", "sfm_hloc.py", "make_tour.py", "gsplat_colmap_compat.py")
 
     def complete(candidate: Path) -> bool:
         return all((candidate / name).is_file() for name in required)
@@ -248,6 +248,8 @@ def install_gsplat():
         run(["git", "clone", "-q", "--depth", "1", "-b", "v1.5.3",
              "https://github.com/nerfstudio-project/gsplat", str(gsplat_root)])
     (gsplat_root / "examples" / "datasets" / "__init__.py").touch()
+    from gsplat_colmap_compat import patch_gsplat_colmap_parser
+    patch_gsplat_colmap_parser(gsplat_root)
     packages = [
         "ninja", "gsplat==1.5.3", "viser", "tyro", "torchmetrics[image]",
         "tensorboard", "tensorly", "scikit-learn", "imageio[ffmpeg]",

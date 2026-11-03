@@ -15,6 +15,7 @@ def test_kaggle_staging_contains_every_runtime_module_and_shim(tmp_path: Path):
         "pairing.py",
         "sfm_hloc.py",
         "make_tour.py",
+        "gsplat_colmap_compat.py",
     }
     for name in KAGGLE_CODE_FILES:
         assert (tmp_path / name).is_file(), f"Kaggle input omitted {name}"
@@ -38,6 +39,7 @@ def test_push_event_job_discovery_reads_added_and_modified_paths(tmp_path: Path,
 
     monkeypatch.setattr(gh_run, "REPO_ROOT", repo)
     monkeypatch.setenv("GITHUB_EVENT_PATH", str(event_file))
+    monkeypatch.delenv("GITHUB_SHA", raising=False)
     monkeypatch.delenv("PANORAMA_JOB_FILE", raising=False)
 
     assert gh_run.job_file_from_event() == job_file.resolve()

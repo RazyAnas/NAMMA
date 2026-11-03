@@ -28,6 +28,7 @@ KAGGLE_CODE_FILES = (
     "pairing.py",
     "sfm_hloc.py",
     "make_tour.py",
+    "gsplat_colmap_compat.py",
 )
 
 
@@ -101,8 +102,9 @@ def job_file_from_event() -> Path:
         if changed.returncode == 0:
             files = [line.strip() for line in changed.stdout.splitlines() if line.strip()]
         else:
-            raise RuntimeError(
-                "Could not read changed paths for GITHUB_SHA: " + changed.stderr[-800:]
+            say(
+                "Could not inspect the exact GITHUB_SHA diff; falling back to push-event metadata:",
+                changed.stderr[-300:]
             )
     if not files:
         head = event.get("head_commit") or {}
