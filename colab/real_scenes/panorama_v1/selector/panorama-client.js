@@ -29,7 +29,7 @@ function renderStatus(message, percent = null, detail = "") {
   wrap.classList.remove("hidden");
   text.textContent = message;
   if (percent == null) {
-    bar.style.width = "indeterminate";
+    bar.style.width = "35%";
     bar.classList.add("is-indeterminate");
   } else {
     bar.classList.remove("is-indeterminate");
@@ -157,16 +157,33 @@ function setTourLink(url) {
   link.rel = "noopener noreferrer";
 }
 
+function isMissingStatusFile(error) {
+  const status = Number(
+    error && (error.status || error.statusCode ||
+      error.response && error.response.status ||
+      error.cause && error.cause.status)
+  );
+  const message = String(error && error.message || error || "");
+  return status === 404 || /\\b404\\b|EntryNotFoundError|RepositoryNotFoundError|not found/i.test(message);
+}
+
 async function pollJob(jobId, token) {
   const statusPath = jobId + "/status.json";
   const started = Date.now();
   while (Date.now() - started < 6 * 60 * 60 * 1000) {
     await new Promise((resolve) => window.setTimeout(resolve, 20000));
-    const blob = await downloadFile({
-      repo: OUTPUT_REPO,
-      path: statusPath,
-      accessToken: token
-    });
+    let blob = null;
+    try {
+      blob = await downloadFile({
+        repo: OUTPUT_REPO,
+        path: statusPath,
+        accessToken: token
+      });
+    } catch (error) {
+      if (!isMissingStatusFile(error)) throw error;
+    }
+    // The status file is created by the scheduled worker, which may not have
+    // processed the job yet. A 404 during this period means "queued", not failure.
     if (!blob) {
       renderStatus("Job uploaded. Waiting for the cloud GPU queue to pick it up…", 50);
       continue;
@@ -240,7 +257,24 @@ async function submitPanoramaJob(selection, settings = {}) {
     throw new Error("Only the NAMMA Hugging Face owner account can submit to this private queue.");
   }
 
-  const selected = selection.slice().sort((a, b) => a.sequence - b.sequence);
+  const normalizedSelection = selection.map((item, index) => {
+    if (!item || !/^[A-Za-z0-9_-]+$/.test(String(item.panoId || ""))) {
+      throw new Error("A selected panorama ID contains unsupported characters.");
+    }
+    const lat = item.lat == null || item.lat === "" ? null : Number(item.lat);
+    const lonValue = item.lng ?? item.lon;
+    const lon = lonValue == null || lonValue === "" ? null : Number(lonValue);
+    if ((lat === null) !== (lon === null)) {
+      throw new Error("A panorama must have both latitude and longitude, or neither.");
+    }
+    if (lat !== null && (!Number.isFinite(lat) || lat < -90 || lat > 90 ||
+        !Number.isFinite(lon) || lon < -180 || lon > 180)) {
+      throw new Error("A panorama contains an invalid GPS coordinate.");
+    }
+    const sequence = Number.isFinite(Number(item.sequence)) ? Number(item.sequence) : index;
+    return { ...item, panoId: String(item.panoId), lat, lng: lon, sequence };
+  });
+  const selected = normalizedSelection.sort((a, b) => a.sequence - b.sequence);
   const jobId = makeJobId();
   activeJobId = jobId;
   const zoom = Number(settings.zoom ?? 4);
@@ -260,8 +294,8 @@ async function submitPanoramaJob(selection, settings = {}) {
       pano_id: item.panoId,
       image: "panoramas/" + String(index).padStart(4, "0") + "-" + item.panoId + ".jpg",
       sequence: index,
-      lat: Number(item.lat),
-      lon: Number(item.lng)
+      lat: item.lat,
+      lon: item.lng
     }))
   };
   const remotePaths = [];
