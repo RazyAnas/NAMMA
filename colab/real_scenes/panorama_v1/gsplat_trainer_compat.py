@@ -73,15 +73,15 @@ def patch_gsplat_bilateral_grid_import(gsplat_root: Path) -> None:
             )
         worker_block = anchor + """        # NAMMA: publish bilateral-grid helpers inside every spawned Runner worker.
         if cfg.use_bilateral_grid or cfg.use_fused_bilagrid:
-            if cfg.use_fused_biligrid:
-                from fused_biligrid import (
+            if cfg.use_fused_bilagrid:
+                from fused_bilagrid import (
                     BilateralGrid,
                     color_correct,
                     slice,
                     total_variation_loss,
                 )
             else:
-                from lib_biligrid import (
+                from lib_bilagrid import (
                     BilateralGrid,
                     color_correct,
                     slice,
