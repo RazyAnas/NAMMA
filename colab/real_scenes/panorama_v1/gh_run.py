@@ -85,35 +85,32 @@ def job_file_from_event() -> Path:
     if not event_path:
         raise RuntimeError("Set PANORAMA_JOB_FILE or run inside a GitHub Actions event.")
     event = json.loads(Path(event_path).read_text(encoding="utf-8"))
-    files = []
-    for commit in event.get("commits", []):
-        files.extend(commit.get("added", []))
-        files.extend(commit.get("modified", []))
+    # Use only the latest push commit's changed paths. The aggregate "commits" array
+    # may include earlier queued manifests and would otherwise make a single push
+    # ambiguous. Fall back to GITHUB_SHA when the event omits head_commit paths.
     head = event.get("head_commit") or {}
-    files.extend(head.get("added", []))
-    files.extend(head.get("modified", []))
-
-    # Push payloads can omit paths or aggregate several API-created commits. Prefer
-    # the exact changed-file list for the checked-out GITHUB_SHA so older queued job
-    # manifests cannot be mistaken for the job added by this run.
-    commit_sha = os.environ.get("GITHUB_SHA", "").strip()
-    if commit_sha:
-        changed = subprocess.run(
-            ["git", "show", "--format=", "--name-only", "--diff-filter=ACMR", commit_sha],
-            cwd=REPO_ROOT,
-            capture_output=True,
-            text=True,
-            check=False,
-        )
-        if changed.returncode == 0:
-            commit_files = [line.strip() for line in changed.stdout.splitlines() if line.strip()]
-            if commit_files:
-                files = commit_files
-        elif not files:
-            raise RuntimeError(
-                "Push event omitted changed-file metadata and git show failed: "
-                + changed.stderr[-800:]
+    files = list(head.get("added", [])) + list(head.get("modified", []))
+    if not files:
+        commit_sha = os.environ.get("GITHUB_SHA", "").strip()
+        if commit_sha:
+            changed = subprocess.run(
+                ["git", "show", "--format=", "--name-only", "--diff-filter=ACMR", commit_sha],
+                cwd=REPO_ROOT,
+                capture_output=True,
+                text=True,
+                check=False,
             )
+            if changed.returncode == 0:
+                files = [line.strip() for line in changed.stdout.splitlines() if line.strip()]
+            else:
+                raise RuntimeError(
+                    "Push event omitted head_commit paths and git show failed: "
+                    + changed.stderr[-800:]
+                )
+    if not files:
+        for commit in event.get("commits", []):
+            files.extend(commit.get("added", []))
+            files.extend(commit.get("modified", []))
 
     jobs = sorted({x for x in files if x.startswith("colab/real_scenes/panorama_v1/jobs/") and x.endswith(".json")})
     if len(jobs) != 1:
