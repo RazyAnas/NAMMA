@@ -49,14 +49,6 @@ def main():
             )
 
     # try import extra dependencies
-    # The parent can resolve the local import, but spawn workers re-import this
-    # module without executing main(); Runner must initialise its own globals.
-    globals().update({
-        "BilateralGrid": BilateralGrid,
-        "color_correct": color_correct,
-        "slice": slice,
-        "total_variation_loss": total_variation_loss,
-    })
 
     context = mp.get_context("spawn")
     result_queue = context.Queue()
