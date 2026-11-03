@@ -17,13 +17,22 @@ HERE = Path(__file__).resolve().parent
 
 
 def find_code_root() -> Path:
-    matches = [p.parent for p in INPUT.glob('**/prepare_panorama.py')]
+    required = ("prepare_panorama.py", "pairing.py", "sfm_hloc.py", "make_tour.py")
+    def complete(candidate: Path) -> bool:
+        return all((candidate / name).is_file() for name in required) and (
+            candidate / "fused_ssim_shim" / "fused_ssim.py"
+        ).is_file()
+
+    matches = [p.parent for p in INPUT.glob("**/prepare_panorama.py")]
     for candidate in matches:
-        if (candidate / 'sfm_hloc.py').is_file() and (candidate / 'make_tour.py').is_file():
+        if complete(candidate):
             return candidate
-    if (HERE / 'prepare_panorama.py').is_file():
+    if complete(HERE):
         return HERE
-    raise RuntimeError('Panorama pipeline helper modules are missing from the Kaggle input dataset.')
+    raise RuntimeError(
+        "Panorama pipeline helpers are incomplete in the Kaggle input dataset. "
+        "Required files: " + ", ".join(required) + ", fused_ssim_shim/fused_ssim.py"
+    )
 
 
 def say(*args):
