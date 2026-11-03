@@ -12,6 +12,7 @@ from pathlib import Path
 import numpy as np
 import pycolmap
 from hloc import extract_features, match_features, pairs_from_retrieval, reconstruction
+from pairing import merge_retrieval_pairs, sequence_pairs
 
 
 def run_sfm(images: Path, output: Path, sequence_window: int = 18,
@@ -21,23 +22,44 @@ def run_sfm(images: Path, output: Path, sequence_window: int = 18,
     if len(names) < 40:
         raise RuntimeError(f"Only {len(names)} perspective images; at least 40 are required.")
 
-    # Every view is paired with nearby views in the sequence. Retrieval adds long-range
-    # loop closures; this is important for routes that turn back or revisit a facade.
-    pairs = {
-        (names[i], names[j])
-        for i in range(len(names))
-        for j in range(i + 1, min(len(names), i + sequence_window + 1))
-    }
-    retrieval_cfg = extract_features.confs["netvlad"]
+    # Sequential neighbors are the reliable baseline for a route-ordered capture.
+    # NetVLAD adds long-range loop closures, but its checkpoint download can fail on
+    # restricted or transient Kaggle egress. It must never block the sequential route.
+    pairs = sequence_pairs(names, sequence_window)
     local_cfg = extract_features.confs["aliked-n16"]
     match_cfg = match_features.confs["aliked+lightglue"]
-    retrieval_path = extract_features.main(retrieval_cfg, images, output)
-    retrieval_pairs = output / "pairs_retrieval.txt"
-    pairs_from_retrieval.main(retrieval_path, retrieval_pairs, num_matched=retrieval_count)
-    for line in retrieval_pairs.read_text(encoding="utf-8").splitlines():
-        bits = line.split()
-        if len(bits) == 2 and bits[0] != bits[1]:
-            pairs.add(tuple(sorted((bits[0], bits[1]))))
+    global_retrieval_used = False
+    if retrieval_count > 0:
+        def load_global_retrieval_pairs():
+            retrieval_cfg = extract_features.confs["netvlad"]
+            retrieval_path = extract_features.main(retrieval_cfg, images, output)
+            retrieval_pairs_path = output / "pairs_retrieval.txt"
+            pairs_from_retrieval.main(
+                retrieval_path, retrieval_pairs_path, num_matched=retrieval_count
+            )
+            retrieved = []
+            for line in retrieval_pairs_path.read_text(encoding="utf-8").splitlines():
+                bits = line.split()
+                if len(bits) == 2:
+                    retrieved.append((bits[0], bits[1]))
+            return retrieved
+
+        pairs, global_retrieval_used, retrieval_error = merge_retrieval_pairs(
+            pairs, load_global_retrieval_pairs
+        )
+        if retrieval_error:
+            print(
+                "WARNING: NetVLAD global retrieval unavailable; continuing with "
+                f"sequential pairs only ({retrieval_error}).",
+                flush=True
+            )
+    else:
+        print(
+            "NetVLAD global retrieval disabled for this benchmark; "
+            "using sequential route pairs.",
+            flush=True
+        )
+
     pairs_path = output / "pairs.txt"
     pairs_path.write_text("\n".join(f"{a} {b}" for a, b in sorted(pairs)), encoding="utf-8")
     print(f"Matching {len(names)} perspective images with {len(pairs)} pairs", flush=True)
@@ -85,6 +107,8 @@ def run_sfm(images: Path, output: Path, sequence_window: int = 18,
         "points3D": point_count,
         "mean_reprojection_error_px": round(mean_reproj, 4) if mean_reproj is not None else None,
         "camera_models": len(rec.cameras),
+        "global_retrieval_used": global_retrieval_used,
+        "pair_count": len(pairs),
         "images_without_3d_points": int(sum(
             (im.num_points3D() if callable(im.num_points3D) else im.num_points3D) == 0
             for im in rec.images.values()
