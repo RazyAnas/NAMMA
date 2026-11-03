@@ -127,8 +127,8 @@ def preflight_native_ssim() -> bool:
     return True
 
 
-def say(*args):
-    print(f"[{(time.time() - T0) / 60:6.1f} min]", *args, flush=True)
+def say(*args, flush=True):
+    print(f"[{(time.time() - T0) / 60:6.1f} min]", *args, flush=flush)
 
 
 def run(command, cwd=None, env=None, log=None):
