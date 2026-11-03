@@ -72,3 +72,45 @@ def test_browser_status_poll_treats_not_found_as_pending_and_preserves_null_gps(
     assert "lat: item.lat," in client
     assert "lon: item.lng" in client
     assert "lat: Number(item.lat)" not in client
+
+
+def test_static_exporter_preflight_imports_the_existing_read_only_builder():
+    exporter = gh_run.preflight_static_exporter()
+    assert callable(getattr(exporter, "build", None))
+
+
+def test_viewer_and_exporter_preflights_precede_kaggle_upload_and_kernel_push():
+    root = Path(__file__).resolve().parents[2]
+    source = (root / "colab/real_scenes/panorama_v1/gh_run.py").read_text(encoding="utf-8")
+    tree = __import__("ast").parse(source)
+    main = next(node for node in tree.body
+                if isinstance(node, __import__("ast").FunctionDef) and node.name == "main")
+
+    def index(name):
+        for i, statement in enumerate(main.body):
+            if any(
+                isinstance(node, __import__("ast").Call)
+                and isinstance(node.func, __import__("ast").Name)
+                and node.func.id == name
+                for node in __import__("ast").walk(statement)
+            ):
+                return i
+        raise AssertionError(f"main() does not call {name}")
+
+    assert index("ensure_viewer_toolchain") < index("upload_input_bundle")
+    assert index("preflight_static_exporter") < index("upload_input_bundle")
+    assert index("upload_input_bundle") < index("push_kernel")
+
+
+def test_publish_tour_reuses_preflighted_viewer_and_exporter():
+    root = Path(__file__).resolve().parents[2]
+    source = (root / "colab/real_scenes/panorama_v1/gh_run.py").read_text(encoding="utf-8")
+    tree = __import__("ast").parse(source)
+    publish = next(node for node in tree.body
+                   if isinstance(node, __import__("ast").FunctionDef) and node.name == "publish_tour")
+    calls = {
+        node.func.id for node in __import__("ast").walk(publish)
+        if isinstance(node, __import__("ast").Call) and isinstance(node.func, __import__("ast").Name)
+    }
+    assert "ensure_viewer_toolchain" in calls
+    assert "preflight_static_exporter" in calls
