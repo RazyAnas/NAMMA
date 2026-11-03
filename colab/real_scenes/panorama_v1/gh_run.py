@@ -23,6 +23,27 @@ OUT = Path("out")
 OUTPUT_DATASET = os.environ.get("PANORAMA_OUTPUT_DATASET", "anasrazy/namma-panorama-out")
 TOUR_SPACE = os.environ.get("PANORAMA_TOUR_SPACE", "anasrazy/namma-tour")
 
+KAGGLE_CODE_FILES = (
+    "prepare_panorama.py",
+    "pairing.py",
+    "sfm_hloc.py",
+    "make_tour.py",
+)
+
+
+def stage_kaggle_code(destination: Path) -> None:
+    """Copy the complete, explicit panorama runtime dependency set into Kaggle input."""
+    destination.mkdir(parents=True, exist_ok=True)
+    missing = [name for name in KAGGLE_CODE_FILES if not (HERE / name).is_file()]
+    shim = HERE / "fused_ssim_shim" / "fused_ssim.py"
+    if not shim.is_file():
+        missing.append("fused_ssim_shim/fused_ssim.py")
+    if missing:
+        raise RuntimeError("Panorama Kaggle package is incomplete; missing: " + ", ".join(missing))
+    for name in KAGGLE_CODE_FILES:
+        shutil.copy2(HERE / name, destination / name)
+    shutil.copytree(HERE / "fused_ssim_shim", destination / "fused_ssim_shim", dirs_exist_ok=True)
+
 
 def say(*args):
     print(f"[{(time.time() - T0) / 60:6.1f} min]", *args, flush=True)
@@ -204,9 +225,7 @@ def upload_input_bundle(api, job, token, dataset_id):
                 archive.write(local, arcname=entry["image"])
                 say(f"Staged browser-uploaded panorama {index}/{len(panoramas)}")
 
-    for name in ("prepare_panorama.py", "pairing.py", "sfm_hloc.py", "make_tour.py"):
-        shutil.copy2(HERE / name, folder / name)
-    shutil.copytree(HERE / "fused_ssim_shim", folder / "fused_ssim_shim", dirs_exist_ok=True)
+    stage_kaggle_code(folder)
     metadata = {
         "title": f"NAMMA panorama job {job['job_id']}",
         "id": dataset_id,
