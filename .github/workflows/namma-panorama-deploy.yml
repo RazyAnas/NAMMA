@@ -1,13 +1,7 @@
 name: Deploy NAMMA browser-only panorama selector
 
 on:
-  push:
-    branches:
-      - feature/streetview-panorama-3d
-    paths:
-      - "colab/real_scenes/panorama_v1/selector/panorama-client.js"
-      - "colab/real_scenes/panorama_v1/deploy_selector_integration.py"
-      - ".github/workflows/namma-panorama-deploy.yml"
+  # Publishing changes to the live selector is manual, after tests and review.
   workflow_dispatch:
 
 permissions:
