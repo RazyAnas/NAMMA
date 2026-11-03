@@ -93,8 +93,12 @@ def test_gpu_and_trainer_preflights_run_before_expensive_sfm():
     assert statement_index("find_bundle") < statement_index("preflight_ssim_fallback")
     assert statement_index("preflight_ssim_fallback") < statement_index("install_gsplat")
     assert statement_index("install_gsplat") < statement_index("preflight_gsplat_trainer")
-    assert statement_index("preflight_gsplat_trainer") < statement_index("install_sfm_environment")
+    assert statement_index("preflight_gsplat_trainer") < statement_index("preflight_native_ssim")
+    assert statement_index("preflight_native_ssim") < statement_index("install_sfm_environment")
     assert statement_index("install_sfm_environment") < statement_index("run")
+
+    assert "def preflight_native_ssim()" in runner.read_text(encoding="utf-8")
+    assert "v=fused_ssim.fused_ssim(x,y)" in runner.read_text(encoding="utf-8")
 
 
 def test_gsplat_trainer_preflight_checks_every_flag_used_by_training():
