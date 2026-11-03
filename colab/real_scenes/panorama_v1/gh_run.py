@@ -85,28 +85,28 @@ def job_file_from_event() -> Path:
     if not event_path:
         raise RuntimeError("Set PANORAMA_JOB_FILE or run inside a GitHub Actions event.")
     event = json.loads(Path(event_path).read_text(encoding="utf-8"))
-    # Use only the latest push commit's changed paths. The aggregate "commits" array
-    # may include earlier queued manifests and would otherwise make a single push
-    # ambiguous. Fall back to GITHUB_SHA when the event omits head_commit paths.
-    head = event.get("head_commit") or {}
-    files = list(head.get("added", [])) + list(head.get("modified", []))
-    if not files:
-        commit_sha = os.environ.get("GITHUB_SHA", "").strip()
-        if commit_sha:
-            changed = subprocess.run(
-                ["git", "show", "--format=", "--name-only", "--diff-filter=ACMR", commit_sha],
-                cwd=REPO_ROOT,
-                capture_output=True,
-                text=True,
-                check=False,
+    # Prefer the exact commit diff. GitHub push payloads may aggregate older job
+    # manifests; checkout fetch-depth=0 makes the parent commit available so only the
+    # manifest changed by this run is selected.
+    files = []
+    commit_sha = os.environ.get("GITHUB_SHA", "").strip()
+    if commit_sha:
+        changed = subprocess.run(
+            ["git", "diff-tree", "--no-commit-id", "--name-only", "-r", "--diff-filter=ACMR", commit_sha],
+            cwd=REPO_ROOT,
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        if changed.returncode == 0:
+            files = [line.strip() for line in changed.stdout.splitlines() if line.strip()]
+        else:
+            raise RuntimeError(
+                "Could not read changed paths for GITHUB_SHA: " + changed.stderr[-800:]
             )
-            if changed.returncode == 0:
-                files = [line.strip() for line in changed.stdout.splitlines() if line.strip()]
-            else:
-                raise RuntimeError(
-                    "Push event omitted head_commit paths and git show failed: "
-                    + changed.stderr[-800:]
-                )
+    if not files:
+        head = event.get("head_commit") or {}
+        files = list(head.get("added", [])) + list(head.get("modified", []))
     if not files:
         for commit in event.get("commits", []):
             files.extend(commit.get("added", []))
