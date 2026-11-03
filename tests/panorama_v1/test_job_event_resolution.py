@@ -44,7 +44,7 @@ def test_job_file_from_event_ignores_old_manifests_in_aggregate_push_payload(tmp
     event_file = tmp_path / "event.json"
     event_file.write_text(json.dumps({
         "commits": [{"added": [old_relative], "modified": []}],
-        "head_commit": {"added": [old_relative], "modified": []}
+        "head_commit": {"added": [current_relative], "modified": []}
     }), encoding="utf-8")
 
     monkeypatch.setattr(gh_run, "REPO_ROOT", tmp_path)
@@ -52,11 +52,9 @@ def test_job_file_from_event_ignores_old_manifests_in_aggregate_push_payload(tmp
     monkeypatch.setenv("GITHUB_EVENT_PATH", str(event_file))
     monkeypatch.setenv("GITHUB_SHA", "def456")
 
-    def fake_git_show(args, cwd, capture_output, text, check):
-        return subprocess.CompletedProcess(
-            args, 0, stdout=current_relative + "\n", stderr=""
-        )
+    def unexpected_git_show(*args, **kwargs):
+        raise AssertionError("head_commit paths should be preferred over aggregate commits")
 
-    monkeypatch.setattr(gh_run.subprocess, "run", fake_git_show)
+    monkeypatch.setattr(gh_run.subprocess, "run", unexpected_git_show)
 
     assert gh_run.job_file_from_event() == current_manifest.resolve()
