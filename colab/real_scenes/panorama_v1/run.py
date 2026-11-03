@@ -336,9 +336,17 @@ def main():
     shutil.copytree(data / "images", OUT / "images", dirs_exist_ok=True)
     shutil.copytree(sparse, OUT / "sparse" / "0", dirs_exist_ok=True)
 
-    # Prepare route cameras and a metric similarity transform for the static tour.
-    sys.path.insert(0, str(examples))
-    import make_tour as panorama_tour
+    # Load this panorama branch's route-plan module explicitly. A bare import
+    # could resolve an unrelated make_tour.py from the gsplat examples directory.
+    import importlib.util
+    panorama_tour_path = HERE / "make_tour.py"
+    panorama_tour_spec = importlib.util.spec_from_file_location(
+        "namma_panorama_route_plan", panorama_tour_path
+    )
+    if panorama_tour_spec is None or panorama_tour_spec.loader is None:
+        raise RuntimeError(f"Could not load panorama route planner: {panorama_tour_path}")
+    panorama_tour = importlib.util.module_from_spec(panorama_tour_spec)
+    panorama_tour_spec.loader.exec_module(panorama_tour)
     tour_dir = OUT / "tour"
     tour_info = panorama_tour.build_plan(data, OUT, tour_dir, examples,
                                          float(JOB_CFG.get("camera_height_m", 2.2)))
