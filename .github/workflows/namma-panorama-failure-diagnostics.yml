@@ -1,0 +1,49 @@
+name: NAMMA panorama failure diagnostics
+
+on:
+  push:
+    branches:
+      - feature/streetview-panorama-3d
+    paths:
+      - "colab/real_scenes/panorama_v1/diagnostics/*.json"
+
+permissions:
+  contents: read
+
+jobs:
+  fetch-kaggle-logs:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      HF_TOKEN: ${{ secrets.HF_TOKEN || secrets.HUGGINGFACE_WRITE_TOKEN || secrets.HF_TOKEN_backup || secrets.HUGGINGFACE_WRITE_TOKEN_backup || secrets.HF_TOKEN_BACKUP || secrets.HUGGINGFACE_WRITE_TOKEN_BACKUP }}
+      KAGGLE_API_TOKEN: ${{ secrets.KAGGLE_API_TOKEN || secrets.KAGGLE_TOKEN || secrets.KAGGLE_API_TOKEN_backup || secrets.KAGGLE_TOKEN_backup || secrets.KAGGLE_API_TOKEN_BACKUP || secrets.KAGGLE_TOKEN_BACKUP }}
+    steps:
+      - name: Check out the panorama branch
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install diagnostics clients
+        run: python -m pip install "kaggle==2.2.5" "huggingface_hub>=0.28"
+
+      - name: Verify credentials without printing them
+        run: |
+          test -n "$HF_TOKEN" || { echo "Missing Hugging Face write token secret."; exit 1; }
+          test -n "$KAGGLE_API_TOKEN" || { echo "Missing Kaggle API token secret."; exit 1; }
+
+      - name: Fetch exact failed-kernel logs and store privately
+        env:
+          DIAGNOSTIC_MANIFEST: colab/real_scenes/panorama_v1/diagnostics/ggps-ftp-20261103-retry-ssim-05.json
+        run: python colab/real_scenes/panorama_v1/fetch_kaggle_logs.py "$DIAGNOSTIC_MANIFEST"
+
+      - name: Preserve diagnostics as a GitHub artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: namma-panorama-kaggle-failure-logs
+          path: out/kaggle_kernel.log
+          if-no-files-found: warn
+          retention-days: 14
