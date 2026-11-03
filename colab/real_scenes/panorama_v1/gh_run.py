@@ -193,14 +193,44 @@ def hf_client(token):
 
 
 def update_status(api, repo_id, job_id, status, **extra):
+    # Status transitions must not erase the current Kaggle kernel ID.  In
+    # particular, the failure handler calls this again after wait_kernel()
+    # raises, and monitoring depends on status.json retaining that kernel ID.
+    from huggingface_hub import hf_hub_download
+    from huggingface_hub.errors import EntryNotFoundError
+
+    status_path = f"{job_id}/status.json"
+    try:
+        existing_path = hf_hub_download(
+            repo_id=repo_id,
+            filename=status_path,
+            repo_type="dataset",
+            token=os.environ.get("HF_TOKEN"),
+            force_download=True,
+        )
+    except EntryNotFoundError:
+        previous = {}
+    else:
+        previous = json.loads(Path(existing_path).read_text(encoding="utf-8"))
+
+    # A new retry starts a clean lifecycle; never report the previous attempt's
+    # kernel as if it belonged to the new one.  Later transitions preserve the
+    # latest kernel until a new kernel ID is explicitly supplied.
+    if status == "staging":
+        for key in ("kaggle_dataset", "kaggle_kernel", "tour_url", "results", "error"):
+            previous.pop(key, None)
+
     payload = {
-        "job_id": job_id, "pipeline": "panorama_v1", "status": status,
+        **previous,
+        "job_id": job_id,
+        "pipeline": "panorama_v1",
+        "status": status,
         "updated_at_utc": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
-        **extra
+        **extra,
     }
     api.upload_file(
         path_or_fileobj=json.dumps(payload, indent=2).encode("utf-8"),
-        path_in_repo=f"{job_id}/status.json", repo_id=repo_id,
+        path_in_repo=status_path, repo_id=repo_id,
         repo_type="dataset", commit_message=f"panorama {job_id}: {status}"
     )
     say("status:", status)
