@@ -29,6 +29,7 @@ KAGGLE_CODE_FILES = (
     "sfm_hloc.py",
     "make_tour.py",
     "gsplat_colmap_compat.py",
+    "ssim_preflight.py",
 )
 
 
