@@ -40,7 +40,7 @@ def test_cli_bilateral_grid_flag_imports_class_before_cli_applies_config(tmp_pat
     trainer = examples / "simple_trainer.py"
     trainer.write_text(TRAINER_SOURCE, encoding="utf-8")
     (examples / "lib_bilagrid.py").write_text(
-        "class BilateralGrid: pass\\n"
+        "class BilateralGrid: pass\n"
         "def color_correct(*args): pass\\n"
         "def slice(*args): pass\\n"
         "def total_variation_loss(*args): pass\\n",
@@ -58,8 +58,9 @@ def test_cli_bilateral_grid_flag_imports_class_before_cli_applies_config(tmp_pat
         cwd=examples,
         capture_output=True,
         text=True,
-        check=True,
+        check=False,
     )
+    assert result.returncode == 0, result.stderr
     assert result.stdout.strip() == "BilateralGrid"
 
     patch_gsplat_bilateral_grid_import(gsplat_root)
