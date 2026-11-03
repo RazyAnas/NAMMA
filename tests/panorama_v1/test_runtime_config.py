@@ -90,8 +90,9 @@ def test_gpu_and_trainer_preflights_run_before_expensive_sfm():
                 return index
         raise AssertionError(f"main() does not call {call_name}")
 
-    assert statement_index("preflight_ssim_fallback") < statement_index("find_bundle")
-    assert statement_index("install_gsplat") < statement_index("install_sfm_environment")
+    assert statement_index("find_bundle") < statement_index("preflight_ssim_fallback")
+    assert statement_index("preflight_ssim_fallback") < statement_index("install_gsplat")
+    assert statement_index("install_gsplat") < statement_index("preflight_gsplat_trainer")
     assert statement_index("preflight_gsplat_trainer") < statement_index("install_sfm_environment")
     assert statement_index("install_sfm_environment") < statement_index("run")
 
