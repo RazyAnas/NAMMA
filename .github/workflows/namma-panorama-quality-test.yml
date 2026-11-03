@@ -10,6 +10,7 @@ on:
       - "colab/real_scenes/panorama_v1/gh_run.py"
       - "colab/real_scenes/panorama_v1/run.py"
       - "colab/real_scenes/panorama_v1/sfm_hloc.py"
+      - "colab/real_scenes/panorama_v1/pairing.py"
       - "colab/real_scenes/panorama_v1/make_tour.py"
   workflow_dispatch:
 
@@ -73,5 +74,6 @@ jobs:
             out/full/metrics.json
             out/full/train.log
             out/failure.json
+            out/kaggle_kernel.log
           if-no-files-found: ignore
           retention-days: 14
