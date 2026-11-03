@@ -164,7 +164,7 @@ def install_gsplat():
         [sys.executable, "-c", "import torch; print(torch.__version__)"],
         capture_output=True, text=True, check=True
     ).stdout.strip()
-    pin.write_text(f"torch=={torch_version}\\n", encoding="utf-8")
+    pin.write_text(f"torch=={torch_version}\n", encoding="utf-8")
     run([sys.executable, "-m", "pip", "install", "-q", "-c", pin, *packages])
     run([
         sys.executable, "-m", "pip", "install", "-q", "--no-deps",
