@@ -27,7 +27,7 @@ jobs:
           python-version: "3.11"
 
       - name: Install diagnostics clients
-        run: python -m pip install "kaggle==2.2.5" "huggingface_hub>=0.28"
+        run: python -m pip install "kaggle==2.2.5" "huggingface_hub>=0.28" six
 
       - name: Verify credentials without printing them
         run: |
