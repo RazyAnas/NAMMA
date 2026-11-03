@@ -18,7 +18,7 @@ HERE = Path(__file__).resolve().parent
 
 
 def find_code_root() -> Path:
-    required = ("prepare_panorama.py", "pairing.py", "sfm_hloc.py", "make_tour.py", "gsplat_colmap_compat.py", "ssim_preflight.py")
+    required = ("prepare_panorama.py", "pairing.py", "sfm_hloc.py", "make_tour.py", "gsplat_colmap_compat.py", "gsplat_trainer_compat.py", "ssim_preflight.py")
 
     def complete(candidate: Path) -> bool:
         return all((candidate / name).is_file() for name in required)
@@ -81,7 +81,7 @@ def preflight_gsplat_trainer(gsplat_root: Path, ssim_shim_dir: Path) -> None:
     if not trainer.is_file():
         raise RuntimeError(f"gsplat trainer script is missing: {trainer}")
     check = subprocess.run(
-        [sys.executable, str(trainer), "mcmc", "--help"],
+        [sys.executable, str(trainer), "mcmc", "--use-bilateral-grid", "--help"],
         env=trainer_preflight_env(ssim_shim_dir),
         capture_output=True,
         text=True,
@@ -252,7 +252,10 @@ def install_gsplat():
              "https://github.com/nerfstudio-project/gsplat", str(gsplat_root)])
     (gsplat_root / "examples" / "datasets" / "__init__.py").touch()
     from gsplat_colmap_compat import patch_gsplat_colmap_parser
+    from gsplat_trainer_compat import patch_gsplat_bilateral_grid_import
     patch_gsplat_colmap_parser(gsplat_root)
+    patch_gsplat_bilateral_grid_import(gsplat_root)
+    say("gsplat bilateral-grid CLI compatibility patch applied.")
     packages = [
         "ninja", "gsplat==1.5.3", "viser", "tyro", "torchmetrics[image]",
         "tensorboard", "tensorly", "scikit-learn", "imageio[ffmpeg]",
