@@ -16,6 +16,7 @@ def test_kaggle_staging_contains_every_runtime_module_and_shim(tmp_path: Path):
         "sfm_hloc.py",
         "make_tour.py",
         "gsplat_colmap_compat.py",
+        "ssim_preflight.py",
     }
     for name in KAGGLE_CODE_FILES:
         assert (tmp_path / name).is_file(), f"Kaggle input omitted {name}"
