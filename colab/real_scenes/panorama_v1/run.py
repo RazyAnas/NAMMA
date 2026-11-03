@@ -45,6 +45,62 @@ def ensure_ssim_shim() -> Path:
         raise RuntimeError("Could not materialize the embedded fused_ssim fallback.")
     return shim_dir
 
+def preflight_ssim_fallback() -> Path:
+    """Test the embedded SSIM module on CUDA before expensive image reconstruction."""
+    shim_dir = ensure_ssim_shim()
+    env = os.environ.copy()
+    env["PYTHONPATH"] = str(shim_dir) + os.pathsep + env.get("PYTHONPATH", "")
+    check = subprocess.run(
+        [
+            sys.executable,
+            "-c",
+            "import torch, fused_ssim; "
+            "x=torch.rand((1,3,16,16), device='cuda'); "
+            "y=torch.rand_like(x); "
+            "v=fused_ssim.fused_ssim(x,y); "
+            "assert torch.isfinite(v).item()",
+        ],
+        env=env,
+        capture_output=True,
+        text=True,
+    )
+    if check.returncode:
+        raise RuntimeError(
+            "Embedded fused_ssim CUDA preflight failed before reconstruction: "
+            + (check.stderr or check.stdout)[-1600:]
+        )
+    say("Embedded SSIM fallback passed its CUDA preflight.")
+    return shim_dir
+
+
+def preflight_gsplat_trainer(gsplat_root: Path) -> None:
+    """Validate the exact MCMC trainer CLI before spending time on COLMAP."""
+    trainer = gsplat_root / "examples" / "simple_trainer.py"
+    if not trainer.is_file():
+        raise RuntimeError(f"gsplat trainer script is missing: {trainer}")
+    check = subprocess.run(
+        [sys.executable, str(trainer), "mcmc", "--help"],
+        capture_output=True,
+        text=True,
+    )
+    help_text = (check.stdout or "") + "\\n" + (check.stderr or "")
+    if check.returncode:
+        raise RuntimeError(
+            "gsplat MCMC trainer help preflight failed: " + help_text[-1600:]
+        )
+    required_flags = (
+        "--data-dir", "--data-factor", "--result-dir", "--max-steps",
+        "--eval-steps", "--save-steps", "--ply-steps", "--save-ply",
+        "--disable-viewer", "--disable-video", "--use-bilateral-grid",
+        "--strategy.cap-max", "--depth-loss",
+    )
+    missing = [flag for flag in required_flags if flag not in help_text]
+    if missing:
+        raise RuntimeError(
+            "Installed gsplat trainer is missing expected NAMMA CLI options: "
+            + ", ".join(missing)
+        )
+    say("gsplat MCMC trainer CLI preflight passed.")
 
 def say(*args):
     print(f"[{(time.time() - T0) / 60:6.1f} min]", *args, flush=True)
@@ -207,6 +263,12 @@ def main():
     import torch
     if not torch.cuda.is_available():
         raise RuntimeError("CUDA is unavailable. Enable GPU for the separate namma-panorama kernel.")
+    # These fast GPU/runtime checks must pass before panorama preparation and SfM.
+    ssim_shim = preflight_ssim_fallback()
+    gsplat_root = install_gsplat()
+    examples = gsplat_root / "examples"
+    preflight_gsplat_trainer(gsplat_root)
+
     bundle = find_bundle()
     source = ROOT / "source"
     safe_extract(bundle, source)
@@ -241,8 +303,6 @@ def main():
     shutil.copy2(sfm_out / "sfm_report.json", OUT / "sfm_report.json")
     shutil.copy2(sfm_out / "camera_poses.json", OUT / "camera_poses.json")
 
-    gsplat_root = install_gsplat()
-    examples = gsplat_root / "examples"
     steps = int(JOB_CFG.get("steps", 30000))
     cap = int(JOB_CFG.get("max_splats", 1_500_000))
     if not 5000 <= steps <= 60000:
@@ -258,29 +318,8 @@ def main():
         capture_output=True, text=True
     )
     if native_ssim.returncode != 0:
-        shim = ensure_ssim_shim()
-        train_env["PYTHONPATH"] = str(shim) + os.pathsep + train_env.get("PYTHONPATH", "")
-        # Exercise the exact import path and CUDA tensor operation before the long trainer starts.
-        shim_check = subprocess.run(
-            [
-                sys.executable,
-                "-c",
-                "import torch, fused_ssim; "
-                "x=torch.rand((1,3,16,16), device='cuda'); "
-                "y=torch.rand_like(x); "
-                "v=fused_ssim.fused_ssim(x,y); "
-                "assert torch.isfinite(v).item()",
-            ],
-            env=train_env,
-            capture_output=True,
-            text=True,
-        )
-        if shim_check.returncode:
-            raise RuntimeError(
-                "Embedded fused_ssim fallback failed its CUDA smoke test: "
-                + (shim_check.stderr or shim_check.stdout)[-1600:]
-            )
-        say("Embedded pure-PyTorch SSIM fallback imported and passed a CUDA smoke test.")
+        train_env["PYTHONPATH"] = str(ssim_shim) + os.pathsep + train_env.get("PYTHONPATH", "")
+        say("Using the embedded pure-PyTorch SSIM fallback validated before SfM.")
     cmd = [
         sys.executable, examples / "simple_trainer.py", "mcmc",
         "--data-dir", data, "--data-factor", "1",
