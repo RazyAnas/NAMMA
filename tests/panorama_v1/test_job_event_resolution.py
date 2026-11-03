@@ -54,7 +54,7 @@ def test_job_file_from_event_ignores_old_manifests_in_aggregate_push_payload(tmp
 
     def fake_git_show(args, cwd, capture_output, text, check):
         return subprocess.CompletedProcess(
-            args, 0, stdout=current_relative + "\\n", stderr=""
+            args, 0, stdout=current_relative + "\n", stderr=""
         )
 
     monkeypatch.setattr(gh_run.subprocess, "run", fake_git_show)
