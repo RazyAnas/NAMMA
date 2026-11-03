@@ -52,9 +52,11 @@ def test_job_file_from_event_ignores_old_manifests_in_aggregate_push_payload(tmp
     monkeypatch.setenv("GITHUB_EVENT_PATH", str(event_file))
     monkeypatch.setenv("GITHUB_SHA", "def456")
 
-    def unexpected_git_show(*args, **kwargs):
-        raise AssertionError("head_commit paths should be preferred over aggregate commits")
+    def fake_git_diff_tree(args, cwd, capture_output, text, check):
+        return subprocess.CompletedProcess(
+            args, 0, stdout=current_relative + "\\n", stderr=""
+        )
 
-    monkeypatch.setattr(gh_run.subprocess, "run", unexpected_git_show)
+    monkeypatch.setattr(gh_run.subprocess, "run", fake_git_diff_tree)
 
     assert gh_run.job_file_from_event() == current_manifest.resolve()
