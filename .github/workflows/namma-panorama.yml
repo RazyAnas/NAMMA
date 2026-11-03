@@ -34,7 +34,10 @@ jobs:
     timeout-minutes: 358
     env:
       HF_TOKEN: ${{ secrets.HF_TOKEN || secrets.HUGGINGFACE_WRITE_TOKEN || secrets.HF_TOKEN_backup || secrets.HUGGINGFACE_WRITE_TOKEN_backup || secrets.HF_TOKEN_BACKUP || secrets.HUGGINGFACE_WRITE_TOKEN_BACKUP }}
-      KAGGLE_API_TOKEN: ${{ secrets.KAGGLE_API_TOKEN || secrets.KAGGLE_TOKEN || secrets.KAGGLE_API_TOKEN_backup || secrets.KAGGLE_TOKEN_backup || secrets.KAGGLE_API_TOKEN_BACKUP || secrets.KAGGLE_TOKEN_BACKUP }}
+      # Panorama training is explicitly authorized to use the backup Kaggle
+      # credential.  Keep it direct so an unrelated primary secret can never
+      # silently select a different account.
+      KAGGLE_API_TOKEN: ${{ secrets.KAGGLE_TOKEN_BACKUP }}
       PANORAMA_JOB_FILE: ${{ github.event.inputs.job_file }}
     steps:
       - name: Check out the panorama branch
