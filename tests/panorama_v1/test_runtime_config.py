@@ -59,7 +59,7 @@ def test_runner_materializes_embedded_ssim_and_smoke_tests_cuda_before_training(
     runner = (root / "colab/real_scenes/panorama_v1/run.py").read_text(encoding="utf-8")
     assert "def ensure_ssim_shim()" in runner
     assert "shim_file.write_text(SSIM_SHIM_SOURCE" in runner
-    assert "Embedded fused_ssim fallback failed its CUDA smoke test" in runner
+    assert "Embedded fused_ssim CUDA preflight failed before reconstruction" in runner
     assert "torch.rand((1,3,16,16), device='cuda')" in runner
     assert "Fused SSIM is unavailable and the panorama fallback shim is missing" not in runner
 
