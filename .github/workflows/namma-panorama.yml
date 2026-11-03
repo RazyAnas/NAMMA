@@ -8,10 +8,10 @@ on:
     branches:
       - main
       - feature/streetview-panorama-3d
+    # Only a new/edited job manifest should launch a push-triggered run.
+    # Editing pipeline code must never launch an unintended reconstruction.
     paths:
       - "colab/real_scenes/panorama_v1/jobs/*.json"
-      - "colab/real_scenes/panorama_v1/poll_inbox.py"
-      - "colab/real_scenes/panorama_v1/gh_run.py"
   workflow_dispatch:
     inputs:
       job_file:
