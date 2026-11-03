@@ -1,17 +1,7 @@
 name: NAMMA panorama quality benchmark
 
 on:
-  push:
-    branches:
-      - feature/streetview-panorama-3d
-    paths:
-      - ".github/workflows/namma-panorama-quality-test.yml"
-      - "colab/real_scenes/panorama_v1/prepare_public_test.py"
-      - "colab/real_scenes/panorama_v1/gh_run.py"
-      - "colab/real_scenes/panorama_v1/run.py"
-      - "colab/real_scenes/panorama_v1/sfm_hloc.py"
-      - "colab/real_scenes/panorama_v1/pairing.py"
-      - "colab/real_scenes/panorama_v1/make_tour.py"
+  # GPU benchmarks are opt-in only. Unit-test runs never consume Kaggle GPU time.
   workflow_dispatch:
 
 permissions:
