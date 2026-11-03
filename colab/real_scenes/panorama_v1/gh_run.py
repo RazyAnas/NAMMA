@@ -204,7 +204,7 @@ def upload_input_bundle(api, job, token, dataset_id):
                 archive.write(local, arcname=entry["image"])
                 say(f"Staged browser-uploaded panorama {index}/{len(panoramas)}")
 
-    for name in ("prepare_panorama.py", "sfm_hloc.py", "make_tour.py"):
+    for name in ("prepare_panorama.py", "pairing.py", "sfm_hloc.py", "make_tour.py"):
         shutil.copy2(HERE / name, folder / name)
     shutil.copytree(HERE / "fused_ssim_shim", folder / "fused_ssim_shim", dirs_exist_ok=True)
     metadata = {
@@ -481,7 +481,13 @@ if __name__ == "__main__":
                 repo = json.loads(p.read_text(encoding="utf-8")).get("output_dataset", OUTPUT_DATASET)
                 api = HfApi(token=token)
                 api.create_repo(repo_id=repo, repo_type="dataset", private=True, exist_ok=True)
-                update_status(api, repo, jid, "failed", error=f"{type(exc).__name__}: {exc}"[:1500])
+                detail = f"{type(exc).__name__}: {exc}"
+                if "Kaggle kernel log tail:" in detail:
+                    summary, log_tail = detail.split("Kaggle kernel log tail:", 1)
+                    detail = summary[:450] + "\\nKaggle kernel log tail:\\n" + log_tail[-950:]
+                else:
+                    detail = detail[-1400:]
+                update_status(api, repo, jid, "failed", error=detail[:1500])
         except Exception as status_exc:
             say("Could not update failure status:", str(status_exc)[:300])
         raise
