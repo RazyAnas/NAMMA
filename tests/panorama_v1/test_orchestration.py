@@ -104,7 +104,12 @@ def test_viewer_and_exporter_preflights_precede_kaggle_upload_and_kernel_push():
 
     assert index("ensure_viewer_toolchain") < index("upload_input_bundle")
     assert index("preflight_static_exporter") < index("upload_input_bundle")
-    assert index("upload_input_bundle") < index("push_kernel")
+    # A completed kernel may be republished without a new GPU run.  On the
+    # normal branch, the input must still be uploaded before a new kernel push.
+    assert source.index("upload_input_bundle(api, job, hf_token, dataset_id)") < source.index(
+        "kernel_id = push_kernel(job, dataset_id, kaggle_user)"
+    )
+    assert 'reused_kernel = os.environ.get("PANORAMA_REUSE_KERNEL", "").strip()' in source
 
 
 def test_publish_tour_reuses_preflighted_viewer_and_exporter():

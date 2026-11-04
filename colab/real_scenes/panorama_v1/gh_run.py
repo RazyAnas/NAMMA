@@ -534,28 +534,40 @@ def main():
     update_status(api, output_dataset, job["job_id"], "staging",
                   source_dataset=job["hf_dataset"], source_bundle=job["bundle_path"], source_manifest=job["manifest_path"])
 
-    kaggle_api = KaggleApi()
-    kaggle_api.authenticate()
-    kaggle_user = kaggle_api.config_values["username"]
-    ds_slug = f"namma-panorama-{job['job_id'][:35]}".lower()
-    dataset_id = f"{kaggle_user}/{ds_slug}"
-    upload_input_bundle(api, job, hf_token, dataset_id)
-    update_status(api, output_dataset, job["job_id"], "queued", kaggle_dataset=dataset_id)
+    reused_kernel = os.environ.get("PANORAMA_REUSE_KERNEL", "").strip()
+    if reused_kernel:
+        if not re.fullmatch(r"[A-Za-z0-9_.-]+/[a-z0-9][a-z0-9-]{2,99}", reused_kernel):
+            raise ValueError("PANORAMA_REUSE_KERNEL must be a safe Kaggle owner/slug.")
+        kernel_id = reused_kernel
+        say("Reusing completed Kaggle panorama kernel:", kernel_id)
+    else:
+        kaggle_api = KaggleApi()
+        kaggle_api.authenticate()
+        kaggle_user = kaggle_api.config_values["username"]
+        ds_slug = f"namma-panorama-{job['job_id'][:35]}".lower()
+        dataset_id = f"{kaggle_user}/{ds_slug}"
+        upload_input_bundle(api, job, hf_token, dataset_id)
+        update_status(api, output_dataset, job["job_id"], "queued", kaggle_dataset=dataset_id)
+        kernel_id = push_kernel(job, dataset_id, kaggle_user)
 
-    kernel_id = push_kernel(job, dataset_id, kaggle_user)
     update_status(api, output_dataset, job["job_id"], "training", kaggle_kernel=kernel_id)
-    wait_kernel(kernel_id)
+    if not reused_kernel:
+        wait_kernel(kernel_id)
     OUT.mkdir(exist_ok=True)
     kaggle("kernels", "output", kernel_id, "-p", OUT, "-o", "--page-size", "200")
-    summary = OUT / "panorama_summary.json"
-    failure = OUT / "failure.json"
+    # Kaggle packages /kaggle/working as a top-level ``out`` directory.  The
+    # CLI therefore extracts this job's files into out/out/ when ``-p out`` is
+    # used; accept both layouts so completed models are always publishable.
+    artifact_dir = OUT / "out" if (OUT / "out").is_dir() else OUT
+    summary = artifact_dir / "panorama_summary.json"
+    failure = artifact_dir / "failure.json"
     if failure.is_file():
         raise RuntimeError("Kaggle panorama pipeline failed: " + failure.read_text(encoding="utf-8")[-2000:])
-    if not summary.is_file() or not (OUT / "full" / "model.ply").is_file():
+    if not summary.is_file() or not (artifact_dir / "full" / "model.ply").is_file():
         raise RuntimeError("Kaggle finished without panorama_summary.json and full/model.ply.")
     update_status(api, output_dataset, job["job_id"], "publishing")
-    tour_url = publish_tour(api, job["tour_space"], job["job_id"], OUT, hf_token)
-    publish_results(api, output_dataset, job["job_id"], OUT, tour_url)
+    tour_url = publish_tour(api, job["tour_space"], job["job_id"], artifact_dir, hf_token)
+    publish_results(api, output_dataset, job["job_id"], artifact_dir, tour_url)
     update_status(api, output_dataset, job["job_id"], "complete",
                   tour_url=tour_url, results=f"https://huggingface.co/datasets/{output_dataset}/tree/main/{job['job_id']}")
     summary_obj = json.loads(summary.read_text(encoding="utf-8"))
