@@ -1,8 +1,8 @@
-\"\"\"Yaw-aware and route-aware image-pair construction for panorama SfM.\"\"\"
+"""Yaw-aware and route-aware image-pair construction for panorama SfM."""
 from __future__ import annotations
 import re
 
-_VIEW_RE = re.compile(r\"^p(\d+)_v(\d+)\.(?:jpg|jpeg|png)$\", re.IGNORECASE)
+_VIEW_RE = re.compile(r"^p(\d+)_v(\d+)\.(?:jpg|jpeg|png)$", re.IGNORECASE)
 
 
 def parse_view_name(name: str) -> tuple[int, int] | None:
@@ -13,7 +13,7 @@ def parse_view_name(name: str) -> tuple[int, int] | None:
 
 
 def sequence_pairs(names, sequence_window: int = 18):
-    \"\"\"Pair perspective views by angular overlap across nearby panoramas on the route.\"\"\"
+    """Pair perspective views by angular overlap across nearby panoramas on the route."""
     ordered = sorted(names)
     parsed = [(name, parse_view_name(name)) for name in ordered]
     if not all(item[1] is not None for item in parsed):
@@ -65,5 +65,5 @@ def merge_retrieval_pairs(base_pairs, retrieval_loader):
                 retrieved.add(tuple(sorted((first, second))))
         return stable_pairs | retrieved, True, None
     except Exception as exc:
-        message = f\"{type(exc).__name__}: {exc}\"
+        message = f"{type(exc).__name__}: {exc}"
         return stable_pairs, False, message
