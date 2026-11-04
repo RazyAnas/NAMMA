@@ -10,6 +10,8 @@ LEGACY_BACKEND = (
     "    try:\n"
     "        if build_dir:\n"
     "            shutil.rmtree(build_dir)\n"
+    "    except OSError:\n"
+    "        pass\n"
 )
 PATCHED_BACKEND = (
     "import shutil\n"
@@ -18,6 +20,8 @@ PATCHED_BACKEND = (
     "    try:\n"
     "        if build_dir:\n"
     "            shutil.rmtree(build_dir, ignore_errors=True)\n"
+    "    except OSError:\n"
+    "        pass\n"
 )
 
 
