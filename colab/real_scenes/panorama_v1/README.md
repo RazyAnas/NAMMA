@@ -2,6 +2,27 @@
 
 This is a separate 360°-panorama-to-3D pipeline for NAMMA. Its user-facing entry point is the existing online Street View Selector. There is no Terminal, local launcher, manual file download, or pasted API token in the normal user flow.
 
+## Quick run for another route
+
+1. Open the [Street View Selector](https://anasrazy-namma-tour.static.hf.space/streetview-selector/), scan a road, and select **8–200** panoramas in route order. Prefer 20+ nearby, overlapping positions.
+2. Click **Start 3D Rendering online**. Keep the tab open until the upload finishes; the selector creates the inbox bundle and job manifest for you.
+3. Watch `https://huggingface.co/datasets/anasrazy/namma-panorama-out/blob/main/<job_id>/status.json`. When its status is `complete`, open the `tour_url` field, or use:
+
+   `https://anasrazy-namma-tour.static.hf.space/panorama/<job_id>/index.html`
+
+For a maintainer-created job, upload a folder of 2:1 panorama images plus its `manifest.json` using:
+
+```bash
+python colab/real_scenes/panorama_v1/submit_job.py \
+  --input /path/to/panoramas \
+  --scene-name my-route \
+  --branch feature/streetview-panorama-3d
+```
+
+Then run **NAMMA Panorama to 3D** from the [Actions workflow](https://github.com/RazyAnas/NAMMA/actions/workflows/namma-panorama.yml), choosing `feature/streetview-panorama-3d` and the newly created `colab/real_scenes/panorama_v1/jobs/<job_id>.json`. Leave `reuse_kernel` blank for a new training run. The workflow uses the configured backup Kaggle credential directly; never paste a token into a job manifest or command.
+
+If training has already completed but publishing failed, dispatch the same workflow with the same `job_file` and set `reuse_kernel` to the completed Kaggle `owner/kernel-slug`. It downloads and publishes that model without training again.
+
 ## Isolation from the video pipeline
 
 All panorama reconstruction code lives under `colab/real_scenes/panorama_v1/`. Its jobs, Kaggle datasets, GPU kernels, Hugging Face inbox/output, and GitHub Actions workflows are separate from the video-to-3D system.
