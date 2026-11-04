@@ -66,6 +66,25 @@ jobs:
           python -m pip install --upgrade pip
           python -m pip install "kaggle==2.2.5" "huggingface_hub>=0.28" six numpy scipy plyfile trimesh
 
+      - name: Install panorama smoke-test dependencies
+        run: python -m pip install numpy scipy pillow opencv-python-headless plyfile trimesh pytest
+
+      - name: Compile panorama Python modules
+        run: python -m py_compile colab/real_scenes/panorama_v1/*.py
+
+      - name: Validate all committed panorama job manifests
+        run: |
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          for path in sorted(Path('colab/real_scenes/panorama_v1/jobs').glob('*.json')):
+              json.loads(path.read_text(encoding='utf-8'))
+              print(f'VALID JSON: {path}')
+          PY
+
+      - name: Run panorama smoke tests before Kaggle
+        run: pytest -q --confcutdir=tests/panorama_v1 tests/panorama_v1
+
       - name: Poll private inbox for browser-submitted jobs
         if: github.event_name == 'schedule'
         run: python colab/real_scenes/panorama_v1/poll_inbox.py
