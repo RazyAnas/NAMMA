@@ -18,6 +18,10 @@ on:
         description: "Repository path to an existing panorama job JSON"
         required: true
         type: string
+      reuse_kernel:
+        description: "Optional completed Kaggle kernel (owner/slug) to publish without retraining"
+        required: false
+        type: string
   schedule:
     - cron: "*/5 * * * *"
 
@@ -39,6 +43,7 @@ jobs:
       # silently select a different account.
       KAGGLE_API_TOKEN: ${{ secrets.KAGGLE_TOKEN_BACKUP }}
       PANORAMA_JOB_FILE: ${{ github.event.inputs.job_file }}
+      PANORAMA_REUSE_KERNEL: ${{ github.event.inputs.reuse_kernel }}
     steps:
       - name: Check out the panorama branch
         uses: actions/checkout@v4
