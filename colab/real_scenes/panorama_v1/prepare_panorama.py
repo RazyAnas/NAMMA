@@ -56,7 +56,8 @@ def load_manifest(root: Path) -> dict[str, Any]:
             lat, lon = float(pano["lat"]), float(pano["lon"])
             if not (-90 <= lat <= 90 and -180 <= lon <= 180):
                 raise ValueError(f"Panorama {pano_id}: invalid GPS coordinate.")
-    data["panoramas"] = sorted(panoramas, key=lambda p: (p.get("sequence", 0), str(p["pano_id"])))\n    return data
+    data["panoramas"] = sorted(panoramas, key=lambda p: (p.get("sequence", 0), str(p["pano_id"])))
+    return data
 
 
 def perspective_maps(width: int, height: int, source_width: int, source_height: int,

@@ -214,7 +214,8 @@ def update_status(api, repo_id, job_id, status, **extra):
     payload = {
         **previous,
         "job_id": job_id,
-        "pipeline": "panorama_v1",\n        "status": status,
+        "pipeline": "panorama_v1",
+        "status": status,
         "updated_at_utc": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
         **extra,
     }
@@ -292,12 +293,13 @@ def push_kernel(job, dataset_id, kaggle_user):
     folder = Path("kaggle-kernel")
     folder.mkdir(exist_ok=True)
     source = (HERE / "run.py").read_text(encoding="utf-8")
-    marker = 'import glob, json, os, re, shutil, subprocess, sys, time, zipfile\\n'
+    marker = 'import glob, json, os, re, shutil, subprocess, sys, time, zipfile\n'
     if source.count(marker) != 1:
         raise RuntimeError("Could not safely inject the job settings into panorama_v1/run.py.")
     injected = source.replace(
         marker,
-        marker + f'os.environ["JOB_CFG"] = {json.dumps(json.dumps(dict(job["parameters"], job_id=job["job_id"])))}\\n',\n        1
+        marker + f'os.environ["JOB_CFG"] = {json.dumps(json.dumps(dict(job["parameters"], job_id=job["job_id"])))}\n',
+        1
     )
     (folder / "run.py").write_text(injected, encoding="utf-8")
     metadata = {
@@ -347,12 +349,16 @@ def wait_kernel(kernel_id, minutes=330):
         if "error" in low or "cancel" in low:
             logs = fetch_failure_logs()
             raise RuntimeError(
-                f"Kaggle panorama kernel ended unsuccessfully: {status[-600:]}\\n"\n                f"Kaggle kernel log tail:\\n{(logs or '[no execution logs returned]')[-12000:]}"\n            )
+                f"Kaggle panorama kernel ended unsuccessfully: {status[-600:]}\n"
+                f"Kaggle kernel log tail:\n{(logs or '[no execution logs returned]')[-12000:]}"
+            )
         if "complete" in low and seen_running:
             return
     logs = fetch_failure_logs()
     raise RuntimeError(
-        f"Kaggle panorama kernel did not complete within {minutes} minutes; last status: {last}\\n"\n        f"Kaggle kernel log tail:\\n{(logs or '[no execution logs returned]')[-12000:]}"\n    )
+        f"Kaggle panorama kernel did not complete within {minutes} minutes; last status: {last}\n"
+        f"Kaggle kernel log tail:\n{(logs or '[no execution logs returned]')[-12000:]}"
+    )
 
 
 def ensure_viewer_toolchain():
@@ -396,7 +402,7 @@ def preflight_static_exporter():
         raise RuntimeError("Could not load NAMMA's generic static-tour exporter.")
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
-    if not callable(getattr(module, "build", None))):
+    if not callable(getattr(module, "build", None)):
         raise RuntimeError("The generic NAMMA static-tour exporter has no callable build() function.")
     say("Generic NAMMA static-tour exporter import preflight passed.")
     return module
@@ -412,7 +418,7 @@ def ensure_lfs(api, space, token, repo_type="space"):
     patterns = ("*.ply", "*.sog", "*.spz", "*.glb", "*.bin", "*.jpg", "*.png", "*.webp", "*.mp4")
     missing = [f"{x} filter=lfs diff=lfs merge=lfs -text" for x in patterns if f"{x} filter=lfs" not in current]
     if missing:
-        updated = current.rstrip() + ("\\n" if current.strip() else "") + "\\n".join(missing) + "\\n"
+        updated = current.rstrip() + ("\n" if current.strip() else "") + "\n".join(missing) + "\n"
         api.upload_file(
             path_or_fileobj=updated.encode("utf-8"), path_in_repo=".gitattributes",
             repo_id=space, repo_type=repo_type,
@@ -468,9 +474,14 @@ def publish_results(api, repo_id, job_id, output_dir, tour_url):
         if src.is_file():
             (curated / "tour").mkdir(exist_ok=True)
             shutil.copy2(src, curated / "tour" / name)
-    (curated / "tour_url.txt").write_text(tour_url + "\\n", encoding="utf-8")
+    (curated / "tour_url.txt").write_text(tour_url + "\n", encoding="utf-8")
     (curated / "README.md").write_text(
-        "# NAMMA Panorama v1 results\\n\\n"\n        f"Job: {job_id}\\n\\n"\n        f"Tour: {tour_url}\\n\\n"\n        "The reconstruction used perspective views generated from the source 360-degree panoramas. "\n        "Inspect sfm_report.json and panorama_summary.json before treating the scene as metrically accurate. "\n        "The viewer is an appearance model; it does not imply complete collision geometry.\\n",
+        "# NAMMA Panorama v1 results\n\n"
+        f"Job: {job_id}\n\n"
+        f"Tour: {tour_url}\n\n"
+        "The reconstruction used perspective views generated from the source 360-degree panoramas. "
+        "Inspect sfm_report.json and panorama_summary.json before treating the scene as metrically accurate. "
+        "The viewer is an appearance model; it does not imply complete collision geometry.\n",
         encoding="utf-8"
     )
     ensure_lfs(api, repo_id, os.environ.get("HF_TOKEN", ""), repo_type="dataset")
@@ -488,7 +499,8 @@ def main():
     hf_token = os.environ.get("HF_TOKEN")
     if not hf_token:
         raise RuntimeError("HF_TOKEN repository secret is required.")
-    if not os.environ.get("KAGGLE_API_TOKEN"):\n        raise RuntimeError("KAGGLE_API_TOKEN repository secret is required.")
+    if not os.environ.get("KAGGLE_API_TOKEN"):
+        raise RuntimeError("KAGGLE_API_TOKEN repository secret is required.")
     job_path = job_file_from_event()
     raw_job = json.loads(job_path.read_text(encoding="utf-8"))
     job = validate_job(raw_job)
@@ -539,11 +551,11 @@ def main():
     summary_md = os.environ.get("GITHUB_STEP_SUMMARY")
     if summary_md:
         with open(summary_md, "a", encoding="utf-8") as f:
-            f.write(f"## NAMMA panorama job {job['job_id']}\\n\\n")
-            f.write(f"**Tour:** {tour_url}\\n\\n")
-            f.write(f"**Registered views:** {summary_obj['registered_views']} / {summary_obj['perspective_views']}\\n\\n")
-            f.write(f"**Source panoramas:** {summary_obj['source_panoramas']}\\n\\n")
-            f.write(f"**Private results:** https://huggingface.co/datasets/{output_dataset}/tree/main/{job['job_id']}\\n")
+            f.write(f"## NAMMA panorama job {job['job_id']}\n\n")
+            f.write(f"**Tour:** {tour_url}\n\n")
+            f.write(f"**Registered views:** {summary_obj['registered_views']} / {summary_obj['perspective_views']}\n\n")
+            f.write(f"**Source panoramas:** {summary_obj['source_panoramas']}\n\n")
+            f.write(f"**Private results:** https://huggingface.co/datasets/{output_dataset}/tree/main/{job['job_id']}\n")
 
 
 if __name__ == "__main__":
@@ -563,7 +575,7 @@ if __name__ == "__main__":
                 detail = f"{type(exc).__name__}: {exc}"
                 if "Kaggle kernel log tail:" in detail:
                     summary, log_tail = detail.split("Kaggle kernel log tail:", 1)
-                    detail = summary[:450] + "\\nKaggle kernel log tail:\\n" + log_tail[-950:]
+                    detail = summary[:450] + "\nKaggle kernel log tail:\n" + log_tail[-950:]
                 else:
                     detail = detail[-1400:]
                 update_status(api, repo, jid, "failed", error=detail[:1500])

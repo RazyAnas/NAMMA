@@ -11,7 +11,7 @@ ROOT = Path("/kaggle/temp/namma-panorama-v1")
 OUT = Path("/kaggle/working/out")
 INPUT = Path("/kaggle/input")
 T0 = time.time()
-SSIM_SHIM_SOURCE = "\\"\\"\\"Pure-PyTorch SSIM fallback used when the native CUDA extension is unavailable.\\"\\"\\"\\nimport torch\\nimport torch.nn.functional as F\\n\\n\\ndef _window(channels, device, dtype):\\n    coords = torch.arange(11, device=device, dtype=dtype) - 5\\n    one = torch.exp(-(coords * coords) / (2 * 1.5 ** 2))\\n    one = one / one.sum()\\n    window = one[:, None] @ one[None, :]\\n    return window.expand(channels, 1, 11, 11).contiguous()\\n\\n\\ndef fused_ssim(img1, img2, padding=\\"same\\", train=True):\\n    if img1.ndim != 4 or img2.ndim != 4 or img1.shape != img2.shape:\\n        raise ValueError(\\"fused_ssim expects equally shaped BCHW image tensors.\\")\\n    channels = img1.shape[1]\\n    window = _window(channels, img1.device, img1.dtype)\\n    pad = 5 if padding == \\"same\\" else 0\\n    mu1 = F.conv2d(img1, window, padding=pad, groups=channels)\\n    mu2 = F.conv2d(img2, window, padding=pad, groups=channels)\\n    sigma1 = F.conv2d(img1 * img1, window, padding=pad, groups=channels) - mu1.square()\\n    sigma2 = F.conv2d(img2 * img2, window, padding=pad, groups=channels) - mu2.square()\\n    sigma12 = F.conv2d(img1 * img2, window, padding=pad, groups=channels) - mu1 * mu2\\n    c1, c2 = 0.01 ** 2, 0.03 ** 2\\n    numerator = (2 * mu1 * mu2 + c1) * (2 * sigma12 + c2)\\n    denominator = (mu1.square() + mu2.square() + c1) * (sigma1 + sigma2 + c2)\\n    return (numerator / denominator).mean()\\n"
+SSIM_SHIM_SOURCE = "\"\"\"Pure-PyTorch SSIM fallback used when the native CUDA extension is unavailable.\"\"\"\nimport torch\nimport torch.nn.functional as F\n\n\ndef _window(channels, device, dtype):\n    coords = torch.arange(11, device=device, dtype=dtype) - 5\n    one = torch.exp(-(coords * coords) / (2 * 1.5 ** 2))\n    one = one / one.sum()\n    window = one[:, None] @ one[None, :]\n    return window.expand(channels, 1, 11, 11).contiguous()\n\n\ndef fused_ssim(img1, img2, padding=\"same\", train=True):\n    if img1.ndim != 4 or img2.ndim != 4 or img1.shape != img2.shape:\n        raise ValueError(\"fused_ssim expects equally shaped BCHW image tensors.\")\n    channels = img1.shape[1]\n    window = _window(channels, img1.device, img1.dtype)\n    pad = 5 if padding == \"same\" else 0\n    mu1 = F.conv2d(img1, window, padding=pad, groups=channels)\n    mu2 = F.conv2d(img2, window, padding=pad, groups=channels)\n    sigma1 = F.conv2d(img1 * img1, window, padding=pad, groups=channels) - mu1.square()\n    sigma2 = F.conv2d(img2 * img2, window, padding=pad, groups=channels) - mu2.square()\n    sigma12 = F.conv2d(img1 * img2, window, padding=pad, groups=channels) - mu1 * mu2\n    c1, c2 = 0.01 ** 2, 0.03 ** 2\n    numerator = (2 * mu1 * mu2 + c1) * (2 * sigma12 + c2)\n    denominator = (mu1.square() + mu2.square() + c1) * (sigma1 + sigma2 + c2)\n    return (numerator / denominator).mean()\n"
 ROOT.mkdir(parents=True, exist_ok=True)
 OUT.mkdir(parents=True, exist_ok=True)
 os.environ["TORCH_EXTENSIONS_DIR"] = str(ROOT / "torch-extensions")
@@ -84,7 +84,7 @@ def preflight_gsplat_trainer(gsplat_root: Path, ssim_shim_dir: Path) -> None:
         capture_output=True,
         text=True,
     )
-    help_text = (check.stdout or "") + "\\n" + (check.stderr or "")
+    help_text = (check.stdout or "") + "\n" + (check.stderr or "")
     if check.returncode:
         raise RuntimeError(
             "gsplat MCMC trainer help preflight failed: " + help_text[-1600:]
@@ -267,7 +267,7 @@ def install_gsplat():
                          capture_output=True, text=True)
     if gpu.returncode or not gpu.stdout.strip():
         raise RuntimeError("Kaggle assigned no GPU; stopping before CPU reconstruction/training.")
-    say("GPU:", gpu.stdout.strip().replace("\\n", " | "))
+    say("GPU:", gpu.stdout.strip().replace("\n", " | "))
     gsplat_root = ROOT / "gsplat"
     if not gsplat_root.exists():
         run(["git", "clone", "-q", "--depth", "1", "-b", "v1.5.3",
@@ -281,13 +281,18 @@ def install_gsplat():
     patch_gsplat_cuda_jit_cache(gsplat_root)
     say("gsplat bilateral-grid CLI compatibility patch applied.")
     packages = [
-        "ninja", "gsplat==1.5.3", "viser", "tyro", "torchmetrics[image]",\n        "tensorboard", "tensorly", "scikit-learn", "imageio[ffmpeg]",\n        "pyyaml", "matplotlib", "splines", "plyfile", "scikit-image",\n        "trimesh", "opencv-python-headless", "Pillow", "scipy", "pycolmap",\n        "fast-simplification", "tqdm", "typing_extensions"\n    ]
+        "ninja", "gsplat==1.5.3", "viser", "tyro", "torchmetrics[image]",
+        "tensorboard", "tensorly", "scikit-learn", "imageio[ffmpeg]",
+        "pyyaml", "matplotlib", "splines", "plyfile", "scikit-image",
+        "trimesh", "opencv-python-headless", "Pillow", "scipy", "pycolmap",
+        "fast-simplification", "tqdm", "typing_extensions"
+    ]
     pin = ROOT / "torch-pin.txt"
     torch_version = subprocess.run(
         [sys.executable, "-c", "import torch; print(torch.__version__)"],
         capture_output=True, text=True, check=True
     ).stdout.strip()
-    pin.write_text(f"torch=={torch_version}\\n", encoding="utf-8")
+    pin.write_text(f"torch=={torch_version}\n", encoding="utf-8")
     
     ssim_env = os.environ.copy()
     ssim_env["TORCH_CUDA_ARCH_LIST"] = "7.5"
@@ -351,7 +356,9 @@ def main():
     sfm_python = install_sfm_environment()
     sfm_out = ROOT / "sfm"
     run([sfm_python, HERE / "sfm_hloc.py", "--images", data / "images",
-         "--output", sfm_out, "--sequence-window", str(int(JOB_CFG.get("sequence_window", 18))),\n         "--retrieval", str(int(JOB_CFG.get("retrieval_count", 10)))],\n        log=ROOT / "sfm.log")
+         "--output", sfm_out, "--sequence-window", str(int(JOB_CFG.get("sequence_window", 18))),
+         "--retrieval", str(int(JOB_CFG.get("retrieval_count", 10)))],
+        log=ROOT / "sfm.log")
     model = sfm_out / "model"
     sparse = data / "sparse" / "0"
     sparse.mkdir(parents=True, exist_ok=True)
@@ -396,7 +403,8 @@ def main():
         "--eval-steps", str(steps),
         "--save-steps", str(steps),
         "--ply-steps", str(steps),
-        "--save-ply", "--disable-viewer", "--disable-video",\n        "--use-bilateral-grid",
+        "--save-ply", "--disable-viewer", "--disable-video",
+        "--use-bilateral-grid",
         "--strategy.cap-max", str(cap),
         "--strategy.refine-stop-iter", str(int(steps * 0.80))
     ]
@@ -408,7 +416,9 @@ def main():
         json.dumps({
             "image_size": prep["image_width"],
             "steps": steps,
-            "max_splats": cap,\n            "bilateral_grid": True,\n            "depth_loss": depth_loss_enabled
+            "max_splats": cap,
+            "bilateral_grid": True,
+            "depth_loss": depth_loss_enabled
         }),
         flush=True
     )
@@ -427,7 +437,12 @@ def main():
     metrics = json.loads(stats[-1].read_text(encoding="utf-8"))
     metrics.update({
         "quality_profile": "namma-video-parity",
-        "image_width": int(prep["image_width"]),\n        "image_height": int(prep["image_height"]),\n        "training_steps": steps,\n        "splat_cap": cap,\n        "bilateral_grid": True,\n        "depth_loss": depth_loss_enabled
+        "image_width": int(prep["image_width"]),
+        "image_height": int(prep["image_height"]),
+        "training_steps": steps,
+        "splat_cap": cap,
+        "bilateral_grid": True,
+        "depth_loss": depth_loss_enabled
     })
     (OUT / "full" / "metrics.json").write_text(json.dumps(metrics, indent=2), encoding="utf-8")
     shutil.copy2(data / "views_manifest.json", OUT / "views_manifest.json")
@@ -448,7 +463,21 @@ def main():
     tour_info = panorama_tour.build_plan(data, OUT, tour_dir, examples,
                                          float(JOB_CFG.get("camera_height_m", 2.2)))
     summary = {
-        "pipeline": "panorama_v1",\n        "job_id": JOB_CFG.get("job_id"),\n        "source_panoramas": prep["source_panoramas"],\n        "perspective_views": prep["perspective_views"],\n        "registered_views": sfm_rep["registered_views"],\n        "registered_fraction": sfm_rep["registered_fraction"],\n        "points3D": sfm_rep["points3D"],\n        "training_steps": steps,\n        "max_splats": cap,\n        "depth_loss_enabled": depth_loss_enabled,\n        "quality_profile": "namma-video-parity",\n        "validation_metrics": metrics,\n        "exported_ply": str(OUT / "full" / "model.ply"),\n        "tour": tour_info,\n        "elapsed_minutes": round((time.time() - T0) / 60, 1)
+        "pipeline": "panorama_v1",
+        "job_id": JOB_CFG.get("job_id"),
+        "source_panoramas": prep["source_panoramas"],
+        "perspective_views": prep["perspective_views"],
+        "registered_views": sfm_rep["registered_views"],
+        "registered_fraction": sfm_rep["registered_fraction"],
+        "points3D": sfm_rep["points3D"],
+        "training_steps": steps,
+        "max_splats": cap,
+        "depth_loss_enabled": depth_loss_enabled,
+        "quality_profile": "namma-video-parity",
+        "validation_metrics": metrics,
+        "exported_ply": str(OUT / "full" / "model.ply"),
+        "tour": tour_info,
+        "elapsed_minutes": round((time.time() - T0) / 60, 1)
     }
     (OUT / "panorama_summary.json").write_text(json.dumps(summary, indent=2), encoding="utf-8")
     say("PANORAMA JOB COMPLETE", json.dumps(summary), flush=True)
@@ -460,6 +489,9 @@ if __name__ == "__main__":
     except Exception as exc:
         say("PANORAMA JOB FAILED:", type(exc).__name__, str(exc))
         (OUT / "failure.json").write_text(json.dumps({
-            "pipeline": "panorama_v1",\n            "error_type": type(exc).__name__,\n            "error": str(exc),\n            "elapsed_minutes": round((time.time() - T0) / 60, 1)
+            "pipeline": "panorama_v1",
+            "error_type": type(exc).__name__,
+            "error": str(exc),
+            "elapsed_minutes": round((time.time() - T0) / 60, 1)
         }, indent=2), encoding="utf-8")
         raise

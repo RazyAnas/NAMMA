@@ -58,7 +58,7 @@ def run_sfm(images: Path, output: Path, sequence_window: int = 18,
         )
 
     pairs_path = output / "pairs.txt"
-    pairs_path.write_text("\\n".join(f"{a} {b}" for a, b in sorted(pairs)), encoding="utf-8")
+    pairs_path.write_text("\n".join(f"{a} {b}" for a, b in sorted(pairs)), encoding="utf-8")
     print(f"Matching {len(names)} perspective images with {len(pairs)} pairs", flush=True)
 
     features = extract_features.main(local_cfg, images, output)
@@ -93,7 +93,7 @@ def run_sfm(images: Path, output: Path, sequence_window: int = 18,
         mean_reproj = float(rec.compute_mean_reprojection_error())
     except Exception:
         mean_reproj = None
-    if registered < max(40, int(len(names) * min_registered_fraction))]:
+    if registered < max(40, int(len(names) * min_registered_fraction)):
         raise RuntimeError(
             f"SfM registered only {registered}/{len(names)} views ({fraction:.1%}); "
             "the panoramas may be too far apart, blurred, or visually repetitive."
