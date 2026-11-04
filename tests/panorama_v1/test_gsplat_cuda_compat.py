@@ -9,7 +9,7 @@ LEGACY_BACKEND = (
     "def clean(build_dir):\n"
     "    try:\n"
     "        if build_dir:\n"
-    "        shutil.rmtree(build_dir)\n"
+    "            shutil.rmtree(build_dir)\n"
     "    except OSError:\n"
     "        pass\n"
 )
