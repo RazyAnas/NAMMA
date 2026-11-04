@@ -36,5 +36,14 @@ jobs:
       - name: Compile panorama Python modules
         run: |
           python -m py_compile colab/real_scenes/panorama_v1/*.py
+      - name: Validate committed panorama job manifests
+        run: |
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          for path in sorted(Path('colab/real_scenes/panorama_v1/jobs').glob('*.json')):
+              json.loads(path.read_text(encoding='utf-8'))
+              print(f'VALID JSON: {path}')
+          PY
       - name: Run panorama-only unit tests
         run: pytest -q --confcutdir=tests/panorama_v1 tests/panorama_v1
