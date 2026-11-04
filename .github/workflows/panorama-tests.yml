@@ -10,11 +10,13 @@ on:
       - "colab/real_scenes/panorama_v1/**"
       - "tests/panorama_v1/**"
       - ".github/workflows/panorama-tests.yml"
+      - ".github/workflows/namma-panorama.yml"
   pull_request:
     paths:
       - "colab/real_scenes/panorama_v1/**"
       - "tests/panorama_v1/**"
       - ".github/workflows/panorama-tests.yml"
+      - ".github/workflows/namma-panorama.yml"
 
 permissions:
   contents: read
