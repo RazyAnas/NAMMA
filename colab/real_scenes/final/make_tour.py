@@ -586,7 +586,7 @@ def head(html, fmt, bud=4):
     # splats), Performance Mode off. Phone (owner, 31 Oct): Quality Performance, Performance Mode and gaming controls on.
     pre += ('try{if(localStorage.getItem("nammaQ")!=="3"){var m=/Mobi|Android|iPhone|iPad/.test(navigator.userAgent)||'
             '(navigator.maxTouchPoints>1&&/Macintosh/.test(navigator.userAgent));localStorage.setItem("quality",m?"performance":"high");'
-            'localStorage.setItem("performanceMode",m?"true":"false");if(m)localStorage.setItem("gamingControls","true");'
+            'localStorage.setItem("performanceMode",m?"true":"false");if(m){localStorage.setItem("gamingControls","true");if(!q.has("webgl"))q.set("webgl","1");}'
             'localStorage.setItem("controlsPanelOpen","false");localStorage.setItem("nammaQ","3");}}catch(e){}')   # one help card: ours
     # The viewer draws the room while it streams in (pieces popping in behind the loading bar); hide the 3D view until the
     # viewer reports it loaded (all detail in, with fullload), at most 2 min; dark meanwhile. Owner, 31 Oct: a clear loading
@@ -605,7 +605,7 @@ def head(html, fmt, bud=4):
              'var st=v&&v.state,q=new URLSearchParams(location.search);'
              'if(st&&st.hasCollisionOverlay&&q.get("showcollision")!=="0"&&!st.collisionOverlayEnabled)st.collisionOverlayEnabled=true;'
              'if(p)m.textContent=p[1]+"%";else if(s>90&&!(st&&st.loaded))m.textContent="Taking longer than usual. Check your connection and reload.";'
-             'if((st&&st.loaded&&(q.get("showcollision")==="0"||st.hasCollisionOverlay))||s>120){d.classList.add("namma-ready","namma-show");clearInterval(k);}},200);})();</script>')
+             'if((st&&st.loaded)||s>120){d.classList.add("namma-ready","namma-show");clearInterval(k);}},200);})();</script>')
     # Stable tour URLs can leave old assets in browser cache; version all changed files on each publish.
     cache = os.urandom(6).hex()
     html = re.sub(r'href="\./index\.css(?:\?[^"]*)?"', lambda _: f'href="./index.css?v={cache}"', html, count=1)
