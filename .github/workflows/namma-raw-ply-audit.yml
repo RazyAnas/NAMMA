@@ -21,7 +21,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 45
     env:
-      HF_TOKEN: \${{ secrets.HF_TOKEN || secrets.HUGGINGFACE_WRITE_TOKEN || secrets.HF_TOKEN_backup || secrets.HUGGINGFACE_WRITE_TOKEN_backup || secrets.HF_TOKEN_BACKUP || secrets.HUGGINGFACE_WRITE_TOKEN_BACKUP }}
+      HF_TOKEN: ${{ secrets.HF_TOKEN || secrets.HUGGINGFACE_WRITE_TOKEN || secrets.HF_TOKEN_backup || secrets.HUGGINGFACE_WRITE_TOKEN_backup || secrets.HF_TOKEN_BACKUP || secrets.HUGGINGFACE_WRITE_TOKEN_BACKUP }}
     steps:
       - name: Check out panorama feature branch
         uses: actions/checkout@v4
