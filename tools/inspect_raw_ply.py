@@ -242,7 +242,7 @@ def main():
         axes[0].set_ylabel("Count (log scale)")
     else:
         axes[0].text(0.1, 0.5, "Scale properties missing")
-    spread = [x["rms_spread"] for x in camera_audit["camera_centre_consistency"]["per_panorama"]]
+    spread = [x["rms_spread"] for x in camera_audit["per_panorama"]]
     if spread:
         axes[1].plot(range(len(spread)), spread, marker=".")
         axes[1].set_title("Within-panorama camera-centre RMS spread")
