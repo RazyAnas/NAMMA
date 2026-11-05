@@ -112,14 +112,21 @@ def main():
             np.asarray(vertex[k], dtype=np.float64)[finite] for k in scale_cols
         ])
         scales = np.exp(np.clip(raw, -30, 20))
+        anisotropy = np.max(scales, axis=1) / np.maximum(np.min(scales, axis=1), 1e-12)
+        max_axis_scale = np.max(scales, axis=1)
+        min_axis_scale = np.min(scales, axis=1)
         scale_summary = {
             "storage": "log-scale; exponentiated for statistics",
             "axis_percentiles": {f"axis_{i}": percentiles(scales[:, i]) for i in range(3)},
-            "anisotropy_ratio": percentiles(
-                np.max(scales, axis=1) / np.maximum(np.min(scales, axis=1), 1e-12)
-            ),
-            "fraction_max_axis_scale_over_0_1": float(np.mean(np.max(scales, axis=1) > 0.1)),
-            "fraction_max_axis_scale_over_0_5": float(np.mean(np.max(scales, axis=1) > 0.5)),
+            "max_axis_scale_percentiles": percentiles(max_axis_scale),
+            "min_axis_scale_percentiles": percentiles(min_axis_scale),
+            "anisotropy_ratio": percentiles(anisotropy),
+            "anisotropy_fraction_over_10": float(np.mean(anisotropy > 10)),
+            "anisotropy_fraction_over_100": float(np.mean(anisotropy > 100)),
+            "anisotropy_fraction_over_1000": float(np.mean(anisotropy > 1000)),
+            "anisotropy_fraction_over_100000": float(np.mean(anisotropy > 100000)),
+            "fraction_max_axis_scale_over_0_1": float(np.mean(max_axis_scale > 0.1)),
+            "fraction_max_axis_scale_over_0_5": float(np.mean(max_axis_scale > 0.5)),
         }
     else:
         scale_summary = {"missing_scale_columns": scale_cols}
@@ -132,7 +139,9 @@ def main():
         opacity_summary = {
             "missing_opacity": False,
             "sigmoid_percentiles": percentiles(opacity),
+            "fraction_below_0_01": float(np.mean(opacity < 0.01)),
             "fraction_below_0_05": float(np.mean(opacity < 0.05)),
+            "fraction_above_0_90": float(np.mean(opacity > 0.90)),
             "fraction_above_0_95": float(np.mean(opacity > 0.95)),
         }
 
@@ -165,6 +174,19 @@ def main():
     lo = np.percentile(xyz_finite, 1, axis=0)
     hi = np.percentile(xyz_finite, 99, axis=0)
     spans = hi - lo
+    coordinate_median = np.median(xyz_finite, axis=0)
+    radii = np.linalg.norm(xyz_finite - coordinate_median, axis=1)
+    in_robust_box = np.all((xyz_finite >= lo) & (xyz_finite <= hi), axis=1)
+    position_outliers = {
+        "coordinate_median": coordinate_median.tolist(),
+        "distance_from_coordinate_median_percentiles": percentiles(radii),
+        "fraction_outside_joint_p01_p99_box": float(np.mean(~in_robust_box)),
+        "fraction_radius_over_10_units": float(np.mean(radii > 10)),
+        "fraction_radius_over_50_units": float(np.mean(radii > 50)),
+        "fraction_radius_over_100_units": float(np.mean(radii > 100)),
+        "fraction_radius_over_1000_units": float(np.mean(radii > 1000)),
+        "note": "Distances use arbitrary SfM units, not metres."
+    }
     occupancy = {}
     for resolution in (16, 32, 64):
         scaled = np.floor((xyz_finite - lo) / np.maximum(spans, 1e-12) * resolution)
@@ -189,6 +211,7 @@ def main():
         "position_covariance_eigenvalues": eigenvalues.tolist(),
         "position_axis_variance_ratio": float(eigenvalues[-1] / max(eigenvalues[0], 1e-12)),
         "central_98_percent_extent_xyz": spans.tolist(),
+        "position_outliers": position_outliers,
         "spatial_occupancy": occupancy,
         "scale": scale_summary,
         "opacity": opacity_summary,
@@ -230,6 +253,37 @@ def main():
     fig.suptitle(f"NAMMA raw Gaussian PLY forensic views — {len(vertex):,} vertices")
     fig.tight_layout()
     fig.savefig(OUT / "raw_ply_spatial_views.png", dpi=160)
+    plt.close(fig)
+
+    # A second set of views clips only the most extreme 1% on each axis.
+    # This makes the main scene visible without hiding that full-range outliers exist.
+    zoom_mask = np.all((sample_xyz >= lo) & (sample_xyz <= hi), axis=1)
+    zoom_xyz = sample_xyz[zoom_mask]
+    zoom_colors = colors[sample_idx][zoom_mask] if colors is not None else "black"
+    zoom_sizes = sizes[zoom_mask] if isinstance(sizes, np.ndarray) else sizes
+    fig, axes = plt.subplots(1, 3, figsize=(18, 6))
+    zoom_projections = [
+        (0, 2, "Top view (p01–p99): X vs Z"),
+        (0, 1, "Front view (p01–p99): X vs Y"),
+        (2, 1, "Side view (p01–p99): Z vs Y"),
+    ]
+    for ax, (a, b, title) in zip(axes, zoom_projections):
+        ax.scatter(
+            zoom_xyz[:, a], zoom_xyz[:, b], c=zoom_colors,
+            s=zoom_sizes, alpha=0.55, linewidths=0, rasterized=True
+        )
+        ax.set_xlim(float(lo[a]), float(hi[a]))
+        ax.set_ylim(float(lo[b]), float(hi[b]))
+        ax.set_title(title)
+        ax.set_xlabel(("X", "Y", "Z")[a])
+        ax.set_ylabel(("X", "Y", "Z")[b])
+        ax.set_aspect("equal", adjustable="box")
+        ax.grid(True, alpha=0.2)
+    fig.suptitle(
+        f"NAMMA central Gaussian distribution — {len(zoom_xyz):,} sampled vertices in robust bounds"
+    )
+    fig.tight_layout()
+    fig.savefig(OUT / "raw_ply_spatial_zoomed.png", dpi=160)
     plt.close(fig)
 
     fig, axes = plt.subplots(1, 2, figsize=(14, 5))
