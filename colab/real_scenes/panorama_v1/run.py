@@ -425,7 +425,7 @@ def main():
     run(cmd, cwd=examples, env=train_env, log=train_log)
     ply_files = sorted(
         result.glob("ply/point_cloud_*.ply"),
-        key=lambda p: int(re.search(r"point_cloud_(\\d+)\\.ply$", p.name).group(1))
+        key=lambda p: int(re.search(r"point_cloud_(\d+)\.ply$", p.name).group(1))
     )
     if not ply_files:
         raise RuntimeError("gsplat completed without exporting a PLY point cloud.")
