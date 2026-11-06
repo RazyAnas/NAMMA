@@ -80,3 +80,9 @@ Findings
   3840×1920, 274,870 structure points; `colorized.ply` = structure + camera centres.
 - Smoke (10 panoramas): pycolmap.panorama registered 120/120 views, 0.39 px, within-panorama
   centre spread 0 (the old per-crop SfM had up to 9.4 units).
+
+## H7d (fill vs no fill, 20k steps): both crashed
+Both arms ran out of GPU memory at step 10k (no fill) and 15k (fill) inside gsplat `intersect_tile` (3.3 GB request):
+splats grew large on screen late in training. Priors were fine (480 views masked, 386/480 depth-aligned,
+scale log-std 0.19). Fix (trainer): packed rasterisation, max splat axis 10 m, skip a view on OOM, and a scale-free
+depth loss (the old inverse-depth L1 spiked on close road views). H8 relaunched with the fix, plus H9 densify on the MoGe arm.
