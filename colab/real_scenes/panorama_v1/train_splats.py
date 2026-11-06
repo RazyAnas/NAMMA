@@ -233,7 +233,7 @@ def train(scene_dir: Path, out: Path, steps: int = 7000, cap: int = 1_000_000,
             params["means"], F.normalize(params["quats"], dim=-1), torch.exp(params["scales"]),
             torch.sigmoid(params["opacities"]), colors, v["V"][None], v["Kt"][None],
             v["w"], v["h"], sh_degree=sh_deg, render_mode="RGB+ED" if depth_weight > 0 else "RGB",
-            packed=False, absgrad=False,
+            packed=True, absgrad=False,
         )
         return img[0], alpha[0], info
 
@@ -252,22 +252,7 @@ def train(scene_dir: Path, out: Path, steps: int = 7000, cap: int = 1_000_000,
         right = torch.cross(fwd, upv, dim=0)
         return torch.stack([d @ right, d @ upv, d @ fwd], -1)
 
-    log_every = max(1, steps // 20)
-    for step in range(steps):
-        if (time.time() - t0) / 60 > max_minutes:
-            print(f"[train] time budget reached at step {step}", flush=True)
-            break
-        i = np.random.randint(n_tr)
-        v = train_v[i]
-        # views live on the CPU as uint8 (16 GB T4: 400 float views on the GPU ran out of memory)
-        c = {
-            "rgb": to_tensor(v["rgb"]).float() / 255.0,
-            "mask": None if v["mask"] is None else to_tensor(v["mask"]).float(),
-            "sky": None if v["sky_mask"] is None else to_tensor(v["sky_mask"]).float(),
-            "weight": None if v["weight"] is None else to_tensor(v["weight"]).float(),
-            "depth": None if v.get("depth") is None else to_tensor(v["depth"]).float(),
-        }
-        sh_deg = min(sh_degree, step // 1000)
+    def step_loss(v, c, i, sh_deg, step):
         out_img, alpha, info = render(v, sh_deg)
         rgb = out_img[..., :3]
         if env is not None:
@@ -296,7 +281,7 @@ def train(scene_dir: Path, out: Path, steps: int = 7000, cap: int = 1_000_000,
                 valid = valid & (c["mask"] > 0)
             if valid.any():
                 dw = depth_weight * (0.01 ** (step / steps)) ** 0.5
-                loss = loss + dw * (torch.abs(1 / ed[valid].clamp_min(1e-3) - 1 / gd[valid].clamp_min(1e-3))).mean()
+                loss = loss + dw * (gd[valid] / ed[valid].clamp_min(1e-4) - 1).abs().clamp(max=1.0).mean()
         loss = loss + opacity_reg * torch.sigmoid(params["opacities"]).mean()
         loss = loss + scale_reg * torch.exp(params["scales"]).mean()
         if aniso_weight > 0:
@@ -304,8 +289,9 @@ def train(scene_dir: Path, out: Path, steps: int = 7000, cap: int = 1_000_000,
             ratio = sc.max(-1).values / sc.min(-1).values.clamp_min(1e-8)
             loss = loss + aniso_weight * torch.relu(ratio - aniso_max).mean()
         loss = loss + 1e-3 * (cc[i] ** 2).sum()
-        loss.backward()
+        return loss, info
 
+    def stepped(step, info, loss):
         lr_m = lrs["means"] * 0.01 ** (step / steps)
         for g in opts["means"].param_groups:
             g["lr"] = lr_m
@@ -318,10 +304,45 @@ def train(scene_dir: Path, out: Path, steps: int = 7000, cap: int = 1_000_000,
         strat.step_post_backward(params, opts, state, step, info, lr=lr_m)
         if grid is not None and step % carve_every == 0 and step > 0:
             carve_now()
+        with torch.no_grad():
+            params["scales"].clamp_(max=MAX_LOG_SCALE)
 
+    MAX_LOG_SCALE = math.log(0.5)  # normalised units (~10 m); stops screen-filling splats
+    oom_skips = 0
+    log_every = max(1, steps // 20)
+    for step in range(steps):
+        if (time.time() - t0) / 60 > max_minutes:
+            print(f"[train] time budget reached at step {step}", flush=True)
+            break
+        i = np.random.randint(n_tr)
+        v = train_v[i]
+        # views live on the CPU as uint8 (16 GB T4: 400 float views on the GPU ran out of memory)
+        c = {
+            "rgb": to_tensor(v["rgb"]).float() / 255.0,
+            "mask": None if v["mask"] is None else to_tensor(v["mask"]).float(),
+            "sky": None if v["sky_mask"] is None else to_tensor(v["sky_mask"]).float(),
+            "weight": None if v["weight"] is None else to_tensor(v["weight"]).float(),
+            "depth": None if v.get("depth") is None else to_tensor(v["depth"]).float(),
+        }
+        sh_deg = min(sh_degree, step // 1000)
+        try:
+            loss, info = step_loss(v, c, i, sh_deg, step)
+            loss.backward()
+        except torch.OutOfMemoryError:
+            # a few huge on-screen splats can blow the tile-intersection buffer; skip the view, keep training
+            for o in list(opts.values()) + [opt_cc] + ([opt_env] if env is not None else []):
+                o.zero_grad(set_to_none=True)
+            del c
+            torch.cuda.empty_cache()
+            oom_skips += 1
+            if oom_skips > 200:
+                print(f"[train] too many out-of-memory skips, stopping at step {step}", flush=True)
+                break
+            continue
+        stepped(step, info, loss)
         if step % log_every == 0 or step == steps - 1:
             print(f"[train] step {step}/{steps} loss {loss.item():.4f} splats {len(params['means'])} "
-                  f"{(time.time() - t0) / 60:.1f} min", flush=True)
+                  f"oom-skips {oom_skips} {(time.time() - t0) / 60:.1f} min", flush=True)
 
     carved = 0
     if grid is not None:
