@@ -5,6 +5,24 @@ held-out = whole panoramas (every 8th along the route, never the first or last),
 views of those panoramas. "Exposure-fair" fits one colour affine per held-out image first.
 Contact sheets (held-out photo/render pairs + novel off-path cameras) are checked by eye for every run.
 
+## Round 3 — first real streets (Panoramax, Paris, car-mounted 360, 40 panoramas at 10 m)
+
+| Test | Setup | PSNR | SSIM | LPIPS | Notes |
+|---|---|---:|---:|---:|---|
+| H7-plain | rig SfM (sequential), no priors | 18.93 | 0.650 | 0.627 | SfM split into 4 models; 24/40 panoramas used |
+| H7-priors | + MoGe-2, sky, masks, carving | 22.33 | 0.690 | 0.455 | +3.4 dB; carving removed 11,064 splats, 0 % left in empty space; bonnet baked in |
+| H7b | spatial matcher | — | — | — | failed: no GPS reached COLMAP (needs lat+lon+alt; OpenCV re-save dropped EXIF) |
+
+Fixes verified before the next run:
+- COLMAP 4.2.1 stores a GPS pose prior only with latitude, longitude and altitude (checked locally: 3/3).
+- Vehicle mask = static pixels ∪ Grounding DINO + SAM 2 vote on a 140° downward view of 12 panoramas,
+  instances >70 % of the view ignored. Overlay on a real panorama: bonnet, roof and no-data band
+  masked (30 %), road, pavement and pedestrians kept (`vehicle_mask_overlay.jpg`).
+- GGPS H3-full (carving on): 25.19 dB / 0.876 / 0.162 vs 25.31 without carving: carving costs nothing
+  measurable and keeps proven-empty space at 0 % floaters.
+- H4/H5 failed loading the LCM-LoRA (Kaggle torchao 0.10 vs peft); torchao removed, LCM falls back to
+  normal sampling, and optional rounds no longer abort a run.
+
 ## Round 2 — priors (GGPS FTP, 40 panoramas, 7,000 steps, rig-aware SfM poses)
 
 | Test | Priors | PSNR | exp.-fair | SSIM | LPIPS | needles | aniso p50 | Off-path by eye |
