@@ -71,7 +71,7 @@ def offpath_cameras(cameras, centre, scale, up, count: int = 10):
             cams.append(("mid-back", look_at(mid, -fwd, up)))
         if j % 2 == 0:
             # where the capture vehicle stood: steeply down at the panorama position
-            cams.append(("car-spot-down", look_at(a + up * 0.05 * spacing, rotate_about(fwd, side, -65), up)))
+            cams.append(("car-spot-down", look_at(a + up * 0.05 * spacing, rotate_about(fwd, side, 65), up)))
     return cams
 
 

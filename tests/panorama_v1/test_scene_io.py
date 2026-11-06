@@ -71,3 +71,31 @@ def test_world_up_from_symmetric_rig():
 def test_pano_of_name():
     assert scene_io.pano_of_name("pano_camera3/0012-0012.jpg") == "0012-0012"
     assert scene_io.pano_of_name("p00012_v03.jpg") == "p00012"
+
+
+def test_offpath_down_views_look_down():
+    import offpath
+
+    up = np.array([0.0, 1.0, 0.0])
+    fwd = np.array([0.0, 0.0, 1.0])
+    side = np.cross(up, fwd)
+    down = offpath.rotate_about(fwd, side, 65)
+    assert down @ up < -0.8
+    V = offpath.look_at(np.zeros(3), down, up)
+    assert (V[:3, :3].T @ np.array([0, 0, 1.0])) @ up < -0.8   # camera z (forward) points down
+
+
+def test_fill_ground_cameras_look_down():
+    import fill
+
+    cams = []
+    for i in range(3):
+        T = np.eye(4)
+        T[:3, 3] = [-float(i) * 10, 0, 0]  # centres along +x
+        cams.append({"pano": f"p{i}", "w2c": T})
+    out, _ = fill.fill_cameras(cams, np.zeros(3), 0.1, np.array([0, -1.0, 0]), max_views=500)
+    grounds = [V for label, V in out if label.startswith("ground")]
+    assert grounds
+    for V in grounds:
+        fwd_world = V[:3, :3].T @ np.array([0, 0, 1.0])
+        assert fwd_world @ np.array([0, -1.0, 0]) < -0.5   # below the horizon (up = -y here)

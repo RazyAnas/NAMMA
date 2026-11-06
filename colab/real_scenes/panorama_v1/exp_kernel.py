@@ -314,13 +314,13 @@ def scene_pano_sfm(exp, inputs, sdir: Path):
     import pycolmap.panorama as P
     import scene_io
 
-    key = f"{inputs['pano_dir'].name}-{exp.get('matcher', 'sequential')}-{exp.get('mapper', 'incremental')}"
+    key = f"{inputs['pano_dir'].name}-{exp.get('matcher', 'sequential')}-{exp.get('mapper', 'global')}"
     shared = WORK / "panosfm" / key
     with _SFM_LOCK:
         if not (shared / ".ok").exists():
             opts = P.PanoramaReconstructionOptions(
                 matcher=P.Matcher(exp.get("matcher", "sequential")),
-                mapper=P.Mapper(exp.get("mapper", "incremental")),
+                mapper=P.Mapper(exp.get("mapper", "global")),
                 use_gpu=False, show_progress=False)
             shared.mkdir(parents=True, exist_ok=True)
             P.reconstruct(inputs["pano_dir"], shared, opts)
@@ -424,6 +424,7 @@ def run_experiment(exp, inputs):
              "within_pano_centre_spread": scene_io.within_pano_spread(cams)}, indent=2))
         env = os.environ.copy()
         env["CUDA_VISIBLE_DEVICES"] = str(exp.get("gpu", 0))
+        env["PYTORCH_CUDA_ALLOC_CONF"] = "expandable_segments:True"
         env["PYTHONPATH"] = str(HERE) + os.pathsep + env.get("PYTHONPATH", "")
         tr = exp.get("train", {})
         args = [sys.executable, HERE / "train_splats.py", "--scene", sdir, "--out", sdir / "model",

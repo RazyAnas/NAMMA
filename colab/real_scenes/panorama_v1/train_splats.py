@@ -252,7 +252,6 @@ def train(scene_dir: Path, out: Path, steps: int = 7000, cap: int = 1_000_000,
         right = torch.cross(fwd, upv, dim=0)
         return torch.stack([d @ right, d @ upv, d @ fwd], -1)
 
-    cache = {}
     log_every = max(1, steps // 20)
     for step in range(steps):
         if (time.time() - t0) / 60 > max_minutes:
@@ -260,17 +259,14 @@ def train(scene_dir: Path, out: Path, steps: int = 7000, cap: int = 1_000_000,
             break
         i = np.random.randint(n_tr)
         v = train_v[i]
-        if i not in cache:
-            cache[i] = {
-                "rgb": to_tensor(v["rgb"]).float() / 255.0,
-                "mask": None if v["mask"] is None else to_tensor(v["mask"]).float(),
-                "sky": None if v["sky_mask"] is None else to_tensor(v["sky_mask"]).float(),
-                "weight": None if v["weight"] is None else to_tensor(v["weight"]).float(),
-                "depth": None if v.get("depth") is None else to_tensor(v["depth"]).float(),
-            }
-            if len(cache) > 400:
-                cache.pop(next(iter(cache)))
-        c = cache[i]
+        # views live on the CPU as uint8 (16 GB T4: 400 float views on the GPU ran out of memory)
+        c = {
+            "rgb": to_tensor(v["rgb"]).float() / 255.0,
+            "mask": None if v["mask"] is None else to_tensor(v["mask"]).float(),
+            "sky": None if v["sky_mask"] is None else to_tensor(v["sky_mask"]).float(),
+            "weight": None if v["weight"] is None else to_tensor(v["weight"]).float(),
+            "depth": None if v.get("depth") is None else to_tensor(v["depth"]).float(),
+        }
         sh_deg = min(sh_degree, step // 1000)
         out_img, alpha, info = render(v, sh_deg)
         rgb = out_img[..., :3]
@@ -345,6 +341,12 @@ def train(scene_dir: Path, out: Path, steps: int = 7000, cap: int = 1_000_000,
                     "minutes": round((time.time() - t0) / 60, 1),
                     "within_pano_centre_spread": scene_io.within_pano_spread(cameras)})
     (out / "metrics.json").write_text(json.dumps(metrics, indent=2), encoding="utf-8")
+    if env is not None:
+        with torch.no_grad():
+            He = env.shape[2]
+            lat = (torch.arange(He, device=device) + 0.5) / He * 180 - 90   # row 0 = straight down
+            for pole_rows, ring in ((lat > 78, int(((78 + 90) / 180) * He) - 1), (lat < -78, int(((-78 + 90) / 180) * He))):
+                env[0, :, pole_rows, :] = env[0, :, ring:ring + 1, :].mean(-1, keepdim=True)
     torch.save({"params": {k: p.detach().cpu() for k, p in params.items()},
                 "centre": centre, "scale": scale, "up": up_world,
                 "env": None if env is None else torch.sigmoid(env).detach().cpu(),

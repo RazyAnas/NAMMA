@@ -15,6 +15,7 @@ def run_priors(sdir: Path, pri: dict, log):
 
     cams, pts, meta = scene_io.read_scene(sdir)
     refs = dict(np.load(sdir / "refs.npz")) if (sdir / "refs.npz").is_file() else {}
+    run_masks(sdir, cams, meta, pri, log)  # masks first: depth must never see the blanked vehicle
     if pri.get("depth"):
         import depth_memory
 
@@ -25,6 +26,17 @@ def run_priors(sdir: Path, pri: dict, log):
             fused = np.load(sdir / "memory" / "fused_points.npy")
             if len(fused):
                 pts = np.concatenate([pts, fused])
+    if not pri.get("sky_mask", pri.get("depth")):
+        for c in cams:
+            c.pop("sky_mask", None)
+    scene_io.write_scene(sdir, cams, pts, meta)
+
+
+def run_masks(sdir, cams, meta, pri, log):
+    import numpy as np
+
+    import scene_io
+
     if pri.get("masks"):
         import masks as masks_mod
 
@@ -40,10 +52,6 @@ def run_priors(sdir: Path, pri: dict, log):
                                     vehicle_erp=vehicle, rotations=rots)
         meta["masks"] = rep
         log("[priors] masks", json.dumps(rep))
-    if not pri.get("sky_mask", pri.get("depth")):
-        for c in cams:
-            c.pop("sky_mask", None)
-    scene_io.write_scene(sdir, cams, pts, meta)
 
 
 def main():

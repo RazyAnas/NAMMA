@@ -53,7 +53,7 @@ def fill_cameras(cameras, centre, scale, up, max_views: int = 160, seed: int = 0
         # where the capture car/bike stood: look straight down and steeply down
         for tag, eye in (("pano", a), ("mid", (a + b) / 2)):
             for pitch in (-90, -55):
-                d = offpath.rotate_about(fwd, side, pitch) if pitch != -90 else -up + 1e-3 * fwd
+                d = offpath.rotate_about(fwd, side, -pitch) if pitch != -90 else -up + 1e-3 * fwd  # +a = down
                 cams.append((f"ground{i:03d}_{tag}_p{-pitch}", offpath.look_at(eye, d, fwd if pitch == -90 else up)))
         for lat in (-0.5, 0.0, 0.5):
             eye = (a + b) / 2 + side * lat * spacing
@@ -86,15 +86,15 @@ def unseen_ray_mask(grid, V, K, w, h, up, device, max_t: float = 3.0, step: floa
     o = -(Vt[:3, :3].T @ Vt[:3, 3])
     hit = torch.zeros(len(d), dtype=torch.bool, device=device)
     ts = torch.arange(1, int(max_t / step), device=device, dtype=torch.float32) * step
-    for c0 in range(0, len(d), 65536):
-        dd = d[c0:c0 + 65536]
+    for c0 in range(0, len(d), 4096):
+        dd = d[c0:c0 + 4096]
         pts = o + dd[:, None, :] * ts[None, :, None]
         ijk, inside = grid._index(pts.reshape(-1, 3))
         ijk = torch.minimum(ijk.clamp_min(0), torch.tensor(grid.dims - 1, device=device))
         e = grid.empty[ijk[:, 0], ijk[:, 1], ijk[:, 2]]
         s = grid.surface[ijk[:, 0], ijk[:, 1], ijk[:, 2]]
         unknown = (e == 0) & (s == 0) & inside
-        hit[c0:c0 + 65536] = unknown.reshape(len(dd), -1).any(-1)
+        hit[c0:c0 + 4096] = unknown.reshape(len(dd), -1).any(-1)
     return hit.reshape(h, w)
 
 

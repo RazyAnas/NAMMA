@@ -253,8 +253,13 @@ def build_memory(cameras: list[dict], ref_points_by_pano: dict[str, np.ndarray],
         K[:2] *= s
         hfov = float(np.degrees(2 * np.arctan(rgb.shape[1] / (2 * K[0, 0]))))
         depth, valid = moge_view_depth(model, rgb, hfov, device)
+        if cam.get("mask") and Path(cam["mask"]).is_file():
+            keep = np.asarray(Image.open(cam["mask"]).convert("L").resize((depth.shape[1], depth.shape[0]),
+                                                                           Image.NEAREST)) > 127
+            depth[~keep] = 0.0  # vehicle / moving objects: no geometry from these pixels
         ref = ref_points_by_pano.get(cam["pano"])
         scale, inl, n = (None, 0.0, 0) if ref is None else align_view(depth, K, cam["w2c"], ref)
+        # (align_view ignores zero-depth pixels, so masked areas do not bias the scale)
         if scale is None or inl < 0.3:
             failed += 1
             depth = np.zeros_like(depth)
