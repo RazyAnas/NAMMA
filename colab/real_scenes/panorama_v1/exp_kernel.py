@@ -52,7 +52,8 @@ def install_env():
     if marker.exists():
         return
     WORK.mkdir(parents=True, exist_ok=True)
-    pkgs = ["gsplat==1.5.3", "pycolmap==4.2.1", "plyfile", "torchmetrics[image]", "ninja", "huggingface_hub"]
+    pkgs = ["gsplat==1.5.3", "pycolmap==4.2.1", "plyfile", "torchmetrics[image]", "ninja", "huggingface_hub",
+            "trimesh", "scikit-image", "fast-simplification"]
     sh([sys.executable, "-m", "pip", "install", "-q", *pkgs])
     if os.environ.get("NAMMA_NEED_FILL"):
         sh([sys.executable, "-m", "pip", "install", "-q", "diffusers>=0.33", "accelerate", "peft", "opencv-python-headless"])
@@ -354,45 +355,26 @@ def run_experiment(exp, inputs):
             raise ValueError(exp["poses"])
         meta["scene_minutes"] = round((time.time() - t) / 60, 1)
         pri = exp.get("priors", {})
-        dev = "cuda:0"
-        if pri.get("depth"):
-            import depth_memory
-            import torch
+        if pri.get("masks") and pri.get("vehicle", True) and exp["views"] == "rig" and inputs.get("vehicle_erp") is not None:
+            import numpy as np
 
-            torch.cuda.set_device(int(exp.get("gpu", 0)))
-            rep_d = depth_memory.build_memory(cams, refs, sdir / "memory", device=f"cuda:{int(exp.get('gpu', 0))}",
-                                              log=lambda *a: say(name, *a))
-            meta["depth_memory"] = rep_d
-            say(name, "depth memory", json.dumps(rep_d))
-            if pri.get("dense_init", True):
-                import numpy as np
+            np.save(sdir / "vehicle_erp.npy", inputs["vehicle_erp"])
+        if pri.get("depth") or pri.get("masks"):
+            # GPU priors in their own process (CUDA lazy init is not thread-safe across experiments)
+            import numpy as np
 
-                fused = np.load(sdir / "memory" / "fused_points.npy")
-                pts = np.concatenate([pts, fused]) if len(fused) else pts
-        if pri.get("masks"):
-            import masks as masks_mod
-
-            up = scene_io.world_up_from_cameras(cams)
-            vehicle = None
-            rots = None
-            if pri.get("vehicle", True) and exp["views"] == "rig":
-                import pycolmap.panorama as P
+            sdir.mkdir(parents=True, exist_ok=True)
+            np.savez_compressed(sdir / "refs.npz", **{k: v for k, v in refs.items()})
+            scene_io.write_scene(sdir, cams, pts, meta)
+            penv = os.environ.copy()
+            penv["CUDA_VISIBLE_DEVICES"] = str(exp.get("gpu", 0))
+            sh([sys.executable, HERE / "stage.py", "priors", "--scene", sdir, "--model", sdir, "--out", sdir,
+                "--priors", json.dumps({**pri, "views": exp["views"]})], env=penv, log=log)
+            cams, pts, meta = scene_io.read_scene(sdir)
+            if (sdir / "vehicle_erp.npy").is_file():
                 from PIL import Image
 
-                vehicle = inputs.get("vehicle_erp")
-                if vehicle is None:
-                    vehicle = masks_mod.static_vehicle_mask(inputs["pano_dir"])
-                rots = P.get_virtual_rotations(RIG["num_steps_yaw"], RIG["pitches_deg"])
-                Image.fromarray((vehicle * 255).astype("uint8")).save(out / "vehicle_mask_erp.png")
-                say(name, "vehicle mask covers", round(1 - float(vehicle.mean()), 4), "of the panorama")
-            rep_m = masks_mod.build_masks(cams, sdir / "masks_dyn", up, device=f"cuda:{int(exp.get('gpu', 0))}",
-                                          dynamic=pri.get("dynamic", True), log=lambda *a: say(name, *a),
-                                          nadir_deg=float(pri.get("nadir_deg", 89.0)),
-                                          vehicle_erp=vehicle, rotations=rots)
-            meta["masks"] = rep_m
-        if not pri.get("sky_mask", pri.get("depth")):
-            for c in cams:
-                c.pop("sky_mask", None)
+                Image.fromarray((np.load(sdir / "vehicle_erp.npy") * 255).astype("uint8")).save(out / "vehicle_mask_erp.png")
         scene_io.write_scene(sdir, cams, pts, meta)
         (out / "scene_meta.json").write_text(json.dumps(
             {**meta, "views": len(cams), "init_points": int(len(pts)),
@@ -451,6 +433,12 @@ def run_experiment(exp, inputs):
             shutil.copy2(model_dir / "carve.pt", out / "carve.pt")
         if exp.get("keep_scene", False):
             shutil.copy2(scene_now / "scene.json", out / "scene.json")
+        if exp.get("export"):
+            args_e = [sys.executable, HERE / "stage.py", "export", "--scene", scene_now, "--model", model_dir,
+                      "--out", out / "game", "--pano-dir", inputs["pano_dir"]]
+            if (OUT / "route_manifest.json").is_file():
+                args_e += ["--manifest", OUT / "route_manifest.json"]
+            sh(args_e, env=env, log=log)
         status = {"name": name, "status": "ok"}
     except Exception as exc:
         status = {"name": name, "status": "failed", "error": f"{type(exc).__name__}: {exc}"[-4000:]}
