@@ -30,6 +30,8 @@ import offpath
 import scene_io
 
 PROMPT = "photo of the same street, buildings, pavement, road surface, trees, natural daylight, realistic"
+GROUND_PROMPT = ("top-down photo of the same road surface, asphalt, road markings continuing, pavement edge, "
+                 "natural daylight, photorealistic, seamless")
 NEG = ("people, person, car, vehicle, text, watermark, logo, frame, blurry, low quality, cartoon, painting, "
        "distorted, fisheye, duplicate")
 
@@ -48,6 +50,11 @@ def fill_cameras(cameras, centre, scale, up, max_views: int = 160, seed: int = 0
             continue
         fwd /= np.linalg.norm(fwd)
         side = np.cross(up, fwd)
+        # where the capture car/bike stood: look straight down and steeply down
+        for tag, eye in (("pano", a), ("mid", (a + b) / 2)):
+            for pitch in (-90, -55):
+                d = offpath.rotate_about(fwd, side, pitch) if pitch != -90 else -up + 1e-3 * fwd
+                cams.append((f"ground{i:03d}_{tag}_p{-pitch}", offpath.look_at(eye, d, fwd if pitch == -90 else up)))
         for lat in (-0.5, 0.0, 0.5):
             eye = (a + b) / 2 + side * lat * spacing
             for yaw in (0, 90, 180, 270):
@@ -56,8 +63,12 @@ def fill_cameras(cameras, centre, scale, up, max_views: int = 160, seed: int = 0
                     dd = offpath.rotate_about(d, np.cross(up, d), -pitch) if pitch else d
                     cams.append((f"seg{i:03d}_lat{lat:+.1f}_yaw{yaw}_p{pitch}", offpath.look_at(eye, dd, up)))
     rng = np.random.default_rng(seed)
-    if len(cams) > max_views:
-        cams = [cams[k] for k in sorted(rng.choice(len(cams), max_views, replace=False))]
+    ground = [c for c in cams if c[0].startswith("ground")]
+    other = [c for c in cams if not c[0].startswith("ground")]
+    budget = max(0, max_views - len(ground))
+    if len(other) > budget:
+        other = [other[k] for k in sorted(rng.choice(len(other), budget, replace=False))]
+    cams = ground + other  # every ground view is kept: the vehicle footprint must always be filled
     return cams, spacing
 
 
@@ -111,7 +122,7 @@ class Painter:
         pipe.set_progress_bar_config(disable=True)
         self.pipe = pipe
 
-    def __call__(self, rgb: np.ndarray, hole: np.ndarray, seed: int) -> np.ndarray:
+    def __call__(self, rgb: np.ndarray, hole: np.ndarray, seed: int, prompt: str = PROMPT) -> np.ndarray:
         import cv2
         import torch
         from PIL import Image
@@ -124,7 +135,7 @@ class Painter:
         pre = cv2.resize(cv2.inpaint(sm, hm, 5, cv2.INPAINT_TELEA), (W, H), interpolation=cv2.INTER_LINEAR)
         src = np.where(hole[..., None], pre, rgb).astype(np.uint8)
         with torch.no_grad():
-            out = self.pipe(prompt=PROMPT, negative_prompt=NEG,
+            out = self.pipe(prompt=prompt, negative_prompt=NEG,
                             image=Image.fromarray(src).resize((w8, h8), Image.LANCZOS),
                             mask_image=Image.fromarray(hole.astype(np.uint8) * 255).resize((w8, h8), Image.NEAREST),
                             width=w8, height=h8, num_inference_steps=8, guidance_scale=1.5, strength=1.0,
@@ -183,10 +194,10 @@ def run_fill(scene_dir: Path, model_dir: Path, out_dir: Path, device: str = "cud
         if frac < min_hole:
             stats["skipped_small"] += 1
             continue
-        if frac > max_hole:
+        if frac > (0.6 if label.startswith("ground") else max_hole):
             stats["skipped_big"] += 1
             continue
-        painted = painter(rgb, hole, seed=j)
+        painted = painter(rgb, hole, seed=j, prompt=GROUND_PROMPT if label.startswith("ground") else PROMPT)
         # depth for the painted pixels: MoGe on the painted view, scaled to the rendered depth where solid
         md, valid = depth_memory.moge_view_depth(moge, painted, 90.0, device)
         solid = (alpha > 0.9) & (depth > 0) & valid & ~hole

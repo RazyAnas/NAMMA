@@ -117,6 +117,48 @@ def ggps_inputs(cfg) -> dict:
     return {"pano_dir": pano_dir, "gt_poses": gt, "gt_ply": ply, "gt_refs": gt_refs}
 
 
+def remove_capture_vehicle(inputs: dict, enabled: bool = True) -> dict:
+    """Blank the capture car/bike in every panorama before SfM and training.
+
+    The vehicle never changes along the route (masks.static_vehicle_mask). Its
+    pixels are replaced by a smooth, feature-free fill so SfM cannot match the
+    bonnet between frames; training ignores those pixels via the same mask,
+    so the road under the vehicle is rebuilt from neighbouring panoramas and,
+    where none saw it, by the hole-only generative fill.
+    """
+    import cv2
+    import numpy as np
+    import masks as masks_mod
+    from PIL import Image
+
+    if not enabled:
+        return inputs
+    src = inputs["pano_dir"]
+    keep = masks_mod.static_vehicle_mask(src)
+    frac = 1 - float(keep.mean())
+    inputs["vehicle_erp"] = keep
+    Image.fromarray((keep * 255).astype("uint8")).save(OUT / "vehicle_mask_erp.png")
+    say(f"capture vehicle covers {frac:.3%} of each panorama")
+    if frac < 0.002:
+        return inputs
+    dst = src.parent / (src.name + "-novehicle")
+    if not (dst / ".ok").exists():
+        dst.mkdir(parents=True, exist_ok=True)
+        for p in sorted(src.glob("*.jpg")):
+            img = cv2.imread(str(p))
+            m = cv2.resize((~keep).astype("uint8"), (img.shape[1], img.shape[0]), interpolation=cv2.INTER_NEAREST)
+            m = cv2.dilate(m, np.ones((15, 15), np.uint8))
+            small = cv2.resize(img, (img.shape[1] // 8, img.shape[0] // 8), interpolation=cv2.INTER_AREA)
+            ms = cv2.resize(m, (small.shape[1], small.shape[0]), interpolation=cv2.INTER_NEAREST)
+            fill = cv2.resize(cv2.inpaint(small, ms, 7, cv2.INPAINT_TELEA), (img.shape[1], img.shape[0]),
+                              interpolation=cv2.INTER_LINEAR)
+            fill = cv2.GaussianBlur(fill, (31, 31), 0)  # featureless: nothing for SIFT to match
+            cv2.imwrite(str(dst / p.name), np.where(m[..., None] > 0, fill, img), [cv2.IMWRITE_JPEG_QUALITY, 95])
+        (dst / ".ok").touch()
+    inputs["pano_dir"] = dst
+    return inputs
+
+
 def panoramax_inputs(cfg) -> dict:
     """Street-level 360 route from Panoramax (open data, no key), resized to pano_width."""
     from PIL import Image
@@ -337,7 +379,9 @@ def run_experiment(exp, inputs):
                 import pycolmap.panorama as P
                 from PIL import Image
 
-                vehicle = masks_mod.static_vehicle_mask(inputs["pano_dir"])
+                vehicle = inputs.get("vehicle_erp")
+                if vehicle is None:
+                    vehicle = masks_mod.static_vehicle_mask(inputs["pano_dir"])
                 rots = P.get_virtual_rotations(RIG["num_steps_yaw"], RIG["pitches_deg"])
                 Image.fromarray((vehicle * 255).astype("uint8")).save(out / "vehicle_mask_erp.png")
                 say(name, "vehicle mask covers", round(1 - float(vehicle.mean()), 4), "of the panorama")
@@ -429,6 +473,7 @@ def main():
     install_env()
     data = cfg.get("data", {})
     inputs = ggps_inputs(data) if data.get("source", "ggps") == "ggps" else panoramax_inputs(data)
+    inputs = remove_capture_vehicle(inputs, bool(data.get("remove_vehicle", True)))
     from concurrent.futures import ThreadPoolExecutor
 
     with ThreadPoolExecutor(max_workers=2) as pool:
