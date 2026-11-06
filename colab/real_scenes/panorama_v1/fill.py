@@ -116,9 +116,14 @@ class Painter:
                 print("painter", mid, "failed:", repr(exc)[:200], flush=True)
         if pipe is None:
             raise RuntimeError("no SDXL inpainting model could be loaded")
-        pipe.load_lora_weights("latent-consistency/lcm-lora-sdxl")
-        pipe.fuse_lora()
-        pipe.scheduler = LCMScheduler.from_config(pipe.scheduler.config)
+        try:  # LCM-LoRA: 8 steps instead of 25
+            pipe.load_lora_weights("latent-consistency/lcm-lora-sdxl")
+            pipe.fuse_lora()
+            pipe.scheduler = LCMScheduler.from_config(pipe.scheduler.config)
+            self.steps, self.guidance = 8, 1.5
+        except Exception as exc:  # noqa: BLE001 - slower but still correct
+            print("LCM-LoRA unavailable, normal sampling:", repr(exc)[:200], flush=True)
+            self.steps, self.guidance = 25, 6.0
         pipe.set_progress_bar_config(disable=True)
         self.pipe = pipe
 
@@ -138,7 +143,7 @@ class Painter:
             out = self.pipe(prompt=prompt, negative_prompt=NEG,
                             image=Image.fromarray(src).resize((w8, h8), Image.LANCZOS),
                             mask_image=Image.fromarray(hole.astype(np.uint8) * 255).resize((w8, h8), Image.NEAREST),
-                            width=w8, height=h8, num_inference_steps=8, guidance_scale=1.5, strength=1.0,
+                            width=w8, height=h8, num_inference_steps=self.steps, guidance_scale=self.guidance, strength=1.0,
                             generator=torch.Generator(self.device).manual_seed(int(seed))).images[0]
         out = np.asarray(out.convert("RGB").resize((W, H), Image.LANCZOS))
         if out.std() < 2:

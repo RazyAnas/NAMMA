@@ -56,6 +56,8 @@ def install_env():
             "trimesh", "scikit-image", "fast-simplification", "piexif"]
     sh([sys.executable, "-m", "pip", "install", "-q", *pkgs])
     if os.environ.get("NAMMA_NEED_FILL"):
+        # Kaggle's torchao 0.10 makes peft refuse every LoRA (video pipeline World job hit the same)
+        sh([sys.executable, "-m", "pip", "uninstall", "-y", "-q", "torchao"], check=False)
         sh([sys.executable, "-m", "pip", "install", "-q", "diffusers>=0.33", "accelerate", "peft", "opencv-python-headless"])
     if os.environ.get("NAMMA_NEED_MOGE"):
         sh([sys.executable, "-m", "pip", "install", "-q", "--no-deps", "git+https://github.com/microsoft/MoGe.git@0744441"])
@@ -441,30 +443,37 @@ def run_experiment(exp, inputs):
         # optional refinement rounds: hole-only generative fill, then masked Fixer
         rounds = [("fill", r) for r in range(int(exp.get("fill", {}).get("rounds", 0)))]
         rounds += [("fixer", r) for r in range(int(exp.get("fixer", {}).get("rounds", 0)))]
+        round_errors = {}
         for kind, r in rounds:
-            opts = exp.get(kind, {})
-            rdir = sdir / f"{kind}{r}"
-            sh([sys.executable, HERE / "stage.py", kind, "--scene", scene_now, "--model", model_dir,
-                "--out", rdir, "--max-views", opts.get("max_views", 160)], env=env, log=log)
-            for rep_name in ("fill_report.json", "fixer_report.json"):
-                if (rdir / rep_name).is_file():
-                    shutil.copy2(rdir / rep_name, out / f"{kind}{r}_{rep_name}")
-            if (rdir / "sheet").is_dir():
-                shutil.copytree(rdir / "sheet", out / f"{kind}{r}_sheet", dirs_exist_ok=True)
-            new_model = sdir / f"model_{kind}{r}"
-            ft = [sys.executable, HERE / "train_splats.py", "--scene", rdir / "scene", "--out", new_model,
-                  "--steps", opts.get("steps", 3000), "--cap", tr.get("cap", 1_000_000),
-                  "--long-side", tr.get("long_side", 960), "--sh-degree", tr.get("sh_degree", 1),
-                  "--depth-weight", tr.get("depth_weight", 0.0), "--aniso-weight", tr.get("aniso_weight", 0.0),
-                  "--init-ckpt", model_dir / "splats.pt", "--lr-scale", opts.get("lr_scale", 0.5),
-                  "--max-minutes", opts.get("max_minutes", 90)]
-            if tr.get("sky"):
-                ft.append("--sky")
-            if tr.get("carve"):
-                ft.append("--carve")
-            sh(ft, env=env, log=log)
-            model_dir, scene_now = new_model, rdir / "scene"
-            shutil.copy2(model_dir / "metrics.json", out / f"metrics_{kind}{r}.json")
+            try:
+                opts = exp.get(kind, {})
+                rdir = sdir / f"{kind}{r}"
+                sh([sys.executable, HERE / "stage.py", kind, "--scene", scene_now, "--model", model_dir,
+                    "--out", rdir, "--max-views", opts.get("max_views", 160)], env=env, log=log)
+                for rep_name in ("fill_report.json", "fixer_report.json"):
+                    if (rdir / rep_name).is_file():
+                        shutil.copy2(rdir / rep_name, out / f"{kind}{r}_{rep_name}")
+                if (rdir / "sheet").is_dir():
+                    shutil.copytree(rdir / "sheet", out / f"{kind}{r}_sheet", dirs_exist_ok=True)
+                new_model = sdir / f"model_{kind}{r}"
+                ft = [sys.executable, HERE / "train_splats.py", "--scene", rdir / "scene", "--out", new_model,
+                      "--steps", opts.get("steps", 3000), "--cap", tr.get("cap", 1_000_000),
+                      "--long-side", tr.get("long_side", 960), "--sh-degree", tr.get("sh_degree", 1),
+                      "--depth-weight", tr.get("depth_weight", 0.0), "--aniso-weight", tr.get("aniso_weight", 0.0),
+                      "--init-ckpt", model_dir / "splats.pt", "--lr-scale", opts.get("lr_scale", 0.5),
+                      "--max-minutes", opts.get("max_minutes", 90)]
+                if tr.get("sky"):
+                    ft.append("--sky")
+                if tr.get("carve"):
+                    ft.append("--carve")
+                sh(ft, env=env, log=log)
+                model_dir, scene_now = new_model, rdir / "scene"
+                shutil.copy2(model_dir / "metrics.json", out / f"metrics_{kind}{r}.json")
+            except Exception as exc:  # noqa: BLE001 - keep the last good model and still export
+                round_errors[f"{kind}{r}"] = f"{type(exc).__name__}: {exc}"[-1500:]
+                say(name, f"{kind}{r} failed, keeping the previous model:", str(exc)[-300:])
+        if round_errors:
+            (out / "round_errors.json").write_text(json.dumps(round_errors, indent=2))
         sh([sys.executable, HERE / "offpath.py", "--model", model_dir, "--scene", scene_now, "--out", out],
            env=env, log=log)
         shutil.copy2(model_dir / "metrics.json", out / "metrics.json")
