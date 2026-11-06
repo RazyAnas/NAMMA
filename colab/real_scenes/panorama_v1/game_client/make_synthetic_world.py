@@ -36,6 +36,15 @@ ground = trimesh.creation.box(extents=[120, 0.2, 40]).apply_translation([40, -0.
 walls_m = [trimesh.creation.box(extents=[120, 12, 0.4]).apply_translation([40, 6, z]) for z in (-12, 12)]
 trimesh.util.concatenate([ground] + walls_m).export(out / "collider.glb")
 ground.export(out / "ground.glb")
+# textured base layer (stands in for the baked street surface)
+tex = np.zeros((256, 256, 3), np.uint8)
+yy, xx = np.mgrid[0:256, 0:256]
+tex[((xx // 32 + yy // 32) % 2) == 0] = [180, 170, 150]
+tex[((xx // 32 + yy // 32) % 2) == 1] = [90, 85, 80]
+surf = trimesh.util.concatenate([ground] + walls_m)
+uv = np.stack([surf.vertices[:, 0] / 8.0 % 1.0, (surf.vertices[:, 1] + surf.vertices[:, 2]) / 8.0 % 1.0], 1)
+surf.visual = trimesh.visual.TextureVisuals(uv=uv, image=Image.fromarray(tex))
+surf.export(out / "surface.glb")
 sky = np.zeros((512, 1024, 3), np.uint8)
 v = np.linspace(0, 1, 512)[:, None]
 sky[..., 0] = (120 + 100 * v).astype(np.uint8)
@@ -44,7 +53,8 @@ sky[..., 2] = 240
 Image.fromarray(sky).save(out / "sky.jpg")
 Image.fromarray(sky).save(out / "ibl" / "p0000.jpg")
 json.dump({"units": "m", "up": "y",
-           "files": {"splats": "scene.ply", "collider": "collider.glb", "ground_mesh": "ground.glb", "sky": "sky.jpg"},
+           "files": {"splats": "scene.ply", "collider": "collider.glb", "ground_mesh": "ground.glb", "sky": "sky.jpg",
+                     "surface": "surface.glb"},
            "spawn": {"pos": [0, 1.7, 0], "look_at": [10, 1.7, 0]},
            "route": [[float(x), 1.7, 0.0] for x in range(0, 90, 10)],
            "ibl": [{"file": "ibl/p0000.jpg", "pos": [0, 2, 0]}]}, open(out / "game.json", "w"))

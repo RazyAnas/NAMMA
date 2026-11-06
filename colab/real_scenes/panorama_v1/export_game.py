@@ -195,10 +195,15 @@ def fuse_collider(cameras, R, origin, scale_m, out_dir: Path, corridor_m: float 
         except Exception as exc:  # noqa: BLE001 - keep the full mesh if simplification is unavailable
             print("[export] simplification skipped:", exc, flush=True)
     mesh.export(out_dir / "collider.glb")
+    rep_tex = None
+    try:
+        rep_tex = bake_textured_mesh(mesh, cameras, R, origin, scale_m, out_dir / "surface.glb", device=device)
+    except Exception as exc:  # noqa: BLE001 - the splats still work without the base layer
+        rep_tex = {"error": f"{type(exc).__name__}: {exc}"[:500]}
     ground = heightfield(t, w, lo, vox, centres)
     (out_dir / "ground.json").write_text(json.dumps(ground))
     ground_mesh(ground).export(out_dir / "ground.glb")
-    return {"voxel_m": vox, "collider_faces": int(len(mesh.faces)), "collider_faces_before": faces_in,
+    return {"surface": rep_tex, "voxel_m": vox, "collider_faces": int(len(mesh.faces)), "collider_faces_before": faces_in,
             "ground_cells": [ground["nx"], ground["nz"]], "ground_coverage": ground["coverage"]}
 
 
@@ -347,6 +352,133 @@ def export(scene_dir: Path, model_dir: Path, out_dir: Path, pano_dir: Path | Non
     rep["route"] = route
     rep["ibl"] = probes
     rep["files"] = {"splats": "scene.ply", "collider": "collider.glb", "ground": "ground.json",
+                    "surface": "surface.glb" if (out_dir / "surface.glb").is_file() else None,
                     "ground_mesh": "ground.glb", "sky": "sky.jpg" if rep["sky"] else None}
     (out_dir / "game.json").write_text(json.dumps(rep, indent=1))
     return rep
+
+# --------------------------------------------------- textured base mesh (any-angle crisp layer)
+def bake_textured_mesh(mesh, cameras, R, origin, scale_m, out_glb: Path, atlas: int = 4096,
+                       device: str = "cuda", max_faces: int = 300_000, log=print) -> dict:
+    """UV-unwrap the street surface (xatlas, MIT) and bake each texel from the best real view.
+
+    Best view = the real training view that sees the texel most head-on and closest, among views whose
+    aligned depth agrees the texel is visible (not occluded) and whose mask does not exclude it
+    (capture vehicle, moving objects). Texels no real view sees keep the TSDF vertex colour.
+    The result is a classic game mesh: crisp from any angle, shown wherever splats are thin.
+    """
+    import torch
+    import trimesh
+    import xatlas
+    from PIL import Image
+
+    m = mesh
+    if len(m.faces) > max_faces:
+        import fast_simplification
+
+        v, f = fast_simplification.simplify(np.asarray(m.vertices, np.float32), np.asarray(m.faces),
+                                            target_reduction=1 - max_faces / len(m.faces))
+        m = trimesh.Trimesh(v, f, process=False)
+    V = np.asarray(m.vertices, np.float32)
+    F = np.asarray(m.faces, np.int64)
+    vmap, faces_uv, uvs = xatlas.parametrize(V, F)
+    Vuv = V[vmap]
+    log(f"[texture] {len(F)} faces, {len(Vuv)} uv vertices, atlas {atlas}^2")
+
+    dev = torch.device(device)
+    # rasterise the UV layout: texel -> (face, barycentric) on the GPU, chunked over faces
+    tex_pos = torch.zeros((atlas * atlas, 3), device=dev)
+    tex_nrm = torch.zeros((atlas * atlas, 3), device=dev)
+    tex_ok = torch.zeros(atlas * atlas, dtype=torch.bool, device=dev)
+    P = torch.tensor(Vuv, device=dev)
+    UV = torch.tensor(uvs * (atlas - 1), dtype=torch.float32, device=dev)
+    FU = torch.tensor(faces_uv.astype(np.int64), device=dev)
+    fn = torch.nn.functional.normalize(torch.cross(P[FU[:, 1]] - P[FU[:, 0]], P[FU[:, 2]] - P[FU[:, 0]], dim=1), dim=1)
+    for c0 in range(0, len(FU), 20000):
+        fu = FU[c0:c0 + 20000]
+        a, b, c = UV[fu[:, 0]], UV[fu[:, 1]], UV[fu[:, 2]]
+        lo = torch.floor(torch.minimum(torch.minimum(a, b), c)).long().clamp(0, atlas - 1)
+        hi = torch.ceil(torch.maximum(torch.maximum(a, b), c)).long().clamp(0, atlas - 1)
+        span = (hi - lo + 1)
+        kmax = int(span.max())
+        oy, ox = torch.meshgrid(torch.arange(kmax, device=dev), torch.arange(kmax, device=dev), indexing="ij")
+        px = lo[:, None, None, 0] + ox[None]
+        py = lo[:, None, None, 1] + oy[None]
+        q = torch.stack([px, py], -1).float() + 0.0
+        v0, v1 = (b - a)[:, None, None], (c - a)[:, None, None]
+        v2 = q - a[:, None, None]
+        d00 = (v0 * v0).sum(-1); d01 = (v0 * v1).sum(-1); d11 = (v1 * v1).sum(-1)
+        d20 = (v2 * v0).sum(-1); d21 = (v2 * v1).sum(-1)
+        den = (d00 * d11 - d01 * d01).clamp_min(1e-12)
+        wv = (d11 * d20 - d01 * d21) / den
+        ww = (d00 * d21 - d01 * d20) / den
+        wu = 1 - wv - ww
+        inside = (wu >= -0.02) & (wv >= -0.02) & (ww >= -0.02) & (px <= hi[:, None, None, 0]) & (py <= hi[:, None, None, 1])
+        fi, yy, xx = inside.nonzero(as_tuple=True)
+        idx = py[fi, yy, xx] * atlas + px[fi, yy, xx]
+        f3 = fu[fi]
+        pos = (wu[fi, yy, xx, None] * P[f3[:, 0]] + wv[fi, yy, xx, None] * P[f3[:, 1]] + ww[fi, yy, xx, None] * P[f3[:, 2]])
+        tex_pos[idx] = pos
+        tex_nrm[idx] = fn[c0:c0 + 20000][fi]
+        tex_ok[idx] = True
+    log(f"[texture] {int(tex_ok.sum())} texels on the surface")
+
+    best = torch.full((atlas * atlas,), -1.0, device=dev)
+    color = torch.zeros((atlas * atlas, 3), device=dev)
+    sel = tex_ok.nonzero(as_tuple=True)[0]
+    real = [c for c in cameras if c.get("kind") != "generated" and c.get("depth")]
+    for k, cam in enumerate(real):
+        img = np.asarray(Image.open(cam["path"]).convert("RGB"))
+        depth = np.load(cam["depth"]).astype(np.float32) * scale_m
+        h, w = depth.shape
+        img = np.asarray(Image.fromarray(img).resize((w, h)))
+        keep = np.ones((h, w), bool)
+        if cam.get("mask") and Path(cam["mask"]).is_file():
+            keep = np.asarray(Image.open(cam["mask"]).convert("L").resize((w, h))) > 127
+        K = np.array(cam["K"], dtype=np.float64).copy()
+        K[:2] *= w / cam["width"]
+        w2c_world = np.asarray(cam["w2c"], dtype=np.float64)
+        Rg = w2c_world[:3, :3] @ R.T                       # game -> camera rotation
+        tg = w2c_world[:3, :3] @ origin + w2c_world[:3, 3]  # camera = Rg (x_game/scale) + w2c(origin)
+        Rt = torch.tensor(Rg / scale_m, dtype=torch.float32, device=dev)
+        tt = torch.tensor(w2c_world[:3, 3] + w2c_world[:3, :3] @ origin, dtype=torch.float32, device=dev) * scale_m
+        Kt = torch.tensor(K, dtype=torch.float32, device=dev)
+        D = torch.tensor(depth, device=dev)
+        I = torch.tensor(img, dtype=torch.float32, device=dev) / 255.0
+        Mk = torch.tensor(keep, device=dev)
+        cam_centre = torch.tensor(scale_m * (R @ (-w2c_world[:3, :3].T @ w2c_world[:3, 3] - origin)),
+                                  dtype=torch.float32, device=dev)
+        for c0 in range(0, len(sel), 4_000_000):
+            ii = sel[c0:c0 + 4_000_000]
+            X = tex_pos[ii]
+            Xc = (X @ Rt.T) * scale_m + tt
+            z = Xc[:, 2]
+            u = Xc[:, 0] / z.clamp_min(1e-6) * Kt[0, 0] + Kt[0, 2]
+            v = Xc[:, 1] / z.clamp_min(1e-6) * Kt[1, 1] + Kt[1, 2]
+            ok = (z > 0.3) & (u >= 0) & (u < w - 1) & (v >= 0) & (v < h - 1)
+            ui, vi = u.long().clamp(0, w - 1), v.long().clamp(0, h - 1)
+            dz = D[vi, ui]
+            ok &= (dz > 0) & ((dz - z).abs() < 0.08 * z + 0.15) & Mk[vi, ui]
+            view = torch.nn.functional.normalize(cam_centre - X, dim=1)
+            cosang = (view * tex_nrm[ii]).sum(1).abs()
+            score = torch.where(ok, cosang / (1.0 + 0.05 * z), torch.full_like(z, -1.0))
+            better = score > best[ii]
+            jj = ii[better]
+            best[jj] = score[better]
+            color[jj] = I[vi[better], ui[better]]
+        if k % 50 == 0:
+            log(f"[texture] baked {k}/{len(real)} views")
+    covered = float((best[sel] > 0).float().mean())
+    # unseen texels: nearest vertex colour from the TSDF mesh (real colours fused from photos)
+    tex = (color.clamp(0, 1) * 255).byte().reshape(atlas, atlas, 3).cpu().numpy()
+    seen = (best > 0).reshape(atlas, atlas).cpu().numpy()
+    import cv2
+
+    tex = cv2.inpaint(tex, (~seen).astype(np.uint8) * 255, 3, cv2.INPAINT_TELEA) if (~seen).any() else tex
+    image = Image.fromarray(tex[::-1].copy())  # glTF uv origin is top-left; xatlas uv origin bottom-left
+    tm = trimesh.Trimesh(Vuv, faces_uv, process=False,
+                         visual=trimesh.visual.TextureVisuals(uv=uvs, image=image))
+    tm.export(out_glb)
+    image.resize((1024, 1024)).save(out_glb.with_suffix(".preview.jpg"), quality=85)
+    return {"faces": int(len(F)), "atlas": atlas, "texel_coverage": round(covered, 4),
+            "views": len(real)}

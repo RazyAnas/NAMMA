@@ -13,7 +13,7 @@ import { SparkRenderer, SplatMesh } from '@sparkjsdev/spark';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 // NAMMA: world, sky, panorama lighting, car, HUD (src/namma.ts)
-import { NAMMA, addSkyDome, ProbeLighting, Car, Hud } from './namma';
+import { NAMMA, addSkyDome, addSurface, ProbeLighting, Car, Hud } from './namma';
 await RAPIER.init();
 
 /**
@@ -196,6 +196,7 @@ scene.background = new THREE.Color(0xd6d6d6);
 
 const camera = new THREE.PerspectiveCamera(60, window.innerWidth / window.innerHeight, 0.05, 4000);
 await addSkyDome(scene, camera); // NAMMA: learned sky (splats never model the sky)
+void addSurface(scene); // NAMMA: textured street mesh under the splats (no smears from any angle)
 
 const renderer = new THREE.WebGLRenderer({ antialias: false, powerPreference: 'high-performance' }); // NAMMA: Spark perf guide
 renderer.setSize(window.innerWidth, window.innerHeight);

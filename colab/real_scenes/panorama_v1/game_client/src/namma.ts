@@ -10,7 +10,7 @@ export const WORLD_BASE = (params.get('world') || './world/').replace(/\/?$/, '/
 
 type GameJson = {
   units?: string;
-  files: { splats: string; rad?: string; collider: string; ground_mesh?: string; sky?: string | null };
+  files: { splats: string; rad?: string; collider: string; ground_mesh?: string; sky?: string | null; surface?: string | null };
   spawn?: { pos: number[]; look_at: number[] };
   route?: number[][];
   ibl?: { file: string; pos: number[] }[];
@@ -26,6 +26,7 @@ export const NAMMA = {
   get splatIsRad() { return this.splatUrl.endsWith('.rad'); },
   colliderUrl: WORLD_BASE + GAME.files.collider,
   skyUrl: GAME.files.sky ? WORLD_BASE + GAME.files.sky : null,
+  surfaceUrl: GAME.files.surface && !params.has('nosurface') ? WORLD_BASE + GAME.files.surface : null,
   spawn: GAME.spawn ?? { pos: [0, 1.7, 0], look_at: [0, 1.7, -1] },
   route: GAME.route ?? [],
   probes: (GAME.ibl ?? []).map((p) => ({ url: WORLD_BASE + p.file, pos: p.pos })),
@@ -74,6 +75,29 @@ export async function addSkyDome(scene: THREE.Scene, camera: THREE.Camera) {
   camera.add(sky);
   scene.add(camera);
   return sky;
+}
+
+// ── textured base mesh: crisp from any angle, visible only where splats are thin ──
+export async function addSurface(scene: THREE.Scene) {
+  if (!NAMMA.surfaceUrl) return null;
+  const { GLTFLoader } = await import('three/addons/loaders/GLTFLoader.js');
+  const gltf = await new GLTFLoader().loadAsync(NAMMA.surfaceUrl);
+  gltf.scene.traverse((o) => {
+    const mesh = o as THREE.Mesh;
+    if (!mesh.isMesh) return;
+    const old = mesh.material as THREE.MeshStandardMaterial;
+    const map = old.map ?? null;
+    if (map) { map.colorSpace = THREE.SRGBColorSpace; map.anisotropy = 8; }
+    // unlit photo texture; pushed back in depth so splats on the same surface always win
+    mesh.material = new THREE.MeshBasicMaterial({
+      map, toneMapped: false, polygonOffset: true, polygonOffsetFactor: 2, polygonOffsetUnits: 8,
+    });
+    mesh.receiveShadow = false;
+    mesh.castShadow = false;
+    old.dispose();
+  });
+  scene.add(gltf.scene);
+  return gltf.scene;
 }
 
 // ── image-based lighting from the nearest real panorama ──

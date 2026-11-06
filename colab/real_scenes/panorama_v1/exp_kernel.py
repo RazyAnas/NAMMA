@@ -53,7 +53,7 @@ def install_env():
         return
     WORK.mkdir(parents=True, exist_ok=True)
     pkgs = ["gsplat==1.5.3", "pycolmap==4.2.1", "plyfile", "torchmetrics[image]", "ninja", "huggingface_hub",
-            "trimesh", "scikit-image", "fast-simplification", "piexif"]
+            "trimesh", "scikit-image", "fast-simplification", "piexif", "xatlas"]
     sh([sys.executable, "-m", "pip", "install", "-q", *pkgs])
     if os.environ.get("NAMMA_NEED_FILL"):
         # Kaggle's torchao 0.10 makes peft refuse every LoRA (video pipeline World job hit the same)
