@@ -5,6 +5,21 @@ held-out = whole panoramas (every 8th along the route, never the first or last),
 views of those panoramas. "Exposure-fair" fits one colour affine per held-out image first.
 Contact sheets (held-out photo/render pairs + novel off-path cameras) are checked by eye for every run.
 
+## Round 4 — H7c street run (GPS spatial matching, vehicle removal, 15k steps)
+
+| Test | SfM | Views registered | PSNR | SSIM | LPIPS | Notes |
+|---|---|---:|---:|---:|---:|---|
+| H7-full | spatial + incremental | 288/480 (5 models) | 22.15 | 0.757 | 0.352 | base model; Fixer round: 22.47 / 0.757 / 0.397 |
+| H7-global | spatial + **global** | **480/480 (1 model)** | — | — | — | crashed at step 9000 (OOM: views cached on GPU) |
+
+- Metric scale cross-check: GPS 19.82 m/unit vs MoGe-2 19.84 m/unit (0.1 %), GPS fit RMS 0.21 m,
+  camera height 2.07 m (roof-mounted car camera).
+- NVIDIA Fixer changed a median 0.8 % of pixels and made LPIPS worse (0.352 -> 0.397): off by default
+  (the video pipeline saw the same).
+- Contact sheet bugs, all fixed + tested: ground/car-spot cameras pointed up (sign), unobserved sky
+  zenith left grey, MoGe depth of the blanked vehicle fused into grey blobs, fill ray march OOM.
+- Floaters: 0 % beyond 10x route radius, 0 % in proven-empty space.
+
 ## Round 3 — first real streets (Panoramax, Paris, car-mounted 360, 40 panoramas at 10 m)
 
 | Test | Setup | PSNR | SSIM | LPIPS | Notes |
