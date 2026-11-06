@@ -85,6 +85,19 @@ def normalisation(cameras):
     return centre, 1.0 / radius
 
 
+def max_splat_size(cameras, scale: float, frac: float = 0.3) -> float:
+    """Largest allowed splat scale in normalised units: 0.3 x the median gap between neighbouring
+    panoramas (~3 m for Street View's ~10 m spacing). The normalised unit itself is the route radius
+    (~150 m on a 40-panorama street), so a fixed number in normalised units would be far too loose."""
+    pc = scene_io.pano_centres([c for c in cameras if c.get("kind") != "generated"])
+    C = np.stack(list(pc.values())) * scale
+    if len(C) < 2:
+        return 0.15
+    d = np.linalg.norm(C[:, None] - C[None], axis=-1)
+    np.fill_diagonal(d, np.inf)
+    return float(max(frac * np.median(d.min(1)), 1e-4))
+
+
 # ----------------------------------------------------------------- losses
 def ssim(a, b):
     """a, b: [1, 3, H, W] in 0..1. Gaussian-window SSIM (11, 1.5)."""
@@ -317,7 +330,8 @@ def train(scene_dir: Path, out: Path, steps: int = 7000, cap: int = 1_000_000,
 
     CROP = crop_px
     TILE = [32]  # 32 px tiles cut intersections ~4x for large splats; falls back to 16 if the kernel refuses
-    MAX_LOG_SCALE = math.log(0.15)  # normalised units (~3 m); stops screen-filling splats
+    MAX_LOG_SCALE = math.log(max_splat_size(cameras, scale))  # ~3 m; stops screen-filling splats
+    print(f"[train] splat size cap {math.exp(MAX_LOG_SCALE):.4f} normalised units", flush=True)
     oom_skips = 0
     last_snap = time.time()
     log_every = max(1, steps // 20)
