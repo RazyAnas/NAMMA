@@ -176,8 +176,13 @@ def build_sheet(model_dir: Path, scene_dir: Path, out_png: Path, device: str = "
         tiles.append(("held-out render", render(V, K, photo.width, photo.height)))
     f = width / 2 / math.tan(math.radians(45))
     K = np.array([[f, 0, width / 2], [0, f, height / 2], [0, 0, 1]])
+    crisp = []
     for label, V in offpath_cameras(cameras, centre, scale, up):
-        tiles.append((label, render(V, K, width, height)))
+        img = render(V, K, width, height)
+        tiles.append((label, img))
+        import cv2
+
+        crisp.append(float(cv2.Laplacian(cv2.cvtColor(img, cv2.COLOR_RGB2GRAY).astype(np.float32), cv2.CV_32F).var()))
 
     cols = 4
     rows = math.ceil(len(tiles) / cols)
@@ -195,6 +200,7 @@ def build_sheet(model_dir: Path, scene_dir: Path, out_png: Path, device: str = "
         import depth_memory
         grid = depth_memory.CarveGrid.load(Path(model_dir) / "carve.pt", device)
     card = scorecard(params, grid=grid)
+    card["offpath_sharpness_median"] = float(np.median(crisp)) if crisp else None  # Laplacian variance
     return card
 
 

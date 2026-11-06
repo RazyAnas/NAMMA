@@ -58,7 +58,7 @@ def run_masks(sdir, cams, meta, pri, log):
 
 def main():
     p = argparse.ArgumentParser()
-    p.add_argument("stage", choices=["fill", "fixer", "export", "priors", "vehicle"])
+    p.add_argument("stage", choices=["fill", "fixer", "export", "priors", "vehicle", "densify"])
     p.add_argument("--priors", default="{}")
     p.add_argument("--atlas", type=int, default=8192)
     p.add_argument("--pano-dir", type=Path)
@@ -91,6 +91,13 @@ def main():
         return
     import fill
 
+    if a.stage == "densify":
+        import densify
+
+        man = json.loads(a.manifest.read_text()) if a.manifest and a.manifest.is_file() else None
+        rep = densify.run_densify(a.scene, a.model, a.out, device="cuda", max_clips=a.max_views, manifest=man, log=log)
+        print("[stage] densify", json.dumps(rep), flush=True)
+        return
     if a.stage == "fill":
         rep = fill.run_fill(a.scene, a.model, a.out, device="cuda", max_views=a.max_views, log=log)
     else:

@@ -490,14 +490,18 @@ def run_experiment(exp, inputs):
         # optional refinement rounds: hole-only generative fill, then masked Fixer
         rounds = [("fill", r) for r in range(int(exp.get("fill", {}).get("rounds", 0)))]
         rounds += [("fixer", r) for r in range(int(exp.get("fixer", {}).get("rounds", 0)))]
+        rounds += [("densify", r) for r in range(int(exp.get("densify", {}).get("rounds", 0)))]
         round_errors = {}
         for kind, r in rounds:
             try:
                 opts = exp.get(kind, {})
                 rdir = sdir / f"{kind}{r}"
-                sh([sys.executable, HERE / "stage.py", kind, "--scene", scene_now, "--model", model_dir,
-                    "--out", rdir, "--max-views", opts.get("max_views", 160)], env=env, log=log)
-                for rep_name in ("fill_report.json", "fixer_report.json"):
+                st = [sys.executable, HERE / "stage.py", kind, "--scene", scene_now, "--model", model_dir,
+                      "--out", rdir, "--max-views", opts.get("max_views", 160)]
+                if (OUT / "route_manifest.json").is_file():
+                    st += ["--manifest", OUT / "route_manifest.json"]
+                sh(st, env=env, log=log)
+                for rep_name in ("fill_report.json", "fixer_report.json", "densify_report.json"):
                     if (rdir / rep_name).is_file():
                         shutil.copy2(rdir / rep_name, out / f"{kind}{r}_{rep_name}")
                 if (rdir / "sheet").is_dir():
@@ -554,7 +558,7 @@ def main():
     sh(["nvidia-smi", "--query-gpu=name,memory.total", "--format=csv,noheader"], check=False)
     if any(e.get("priors", {}).get("depth") or e.get("fill") for e in cfg["experiments"]):
         os.environ["NAMMA_NEED_MOGE"] = "1"
-    if any(e.get("fill") for e in cfg["experiments"]):
+    if any(e.get("fill") or e.get("densify") for e in cfg["experiments"]):
         os.environ["NAMMA_NEED_FILL"] = "1"
     install_env()
     data = cfg.get("data", {})
