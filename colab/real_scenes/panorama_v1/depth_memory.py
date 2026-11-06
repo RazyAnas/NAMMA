@@ -229,7 +229,8 @@ def scene_io_centre(cam) -> np.ndarray:
 # ----------------------------------------------------------- orchestration
 def build_memory(cameras: list[dict], ref_points_by_pano: dict[str, np.ndarray], out_dir: Path,
                  long_side: int = 960, device: str = "cuda", fuse_stride: int = 4,
-                 max_points: int = 1_500_000, log=print) -> dict:
+                 max_points: int = 1_500_000, log=print, depth_source: str = "moge",
+                 pano_dir: Path | None = None, work: Path | None = None) -> dict:
     """Run MoGe-2 on every view, align, write per-view depth/sky files, fuse points.
 
     Adds "depth" (npy, metric world units, 0 = unknown) and "sky_mask" (png,
@@ -241,6 +242,25 @@ def build_memory(cameras: list[dict], ref_points_by_pano: dict[str, np.ndarray],
     (out_dir / "depth").mkdir(parents=True, exist_ok=True)
     (out_dir / "sky").mkdir(parents=True, exist_ok=True)
     model = load_moge(device)
+    radial = {}
+    rotations = None
+    source_error = None
+    if depth_source == "panovggt":
+        try:
+            import pano_depth
+            import pycolmap.panorama as P
+            import torch
+
+            pv = pano_depth.load(Path(work or out_dir / "_panovggt"), device)
+            paths = sorted(p for p in Path(pano_dir).glob("*.jpg"))
+            radial = pano_depth.pano_radial_depths(pv, paths, device, log=log)
+            rotations = P.get_virtual_rotations(4, (-35.0, 0.0, 35.0))
+            del pv
+            torch.cuda.empty_cache()
+        except Exception as exc:  # noqa: BLE001 - fall back to MoGe-2 rather than lose the run
+            source_error = f"{type(exc).__name__}: {exc}"[-600:]
+            log(f"[depth] PanoVGGT failed, falling back to MoGe-2: {source_error}")
+            depth_source = "moge"
     scales, inliers, fused = [], [], []
     failed = 0
     for i, cam in enumerate(cameras):
@@ -253,6 +273,13 @@ def build_memory(cameras: list[dict], ref_points_by_pano: dict[str, np.ndarray],
         K[:2] *= s
         hfov = float(np.degrees(2 * np.arctan(rgb.shape[1] / (2 * K[0, 0]))))
         depth, valid = moge_view_depth(model, rgb, hfov, device)
+        if depth_source == "panovggt" and cam["name"].startswith("pano_camera") and cam["pano"] in radial:
+            import pano_depth
+
+            k = int(cam["name"].split("/")[0].replace("pano_camera", ""))
+            depth = pano_depth.view_zdepth(radial[cam["pano"]], np.asarray(rotations[k]), K,
+                                           rgb.shape[1], rgb.shape[0])
+            depth[~valid] = 0.0  # MoGe's validity mask still marks the sky
         if cam.get("mask") and Path(cam["mask"]).is_file():
             keep = np.asarray(Image.open(cam["mask"]).convert("L").resize((depth.shape[1], depth.shape[0]),
                                                                            Image.NEAREST)) > 127
@@ -280,7 +307,7 @@ def build_memory(cameras: list[dict], ref_points_by_pano: dict[str, np.ndarray],
     if len(pts) > max_points:
         pts = pts[np.random.default_rng(0).choice(len(pts), max_points, replace=False)]
     sc = np.asarray(scales)
-    report = {"views": len(cameras), "aligned": len(scales), "failed": failed,
+    report = {"depth_source": depth_source, "depth_source_error": source_error, "views": len(cameras), "aligned": len(scales), "failed": failed,
               "scale_median": float(np.median(sc)) if len(sc) else None,
               "scale_spread_log_std": float(np.std(np.log(sc))) if len(sc) > 1 else None,
               "inlier_median": float(np.median(inliers)) if inliers else None,

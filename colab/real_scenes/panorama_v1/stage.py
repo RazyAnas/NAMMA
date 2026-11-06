@@ -19,7 +19,9 @@ def run_priors(sdir: Path, pri: dict, log):
     if pri.get("depth"):
         import depth_memory
 
-        rep = depth_memory.build_memory(cams, refs, sdir / "memory", device="cuda", log=log)
+        rep = depth_memory.build_memory(cams, refs, sdir / "memory", device="cuda", log=log,
+                                        depth_source=pri.get("depth_source", "moge"),
+                                        pano_dir=pri.get("pano_dir"), work=Path("/kaggle/temp/namma-exp/panovggt"))
         meta["depth_memory"] = rep
         log("[priors] depth memory", json.dumps(rep))
         if pri.get("dense_init", True):
@@ -58,6 +60,7 @@ def main():
     p = argparse.ArgumentParser()
     p.add_argument("stage", choices=["fill", "fixer", "export", "priors", "vehicle"])
     p.add_argument("--priors", default="{}")
+    p.add_argument("--atlas", type=int, default=8192)
     p.add_argument("--pano-dir", type=Path)
     p.add_argument("--manifest", type=Path)
     p.add_argument("--scene", type=Path, required=True)
@@ -83,7 +86,7 @@ def main():
         import export_game
 
         man = json.loads(a.manifest.read_text()) if a.manifest and a.manifest.is_file() else None
-        rep = export_game.export(a.scene, a.model, a.out, a.pano_dir, man, log=log)
+        rep = export_game.export(a.scene, a.model, a.out, a.pano_dir, man, log=log, atlas=a.atlas)
         print("[stage] export", json.dumps({k: v for k, v in rep.items() if k not in ("route", "ibl")}), flush=True)
         return
     import fill

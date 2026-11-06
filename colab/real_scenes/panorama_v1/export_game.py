@@ -154,7 +154,7 @@ def export_splats(ck, R, origin, scale_m, out_ply: Path, drop_far_m: float = 200
 
 # ------------------------------------------------------- collider + ground
 def fuse_collider(cameras, R, origin, scale_m, out_dir: Path, corridor_m: float = 30.0,
-                  vox: float = 0.2, max_voxels: int = 110_000_000, device: str = "cuda") -> dict:
+                  vox: float = 0.2, max_voxels: int = 110_000_000, device: str = "cuda", atlas: int = 8192) -> dict:
     import torch
     import trimesh
     from PIL import Image
@@ -197,7 +197,9 @@ def fuse_collider(cameras, R, origin, scale_m, out_dir: Path, corridor_m: float 
     mesh.export(out_dir / "collider.glb")
     rep_tex = None
     try:
-        rep_tex = bake_textured_mesh(mesh, cameras, R, origin, scale_m, out_dir / "surface.glb", device=device)
+        rep_tex = bake_textured_mesh(mesh, cameras, R, origin, scale_m, out_dir / "surface.glb", device=device,
+                                     atlas=atlas)
+        mesh.export(out_dir / "_surface_geom.ply")  # for hybrid pruning (not published)
     except Exception as exc:  # noqa: BLE001 - the splats still work without the base layer
         rep_tex = {"error": f"{type(exc).__name__}: {exc}"[:500]}
     ground = heightfield(t, w, lo, vox, centres)
@@ -321,7 +323,7 @@ def export_ibl(cameras, pano_dir: Path, R, origin, scale_m, out_dir: Path, w: in
 
 # ------------------------------------------------------------------ main
 def export(scene_dir: Path, model_dir: Path, out_dir: Path, pano_dir: Path | None = None,
-           manifest: dict | None = None, device: str = "cuda", log=print) -> dict:
+           manifest: dict | None = None, device: str = "cuda", log=print, atlas: int = 8192) -> dict:
     import torch
 
     out_dir = Path(out_dir)
@@ -333,8 +335,15 @@ def export(scene_dir: Path, model_dir: Path, out_dir: Path, pano_dir: Path | Non
     rep = {"units": "m", "up": "y", "frame": "x=east (if GPS), y=up, z=south", "scale_m_per_unit": scale_m, **prov}
     rep["splats"] = export_splats(ck, R, origin, scale_m, out_dir / "scene.ply")
     log("[export] splats", json.dumps(rep["splats"]))
-    rep["collider"] = fuse_collider(cameras, R, origin, scale_m, out_dir, device=device)
+    rep["collider"] = fuse_collider(cameras, R, origin, scale_m, out_dir, device=device, atlas=atlas)
     log("[export] collider", json.dumps(rep["collider"]))
+    if (out_dir / "surface.glb").is_file() and (out_dir / "_surface_geom.ply").is_file():
+        try:
+            rep["hybrid"] = hybrid_prune(out_dir / "scene.ply", out_dir / "_surface_geom.ply", out_dir / "scene_hybrid.ply")
+            log("[export] hybrid", json.dumps(rep["hybrid"]))
+        except Exception as exc:  # noqa: BLE001 - the full splat file still works
+            rep["hybrid"] = {"error": f"{type(exc).__name__}: {exc}"[:400]}
+        (out_dir / "_surface_geom.ply").unlink(missing_ok=True)
     rep["sky"] = export_sky(ck, R, out_dir / "sky.jpg")
     probes = export_ibl(cameras, pano_dir, R, origin, scale_m, out_dir / "ibl") if pano_dir else []
     g = json.loads((out_dir / "ground.json").read_text())
@@ -353,6 +362,7 @@ def export(scene_dir: Path, model_dir: Path, out_dir: Path, pano_dir: Path | Non
     rep["ibl"] = probes
     rep["files"] = {"splats": "scene.ply", "collider": "collider.glb", "ground": "ground.json",
                     "surface": "surface.glb" if (out_dir / "surface.glb").is_file() else None,
+                    "splats_hybrid": "scene_hybrid.ply" if (out_dir / "scene_hybrid.ply").is_file() else None,
                     "ground_mesh": "ground.glb", "sky": "sky.jpg" if rep["sky"] else None}
     (out_dir / "game.json").write_text(json.dumps(rep, indent=1))
     return rep
@@ -428,10 +438,10 @@ def bake_textured_mesh(mesh, cameras, R, origin, scale_m, out_glb: Path, atlas: 
     sel = tex_ok.nonzero(as_tuple=True)[0]
     real = [c for c in cameras if c.get("kind") != "generated" and c.get("depth")]
     for k, cam in enumerate(real):
-        img = np.asarray(Image.open(cam["path"]).convert("RGB"))
+        img = np.asarray(Image.open(cam["path"]).convert("RGB"))          # full resolution colour
         depth = np.load(cam["depth"]).astype(np.float32) * scale_m
         h, w = depth.shape
-        img = np.asarray(Image.fromarray(img).resize((w, h)))
+        H_img, W_img = img.shape[:2]
         keep = np.ones((h, w), bool)
         if cam.get("mask") and Path(cam["mask"]).is_file():
             keep = np.asarray(Image.open(cam["mask"]).convert("L").resize((w, h))) > 127
@@ -444,7 +454,8 @@ def bake_textured_mesh(mesh, cameras, R, origin, scale_m, out_glb: Path, atlas: 
         tt = torch.tensor(w2c_world[:3, 3] + w2c_world[:3, :3] @ origin, dtype=torch.float32, device=dev) * scale_m
         Kt = torch.tensor(K, dtype=torch.float32, device=dev)
         D = torch.tensor(depth, device=dev)
-        I = torch.tensor(img, dtype=torch.float32, device=dev) / 255.0
+        I = torch.tensor(img, device=dev)                                   # uint8, full resolution
+        sx, sy = W_img / w, H_img / h
         Mk = torch.tensor(keep, device=dev)
         cam_centre = torch.tensor(scale_m * (R @ (-w2c_world[:3, :3].T @ w2c_world[:3, 3] - origin)),
                                   dtype=torch.float32, device=dev)
@@ -465,7 +476,9 @@ def bake_textured_mesh(mesh, cameras, R, origin, scale_m, out_glb: Path, atlas: 
             better = score > best[ii]
             jj = ii[better]
             best[jj] = score[better]
-            color[jj] = I[vi[better], ui[better]]
+            uf = (u[better] * sx).long().clamp(0, W_img - 1)
+            vf = (v[better] * sy).long().clamp(0, H_img - 1)
+            color[jj] = I[vf, uf].float() / 255.0
         if k % 50 == 0:
             log(f"[texture] baked {k}/{len(real)} views")
     covered = float((best[sel] > 0).float().mean())
@@ -482,3 +495,41 @@ def bake_textured_mesh(mesh, cameras, R, origin, scale_m, out_glb: Path, atlas: 
     image.resize((1024, 1024)).save(out_glb.with_suffix(".preview.jpg"), quality=85)
     return {"faces": int(len(F)), "atlas": atlas, "texel_coverage": round(covered, 4),
             "views": len(real)}
+
+
+# ------------------------------------------------- hybrid: flat surfaces from texture, detail from splats
+def hybrid_prune(ply_in: Path, surface_ply: Path, ply_out: Path, near_m: float = 0.15,
+                 planar_cos: float = 0.97, flat_ratio: float = 0.35, samples: int = 3_000_000) -> dict:
+    """Drop splats that only paint a flat surface the textured mesh already shows crisply.
+
+    A splat is removed when (a) its centre lies within near_m of the street surface, (b) the surface
+    there is locally planar (the 8 nearest surface samples share a normal within ~14 deg), and (c) the
+    splat itself is a flat disc lying in that plane (thinnest axis along the normal, much thinner than
+    its other axes). Balconies, railings, trees, signs and cars fail (b) or (c) and keep their splats.
+    """
+    import trimesh
+    from plyfile import PlyData, PlyElement
+    from scipy.spatial import cKDTree
+    from scipy.spatial.transform import Rotation
+
+    mesh = trimesh.load(surface_ply, process=False)
+    pts, fidx = trimesh.sample.sample_surface(mesh, samples, seed=0)
+    nrm = mesh.face_normals[fidx]
+    tree = cKDTree(pts)
+    v = PlyData.read(str(ply_in))["vertex"].data
+    xyz = np.stack([v["x"], v["y"], v["z"]], 1).astype(np.float64)
+    d, nn = tree.query(xyz, k=8, workers=-1)
+    near = d[:, 0] < near_m
+    n0 = nrm[nn[:, 0]]
+    planar = (np.abs(np.einsum("nkj,nj->nk", nrm[nn], n0)) > planar_cos).all(1)
+    sc = np.exp(np.stack([v["scale_0"], v["scale_1"], v["scale_2"]], 1))
+    q = np.stack([v["rot_1"], v["rot_2"], v["rot_3"], v["rot_0"]], 1)  # xyzw
+    Rm = Rotation.from_quat(q / np.linalg.norm(q, axis=1, keepdims=True)).as_matrix()
+    thin = np.argmin(sc, 1)
+    thin_axis = Rm[np.arange(len(sc)), :, thin]
+    srt = np.sort(sc, 1)
+    flat = (srt[:, 0] < flat_ratio * srt[:, 1]) & (np.abs(np.einsum("nj,nj->n", thin_axis, n0)) > 0.8)
+    drop = near & planar & flat
+    PlyData([PlyElement.describe(v[~drop], "vertex")]).write(str(ply_out))
+    return {"splats_in": int(len(v)), "removed_flat_surface": int(drop.sum()),
+            "kept": int((~drop).sum()), "near_surface": int(near.sum()), "planar_near": int((near & planar).sum())}

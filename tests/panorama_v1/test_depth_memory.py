@@ -43,3 +43,24 @@ def test_depth_edge_mask_drops_jumps():
     d[:, 5:] = 10.0
     m = dm.depth_edge_mask(d)
     assert not m[:, 4].any() and m[:, 0].all()
+
+
+def test_panovggt_windows_cover_every_panorama_with_overlap():
+    import pano_depth
+
+    w = pano_depth.windows(20, size=8, overlap=3)
+    assert w[0][0] == 0 and w[-1][-1] == 19
+    covered = sorted({i for win in w for i in win})
+    assert covered == list(range(20))
+    assert all(len(x) == 8 for x in w)
+
+
+def test_view_zdepth_turns_radial_into_z_depth():
+    import pano_depth
+    import scene_io
+
+    radial = np.full((64, 128), 10.0, np.float32)
+    K = np.array([[20.0, 0, 20], [0, 20.0, 20], [0, 0, 1]])
+    z = pano_depth.view_zdepth(radial, scene_io.legacy_crop_rotation(30), K, 40, 40)
+    assert abs(z[20, 20] - 10.0) < 0.05          # centre ray: z == radial
+    assert z[0, 0] < z[20, 20]                    # corner ray: z = r cos(angle) < r

@@ -162,22 +162,7 @@ def remove_capture_vehicle(inputs: dict, enabled: bool = True) -> dict:
     say(f"capture vehicle covers {frac:.3%} of each panorama")
     if frac < 0.002:
         return inputs
-    dst = src.parent / (src.name + "-novehicle")
-    if not (dst / ".ok").exists():
-        dst.mkdir(parents=True, exist_ok=True)
-        for p in sorted(src.glob("*.jpg")):
-            exif = Image.open(p).info.get("exif", b"")  # keep GPS: COLMAP's spatial matcher needs it
-            img = cv2.imread(str(p))
-            m = cv2.resize((~keep).astype("uint8"), (img.shape[1], img.shape[0]), interpolation=cv2.INTER_NEAREST)
-            m = cv2.dilate(m, np.ones((15, 15), np.uint8))
-            small = cv2.resize(img, (img.shape[1] // 8, img.shape[0] // 8), interpolation=cv2.INTER_AREA)
-            ms = cv2.resize(m, (small.shape[1], small.shape[0]), interpolation=cv2.INTER_NEAREST)
-            fill = cv2.resize(cv2.inpaint(small, ms, 7, cv2.INPAINT_TELEA), (img.shape[1], img.shape[0]),
-                              interpolation=cv2.INTER_LINEAR)
-            fill = cv2.GaussianBlur(fill, (31, 31), 0)  # featureless: nothing for SIFT to match
-            out_bgr = np.where(m[..., None] > 0, fill, img)
-            Image.fromarray(out_bgr[..., ::-1]).save(dst / p.name, quality=95, exif=exif)
-        (dst / ".ok").touch()
+    dst = blank_vehicle(src, src.parent / (src.name + "-novehicle"), keep)
     inputs["pano_dir"] = dst
     return inputs
 
@@ -200,6 +185,65 @@ def gps_exif(lat, lon, alt: float = 35.0) -> bytes:
     return piexif.dump({"GPS": gps})
 
 
+def blank_vehicle(src: Path, dst: Path, keep, width: int | None = None) -> Path:
+    """Write panoramas with the capture vehicle replaced by a featureless fill, keeping GPS EXIF."""
+    import cv2
+    import numpy as np
+    from PIL import Image
+
+    if (dst / ".ok").exists():
+        return dst
+    dst.mkdir(parents=True, exist_ok=True)
+    for p in sorted(src.glob("*.jpg")):
+        pil = Image.open(p)
+        exif = pil.info.get("exif", b"")
+        if width:
+            pil = pil.convert("RGB").resize((width, width // 2), Image.LANCZOS)
+        img = np.asarray(pil.convert("RGB"))[..., ::-1].copy()
+        if keep is not None:
+            m = cv2.resize((~keep).astype("uint8"), (img.shape[1], img.shape[0]), interpolation=cv2.INTER_NEAREST)
+            m = cv2.dilate(m, np.ones((15, 15), np.uint8))
+            small = cv2.resize(img, (img.shape[1] // 8, img.shape[0] // 8), interpolation=cv2.INTER_AREA)
+            ms = cv2.resize(m, (small.shape[1], small.shape[0]), interpolation=cv2.INTER_NEAREST)
+            fill = cv2.resize(cv2.inpaint(small, ms, 7, cv2.INPAINT_TELEA), (img.shape[1], img.shape[0]),
+                              interpolation=cv2.INTER_LINEAR)
+            fill = cv2.GaussianBlur(fill, (31, 31), 0)
+            img = np.where(m[..., None] > 0, fill, img)
+        Image.fromarray(img[..., ::-1]).save(dst / p.name, quality=95, exif=exif)
+    (dst / ".ok").touch()
+    return dst
+
+
+def hires_rig_views(exp, inputs, sdir: Path, cams: list) -> list:
+    """Re-render the SfM rig views from higher-resolution panoramas for training (same rotations)."""
+    import numpy as np
+    import pycolmap.panorama as P
+
+    tw = int(exp.get("train_pano_width") or 0)
+    raw = inputs.get("raw_dir")
+    if not tw or raw is None:
+        return cams
+    hr = blank_vehicle(Path(raw), WORK / f"{Path(raw).name}-{tw}-novehicle", inputs.get("vehicle_erp"), width=tw)
+    names = sorted(p.name for p in hr.glob("*.jpg"))
+    out = sdir / "images_hr"
+    if not (out / ".ok").exists():
+        P.render_perspective_images(names, hr, out, sdir / "masks_hr", P.PanoRenderOptions(**RIG), False)
+        (out / ".ok").touch()
+    first = cams[0]
+    from PIL import Image
+
+    w_new = Image.open(out / first["name"]).size[0]
+    s = w_new / first["width"]
+    for c in cams:
+        c["path"] = str(out / c["name"])
+        c["width"], c["height"] = int(round(c["width"] * s)), int(round(c["height"] * s))
+        K = np.array(c["K"], dtype=np.float64)
+        K[:2] *= s
+        c["K"] = K
+    say(f"training views re-rendered from {tw}-px panoramas ({w_new}px views, x{s:.1f})")
+    return cams
+
+
 def panoramax_inputs(cfg) -> dict:
     """Street-level 360 route from Panoramax (open data, no key), resized to pano_width."""
     from PIL import Image
@@ -219,7 +263,7 @@ def panoramax_inputs(cfg) -> dict:
                 pano_dir / p.name, quality=95, exif=gps_exif(*gps.get(p.name, (None, None))))
         (pano_dir / ".ok").touch()
     shutil.copy2(raw / "manifest.json", OUT / "route_manifest.json")
-    return {"pano_dir": pano_dir, "gt_poses": None, "gt_ply": None, "gt_refs": {},
+    return {"pano_dir": pano_dir, "raw_dir": raw, "gt_poses": None, "gt_ply": None, "gt_refs": {},
             "manifest": json.loads((raw / "manifest.json").read_text())}
 
 
@@ -337,6 +381,7 @@ def scene_pano_sfm(exp, inputs, sdir: Path):
     rec = max(recs.values(), key=lambda r: r.num_reg_images())
     say("pano_sfm:", rec.summary().replace("\n", " | ")[:600])
     cams, pts = scene_io.from_pycolmap(rec, sdir / "images", scene_io.pano_of_name)
+    cams = hires_rig_views(exp, inputs, sdir, cams)
     refs = scene_io.pycolmap_points_by_pano(rec, scene_io.pano_of_name)
     within = scene_io.within_pano_spread(cams)
     say("pano_sfm within-panorama centre spread", within)
@@ -412,7 +457,8 @@ def run_experiment(exp, inputs):
             penv = os.environ.copy()
             penv["CUDA_VISIBLE_DEVICES"] = str(exp.get("gpu", 0))
             sh([sys.executable, HERE / "stage.py", "priors", "--scene", sdir, "--model", sdir, "--out", sdir,
-                "--priors", json.dumps({**pri, "views": exp["views"]})], env=penv, log=log)
+                "--priors", json.dumps({**pri, "views": exp["views"], "pano_dir": str(inputs["pano_dir"])})],
+               env=penv, log=log)
             cams, pts, meta = scene_io.read_scene(sdir)
             if (sdir / "vehicle_erp.npy").is_file():
                 from PIL import Image
@@ -486,7 +532,8 @@ def run_experiment(exp, inputs):
             shutil.copy2(scene_now / "scene.json", out / "scene.json")
         if exp.get("export"):
             args_e = [sys.executable, HERE / "stage.py", "export", "--scene", scene_now, "--model", model_dir,
-                      "--out", out / "game", "--pano-dir", inputs["pano_dir"]]
+                      "--out", out / "game", "--pano-dir", inputs["pano_dir"],
+                      "--atlas", str(exp.get("atlas", 8192))]
             if (OUT / "route_manifest.json").is_file():
                 args_e += ["--manifest", OUT / "route_manifest.json"]
             sh(args_e, env=env, log=log)
