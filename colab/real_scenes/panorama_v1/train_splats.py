@@ -233,7 +233,7 @@ def train(scene_dir: Path, out: Path, steps: int = 7000, cap: int = 1_000_000,
             params["means"], F.normalize(params["quats"], dim=-1), torch.exp(params["scales"]),
             torch.sigmoid(params["opacities"]), colors, v["V"][None], v["Kt"][None],
             v["w"], v["h"], sh_degree=sh_deg, render_mode="RGB+ED" if depth_weight > 0 else "RGB",
-            packed=True, absgrad=False,
+            packed=True, absgrad=False, tile_size=TILE[0],
         )
         return img[0], alpha[0], info
 
@@ -315,7 +315,8 @@ def train(scene_dir: Path, out: Path, steps: int = 7000, cap: int = 1_000_000,
             params["scales"].clamp_(max=MAX_LOG_SCALE)
 
     CROP = crop_px
-    MAX_LOG_SCALE = math.log(0.5)  # normalised units (~10 m); stops screen-filling splats
+    TILE = [32]  # 32 px tiles cut intersections ~4x for large splats; falls back to 16 if the kernel refuses
+    MAX_LOG_SCALE = math.log(0.15)  # normalised units (~3 m); stops screen-filling splats
     oom_skips = 0
     log_every = max(1, steps // 20)
     for step in range(steps):
@@ -343,9 +344,22 @@ def train(scene_dir: Path, out: Path, steps: int = 7000, cap: int = 1_000_000,
             del c
             torch.cuda.empty_cache()
             oom_skips += 1
-            if oom_skips > 200:
+            if oom_skips % 10 == 0 and CROP > 512:
+                # memory pressure grows as splats spread: train on smaller windows rather than stop
+                CROP = max(512, int(CROP * 0.85))
+                print(f"[train] out-of-memory x{oom_skips}: training window now {CROP} px", flush=True)
+            if oom_skips > 300:
                 print(f"[train] too many out-of-memory skips, stopping at step {step}", flush=True)
                 break
+            continue
+        except RuntimeError as exc:
+            if TILE[0] == 16:
+                raise
+            print(f"[train] tile size 32 failed ({str(exc)[:200]}), using 16", flush=True)
+            TILE[0] = 16
+            for o in list(opts.values()) + [opt_cc] + ([opt_env] if env is not None else []):
+                o.zero_grad(set_to_none=True)
+            torch.cuda.empty_cache()
             continue
         stepped(step, info, loss)
         if step % log_every == 0 or step == steps - 1:
@@ -365,7 +379,7 @@ def train(scene_dir: Path, out: Path, steps: int = 7000, cap: int = 1_000_000,
         print(f"[train] carved {carved} splats in proven-empty space", flush=True)
 
     # ---------------------------------------------------------------- eval
-    metrics = evaluate(params, val_v, render, env, ray_dirs_world, device)
+    metrics = evaluate(params, val_v, render, env, ray_dirs_world, device, tile=min(CROP, 768))
     metrics["carved_splats"] = carved
     metrics.update({"steps": steps, "splats": int(len(params["means"])),
                     "train_views": len(train_v), "val_views": len(val_v),
@@ -387,7 +401,7 @@ def train(scene_dir: Path, out: Path, steps: int = 7000, cap: int = 1_000_000,
     return metrics
 
 
-def evaluate(params, val_v, render, env, ray_dirs_world, device):
+def evaluate(params, val_v, render, env, ray_dirs_world, device, tile=768):
     import torch
 
     if not val_v:
@@ -402,9 +416,9 @@ def evaluate(params, val_v, render, env, ray_dirs_world, device):
     with torch.no_grad():
         for v in val_v:
             rgb = torch.zeros((v["h"], v["w"], 3), device=device)
-            for y0 in range(0, v["h"], 1024):
-                for x0 in range(0, v["w"], 1024):
-                    t = crop_view(v, x0, y0, min(1024, v["w"] - x0), min(1024, v["h"] - y0))
+            for y0 in range(0, v["h"], tile):
+                for x0 in range(0, v["w"], tile):
+                    t = crop_view(v, x0, y0, min(tile, v["w"] - x0), min(tile, v["h"] - y0))
                     out_img, alpha, _ = render(t, _sh_of(params))
                     part = out_img[..., :3]
                     if env is not None:

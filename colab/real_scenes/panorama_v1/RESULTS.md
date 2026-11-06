@@ -92,3 +92,10 @@ Both arms: 200 out-of-memory skips by step 5.1k once splats reached 6M (2.7-3.1 
 the final carve ran out of memory too. PanoVGGT did not run (omegaconf mismatch on Kaggle), so both arms used MoGe.
 Fix: train on random 1024 px windows of each full-res view (principal point shifted), render eval/off-path frames
 in 1024 px tiles, free optimiser state before the final carve, pin omegaconf 2.3.0 / hydra-core 1.3.2. Cap 5M.
+
+## H8 v3 (1024 px windows, 5M cap): stopped at step ~9k
+Got further (no out-of-memory until step ~6k), then skips climbed as splats spread and it stopped at 9.2k / 8.7k.
+PanoVGGT still fell back to MoGe (pinning omegaconf did not help). Fixes: gsplat 32 px tiles (about 4x fewer
+tile intersections for big splats, falls back to 16), max splat axis 3 m, the training window shrinks by 15% per
+10 out-of-memory skips (floor 512 px) instead of stopping, 768 px eval tiles; PanoVGGT config read with plain YAML
+(no OmegaConf), and checkpoint key mismatches are now reported instead of ignored.

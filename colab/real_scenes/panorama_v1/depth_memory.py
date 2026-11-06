@@ -258,7 +258,9 @@ def build_memory(cameras: list[dict], ref_points_by_pano: dict[str, np.ndarray],
             del pv
             torch.cuda.empty_cache()
         except Exception as exc:  # noqa: BLE001 - fall back to MoGe-2 rather than lose the run
-            source_error = f"{type(exc).__name__}: {exc}"[-600:]
+            import traceback
+
+            source_error = (f"{type(exc).__name__}: {exc} | " + traceback.format_exc()[-900:])[-1200:]
             log(f"[depth] PanoVGGT failed, falling back to MoGe-2: {source_error}")
             depth_source = "moge"
     scales, inliers, fused = [], [], []

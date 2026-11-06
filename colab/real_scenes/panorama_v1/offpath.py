@@ -138,7 +138,7 @@ def make_renderer(ck: dict, device: str = "cuda"):
             depth = img[0, ..., 3].cpu().numpy() if with_depth else None
         return out_rgb, a, depth
 
-    def render(V, K, w, h, with_depth=False, tile=1024):
+    def render(V, K, w, h, with_depth=False, tile=768):
         """Large frames are rendered in windows (shifted principal point) and stitched: one full-res
         pass over millions of splats overflows the tile-intersection buffer of a 16 GB T4."""
         if w * h <= tile * tile:

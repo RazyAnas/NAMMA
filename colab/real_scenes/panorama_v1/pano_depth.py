@@ -36,10 +36,6 @@ def setup(work: Path, log=print) -> Path:
 
         p = hf_hub_download("YijingGuo/PanoVGGT", "model.pt", local_dir=str(work / "hf"))
         Path(p).rename(ck)
-    # Kaggle ships a mismatched omegaconf ("omegaconf._impl has no attribute _eager_resolution"): pin a
-    # matching pair and reinstall it in place before anything imports it
-    subprocess.run([sys.executable, "-m", "pip", "install", "-q", "--force-reinstall", "--no-deps",
-                    "omegaconf==2.3.0", "hydra-core==1.3.2", "antlr4-python3-runtime==4.9.3"], check=False)
     subprocess.run([sys.executable, "-m", "pip", "install", "-q", "einops", "kornia"], check=False)
     log(f"[panovggt] code {code}, weights {ck.stat().st_size / 1e9:.2f} GB")
     return code
@@ -47,24 +43,29 @@ def setup(work: Path, log=print) -> Path:
 
 def load(work: Path, device: str = "cuda"):
     import torch
-    from omegaconf import OmegaConf
+    import yaml
 
     code = setup(work)
     sys.path.insert(0, str(code))
     from panovggt.models.panovggt_model import PanoVGGTModel
 
-    cfg = OmegaConf.load(code / "training" / "config" / "default.yaml")
-    OmegaConf.resolve(cfg)
-    mc = cfg.model
-    model = PanoVGGTModel(img_size=cfg.img_size, patch_size=cfg.patch_size, embed_dim=cfg.embed_dim,
-                          enable_camera=mc.enable_camera, enable_depth=mc.enable_depth, enable_point=mc.enable_point,
-                          aggregator=OmegaConf.to_container(mc.aggregator, resolve=True))
+    # plain YAML instead of OmegaConf: Kaggle's omegaconf build breaks on resolve(), and the model section
+    # only interpolates three top-level numbers
+    cfg = yaml.safe_load((code / "training" / "config" / "default.yaml").read_text())
+    mc = cfg["model"]
+    model = PanoVGGTModel(img_size=cfg["img_size"], patch_size=cfg["patch_size"], embed_dim=cfg["embed_dim"],
+                          enable_camera=mc["enable_camera"], enable_depth=mc["enable_depth"],
+                          enable_point=mc["enable_point"], aggregator=mc["aggregator"])
     ck = torch.load(Path(work) / "panovggt_model.pt", map_location="cpu", weights_only=False)
     for key in ("model_state_dict", "model", "state_dict"):
         if key in ck:
             ck = ck[key]
             break
-    model.load_state_dict({(k[7:] if k.startswith("module.") else k): v for k, v in ck.items()}, strict=False)
+    res = model.load_state_dict({(k[7:] if k.startswith("module.") else k): v for k, v in ck.items()}, strict=False)
+    print(f"[panovggt] weights loaded: {len(res.missing_keys)} missing, {len(res.unexpected_keys)} unexpected "
+          f"{res.missing_keys[:5]}", flush=True)
+    if len(res.missing_keys) > 10:
+        raise RuntimeError(f"PanoVGGT checkpoint does not match the model: {len(res.missing_keys)} missing keys")
     return model.to(device).eval()
 
 
