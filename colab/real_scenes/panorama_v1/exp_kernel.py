@@ -217,16 +217,35 @@ def scene_gt(exp, inputs, sdir: Path):
     return cams, pts, {"poses": "gt", "views": exp["views"], "colour_check": check}, refs
 
 
+import threading
+
+_SFM_LOCK = threading.Lock()
+
+
 def scene_pano_sfm(exp, inputs, sdir: Path):
+    """Rig-aware SfM, computed once per input/options and shared by experiments in this job."""
     import pycolmap
     import pycolmap.panorama as P
     import scene_io
 
-    opts = P.PanoramaReconstructionOptions(
-        matcher=P.Matcher(exp.get("matcher", "sequential")),
-        mapper=P.Mapper(exp.get("mapper", "incremental")),
-        use_gpu=False, show_progress=False)
-    recs = P.reconstruct(inputs["pano_dir"], sdir, opts)
+    key = f"{inputs['pano_dir'].name}-{exp.get('matcher', 'sequential')}-{exp.get('mapper', 'incremental')}"
+    shared = WORK / "panosfm" / key
+    with _SFM_LOCK:
+        if not (shared / ".ok").exists():
+            opts = P.PanoramaReconstructionOptions(
+                matcher=P.Matcher(exp.get("matcher", "sequential")),
+                mapper=P.Mapper(exp.get("mapper", "incremental")),
+                use_gpu=False, show_progress=False)
+            shared.mkdir(parents=True, exist_ok=True)
+            P.reconstruct(inputs["pano_dir"], shared, opts)
+            (shared / ".ok").touch()
+    sdir.mkdir(parents=True, exist_ok=True)
+    if not (sdir / "images").exists():
+        (sdir / "images").symlink_to(shared / "images")
+    recs = {}
+    for d in sorted((shared / "sparse").iterdir()):
+        if (d / "images.bin").is_file() or (d / "images.txt").is_file():
+            recs[int(d.name)] = pycolmap.Reconstruction(str(d))
     if not recs:
         raise RuntimeError("pycolmap.panorama produced no reconstruction")
     rec = max(recs.values(), key=lambda r: r.num_reg_images())
