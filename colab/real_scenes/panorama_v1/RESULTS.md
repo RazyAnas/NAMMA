@@ -86,3 +86,9 @@ Both arms ran out of GPU memory at step 10k (no fill) and 15k (fill) inside gspl
 splats grew large on screen late in training. Priors were fine (480 views masked, 386/480 depth-aligned,
 scale log-std 0.19). Fix (trainer): packed rasterisation, max splat axis 10 m, skip a view on OOM, and a scale-free
 depth loss (the old inverse-depth L1 spiked on close road views). H8 relaunched with the fix, plus H9 densify on the MoGe arm.
+
+## H8 v2 (8K panoramas, 1600 px, 6M cap): stopped at step ~5.1k
+Both arms: 200 out-of-memory skips by step 5.1k once splats reached 6M (2.7-3.1 GB intersection buffer), then
+the final carve ran out of memory too. PanoVGGT did not run (omegaconf mismatch on Kaggle), so both arms used MoGe.
+Fix: train on random 1024 px windows of each full-res view (principal point shifted), render eval/off-path frames
+in 1024 px tiles, free optimiser state before the final carve, pin omegaconf 2.3.0 / hydra-core 1.3.2. Cap 5M.

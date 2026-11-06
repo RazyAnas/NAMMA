@@ -121,7 +121,7 @@ def train(scene_dir: Path, out: Path, steps: int = 7000, cap: int = 1_000_000,
           sky: bool = False, aniso_max: float = 10.0, aniso_weight: float = 0.0,
           scale_reg: float = 0.01, opacity_reg: float = 0.01, max_minutes: float = 600.0,
           seed: int = 0, device: str = "cuda", carve: bool = False, carve_every: int = 500,
-          init_ckpt: Path | None = None, lr_scale: float = 1.0) -> dict:
+          init_ckpt: Path | None = None, lr_scale: float = 1.0, crop_px: int = 1024) -> dict:
     import torch
     import torch.nn.functional as F
     from gsplat import rasterization
@@ -253,6 +253,13 @@ def train(scene_dir: Path, out: Path, steps: int = 7000, cap: int = 1_000_000,
         return torch.stack([d @ right, d @ upv, d @ fwd], -1)
 
     def step_loss(v, c, i, sh_deg, step):
+        # high-res views: train on a random window (principal point shifted) so the tile-intersection
+        # buffer stays inside a 16 GB T4 while every pixel keeps its full resolution
+        if v["w"] * v["h"] > CROP * CROP:
+            cw, ch = min(CROP, v["w"]), min(CROP, v["h"])
+            x0, y0 = np.random.randint(0, v["w"] - cw + 1), np.random.randint(0, v["h"] - ch + 1)
+            v = crop_view(v, x0, y0, cw, ch)
+            c = {k: (None if t is None else t[y0:y0 + ch, x0:x0 + cw]) for k, t in c.items()}
         out_img, alpha, info = render(v, sh_deg)
         rgb = out_img[..., :3]
         if env is not None:
@@ -307,6 +314,7 @@ def train(scene_dir: Path, out: Path, steps: int = 7000, cap: int = 1_000_000,
         with torch.no_grad():
             params["scales"].clamp_(max=MAX_LOG_SCALE)
 
+    CROP = crop_px
     MAX_LOG_SCALE = math.log(0.5)  # normalised units (~10 m); stops screen-filling splats
     oom_skips = 0
     log_every = max(1, steps // 20)
@@ -344,6 +352,8 @@ def train(scene_dir: Path, out: Path, steps: int = 7000, cap: int = 1_000_000,
             print(f"[train] step {step}/{steps} loss {loss.item():.4f} splats {len(params['means'])} "
                   f"oom-skips {oom_skips} {(time.time() - t0) / 60:.1f} min", flush=True)
 
+    opts.clear(); state.clear()
+    torch.cuda.empty_cache()
     carved = 0
     if grid is not None:
         dead = carve_now(final=True)
@@ -391,10 +401,15 @@ def evaluate(params, val_v, render, env, ray_dirs_world, device):
     psnr, psnr_cc, ssims, lp = [], [], [], []
     with torch.no_grad():
         for v in val_v:
-            out_img, alpha, _ = render(v, _sh_of(params))
-            rgb = out_img[..., :3]
-            if env is not None:
-                rgb = rgb + (1 - alpha) * sky_colour(torch.sigmoid(env), ray_dirs_world(v))
+            rgb = torch.zeros((v["h"], v["w"], 3), device=device)
+            for y0 in range(0, v["h"], 1024):
+                for x0 in range(0, v["w"], 1024):
+                    t = crop_view(v, x0, y0, min(1024, v["w"] - x0), min(1024, v["h"] - y0))
+                    out_img, alpha, _ = render(t, _sh_of(params))
+                    part = out_img[..., :3]
+                    if env is not None:
+                        part = part + (1 - alpha) * sky_colour(torch.sigmoid(env), ray_dirs_world(t))
+                    rgb[y0:y0 + t["h"], x0:x0 + t["w"]] = part
             rgb = rgb.clamp(0, 1)
             gt = torch.from_numpy(v["rgb"]).to(device).float() / 255.0
             mask = None if v["mask"] is None else torch.from_numpy(v["mask"]).to(device).bool()
@@ -411,6 +426,14 @@ def evaluate(params, val_v, render, env, ray_dirs_world, device):
                 lp.append(float(lpips(rgb.permute(2, 0, 1)[None], gt.permute(2, 0, 1)[None])))
     return {"psnr": float(np.mean(psnr)), "psnr_exposure_fair": float(np.mean(psnr_cc)),
             "ssim": float(np.mean(ssims)), "lpips": float(np.mean(lp)) if lp else None}
+
+
+def crop_view(v: dict, x0: int, y0: int, cw: int, ch: int) -> dict:
+    """The same camera restricted to a pixel window: shift the principal point, keep the focal length."""
+    K = v["Kt"].clone()
+    K[0, 2] -= x0
+    K[1, 2] -= y0
+    return {**v, "Kt": K, "w": int(cw), "h": int(ch)}
 
 
 def _sh_of(params) -> int:
@@ -455,10 +478,11 @@ def main():
     p.add_argument("--carve", action="store_true")
     p.add_argument("--init-ckpt", type=Path)
     p.add_argument("--lr-scale", type=float, default=1.0)
+    p.add_argument("--crop", type=int, default=1024)
     a = p.parse_args()
     train(a.scene, a.out, a.steps, a.cap, a.long_side, a.sh_degree, a.depth_weight,
           a.sky, aniso_weight=a.aniso_weight, max_minutes=a.max_minutes, carve=a.carve,
-          init_ckpt=a.init_ckpt, lr_scale=a.lr_scale)
+          init_ckpt=a.init_ckpt, lr_scale=a.lr_scale, crop_px=a.crop)
 
 
 if __name__ == "__main__":

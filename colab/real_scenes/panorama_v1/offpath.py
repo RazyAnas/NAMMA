@@ -109,7 +109,7 @@ def make_renderer(ck: dict, device: str = "cuda"):
     sh_deg = int(ck.get("sh_degree", 0))
     env = None if ck.get("env") is None else ck["env"].to(device)
 
-    def render(V, K, w, h, with_depth=False):
+    def render_tile(V, K, w, h, with_depth=False):
         with torch.no_grad():
             colors = torch.cat([params["sh0"], params["shN"]], 1)
             img, alpha, _ = rasterization(
@@ -137,6 +137,27 @@ def make_renderer(ck: dict, device: str = "cuda"):
             a = alpha[0, ..., 0].cpu().numpy()
             depth = img[0, ..., 3].cpu().numpy() if with_depth else None
         return out_rgb, a, depth
+
+    def render(V, K, w, h, with_depth=False, tile=1024):
+        """Large frames are rendered in windows (shifted principal point) and stitched: one full-res
+        pass over millions of splats overflows the tile-intersection buffer of a 16 GB T4."""
+        if w * h <= tile * tile:
+            return render_tile(V, K, w, h, with_depth)
+        rgb = np.zeros((h, w, 3), np.uint8)
+        a = np.zeros((h, w), np.float32)
+        depth = np.zeros((h, w), np.float32) if with_depth else None
+        for y0 in range(0, h, tile):
+            for x0 in range(0, w, tile):
+                cw, ch = min(tile, w - x0), min(tile, h - y0)
+                Kc = np.array(K, dtype=np.float64).copy()
+                Kc[0, 2] -= x0
+                Kc[1, 2] -= y0
+                r, al, d = render_tile(V, Kc, cw, ch, with_depth)
+                rgb[y0:y0 + ch, x0:x0 + cw] = r
+                a[y0:y0 + ch, x0:x0 + cw] = al
+                if with_depth:
+                    depth[y0:y0 + ch, x0:x0 + cw] = d
+        return rgb, a, depth
 
     return render
 

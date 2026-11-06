@@ -36,8 +36,11 @@ def setup(work: Path, log=print) -> Path:
 
         p = hf_hub_download("YijingGuo/PanoVGGT", "model.pt", local_dir=str(work / "hf"))
         Path(p).rename(ck)
-    subprocess.run([sys.executable, "-m", "pip", "install", "-q", "omegaconf", "einops", "kornia", "hydra-core"],
-                   check=False)
+    # Kaggle ships a mismatched omegaconf ("omegaconf._impl has no attribute _eager_resolution"): pin a
+    # matching pair and reinstall it in place before anything imports it
+    subprocess.run([sys.executable, "-m", "pip", "install", "-q", "--force-reinstall", "--no-deps",
+                    "omegaconf==2.3.0", "hydra-core==1.3.2", "antlr4-python3-runtime==4.9.3"], check=False)
+    subprocess.run([sys.executable, "-m", "pip", "install", "-q", "einops", "kornia"], check=False)
     log(f"[panovggt] code {code}, weights {ck.stat().st_size / 1e9:.2f} GB")
     return code
 
