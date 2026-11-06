@@ -23,3 +23,23 @@ def test_erp_mask_to_view_front_and_back():
     front = masks.erp_mask_to_view(erp, scene_io.legacy_crop_rotation(0), K, 40, 40)
     back = masks.erp_mask_to_view(erp, scene_io.legacy_crop_rotation(180), K, 40, 40)
     assert not front[20, 20] and back[20, 20]
+
+
+def test_detected_vehicle_mask_projects_downward_view_back_to_panorama(tmp_path, monkeypatch):
+    # fake detector: masks a disc in the centre of the downward view (= straight below the camera)
+    class Fake:
+        def __init__(self, *a, **k):
+            pass
+
+        def __call__(self, img, prompt=None):
+            h, w = img.shape[:2]
+            yy, xx = np.mgrid[0:h, 0:w]
+            return ((yy - h / 2) ** 2 + (xx - w / 2) ** 2) > (0.2 * w) ** 2
+
+    monkeypatch.setattr(masks, "DynamicMasker", Fake)
+    for i in range(4):
+        Image.fromarray(np.full((256, 512, 3), 128, np.uint8)).save(tmp_path / f"{i}.jpg")
+    keep = masks.detected_vehicle_mask(tmp_path, device="cpu", samples=4, width=512)
+    assert keep.shape == (256, 512)
+    assert not keep[-1, 100] and not keep[-3, 400]   # nadir rows masked at every azimuth
+    assert keep[0, 100] and keep[128, 256]           # top and horizon kept

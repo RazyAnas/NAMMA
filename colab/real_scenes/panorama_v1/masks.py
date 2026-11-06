@@ -58,6 +58,66 @@ def static_vehicle_mask(pano_dir, max_panos: int = 60, width: int = 1024,
     return keep
 
 
+def detected_vehicle_mask(pano_dir, device: str = "cuda", samples: int = 12, width: int = 1024,
+                          vote: float = 0.5, log=print) -> np.ndarray | None:
+    """ERP keep-mask (True = keep) from a detector vote over straight-down views.
+
+    A shiny bonnet reflects the passing street, so pixel statistics miss it; its
+    silhouette, however, is identical in every panorama. Grounding DINO + SAM 2
+    segment it in a 140 deg downward view of several panoramas, each result is
+    projected back to the panorama, and pixels masked in >= vote of them form the
+    vehicle mask.
+    """
+    import math
+    from pathlib import Path
+    from PIL import Image
+
+    files = sorted(p for p in Path(pano_dir).iterdir() if p.suffix.lower() in (".jpg", ".jpeg", ".png"))
+    if not files:
+        return None
+    try:
+        masker = DynamicMasker(device, box_threshold=0.25)
+    except Exception as exc:  # noqa: BLE001
+        log(f"[vehicle] detector unavailable: {exc}")
+        return None
+    pick = [files[i] for i in np.linspace(0, len(files) - 1, min(samples, len(files))).round().astype(int)]
+    size, fov = 768, 140.0
+    f = size / 2 / math.tan(math.radians(fov / 2))
+    K = np.array([[f, 0, size / 2], [0, f, size / 2], [0, 0, 1.0]])
+    # camera looking straight down in pycolmap pano axes (y down): cam z = pano +y, cam y = pano -z
+    R = np.array([[1.0, 0, 0], [0, 0, -1.0], [0, 1.0, 0]])  # cam_from_pano
+    H, W = width // 2, width
+    votes = np.zeros((H, W), np.float32)
+    ys, xs = np.mgrid[0:H, 0:W]
+    lon = ((xs + 0.5) / W * 2 - 1) * math.pi
+    lat = (0.5 - (ys + 0.5) / H) * math.pi
+    d_pano = np.stack([np.cos(lat) * np.sin(lon), -np.sin(lat), np.cos(lat) * np.cos(lon)], -1)
+    d_cam = d_pano @ R.T
+    front = d_cam[..., 2] > 1e-3
+    u = np.where(front, d_cam[..., 0] / np.maximum(d_cam[..., 2], 1e-3) * f + size / 2, -1)
+    v = np.where(front, d_cam[..., 1] / np.maximum(d_cam[..., 2], 1e-3) * f + size / 2, -1)
+    inside = front & (u >= 0) & (u < size) & (v >= 0) & (v < size)
+    ui, vi = u.astype(int).clip(0, size - 1), v.astype(int).clip(0, size - 1)
+    for fp in pick:
+        pano = np.asarray(Image.open(fp).convert("RGB").resize((W, H)))
+        yy, xx = np.mgrid[0:size, 0:size]
+        rc = np.stack([(xx + 0.5 - size / 2) / f, (yy + 0.5 - size / 2) / f, np.ones((size, size))], -1)
+        rp = rc @ R  # cam -> pano
+        yaw = np.arctan2(rp[..., 0], rp[..., 2])
+        pitch = -np.arctan2(rp[..., 1], np.hypot(rp[..., 0], rp[..., 2]))
+        pu = (((1 + yaw / math.pi) / 2) * W).astype(int) % W
+        pv = np.clip(((1 - pitch * 2 / math.pi) / 2 * H).astype(int), 0, H - 1)
+        view = pano[pv, pu]
+        keep_view = masker(view, prompt="car hood. car bonnet. vehicle. car roof. bicycle. motorcycle.")
+        hit = np.zeros((H, W), bool)
+        hit[inside] = ~keep_view[vi[inside], ui[inside]]
+        votes += hit
+    frac = votes / len(pick)
+    keep = ~(frac >= vote)
+    log(f"[vehicle] detector vote over {len(pick)} panoramas masks {1 - keep.mean():.3%}")
+    return keep
+
+
 def erp_mask_to_view(erp_keep: np.ndarray, cam_from_pano: np.ndarray, K: np.ndarray, w: int, h: int) -> np.ndarray:
     """Sample an ERP mask into a perspective view (pycolmap panorama conventions)."""
     H, W = erp_keep.shape
@@ -97,14 +157,14 @@ class DynamicMasker:
         self.sam = Sam2Model.from_pretrained("facebook/sam2.1-hiera-large",
                                              torch_dtype=torch.float32).to(device).eval()
 
-    def __call__(self, image_rgb: np.ndarray) -> np.ndarray:
+    def __call__(self, image_rgb: np.ndarray, prompt: str | None = None) -> np.ndarray:
         """True = keep pixel (no moving object)."""
         import torch
         from PIL import Image
 
         im = Image.fromarray(image_rgb)
         with torch.no_grad():
-            inputs = self.det_proc(images=im, text=PROMPT, return_tensors="pt").to(self.device)
+            inputs = self.det_proc(images=im, text=prompt or PROMPT, return_tensors="pt").to(self.device)
             out = self.det(**inputs)
             res = self.det_proc.post_process_grounded_object_detection(
                 out, inputs.input_ids, threshold=self.box_threshold, text_threshold=0.25,

@@ -53,7 +53,7 @@ def install_env():
         return
     WORK.mkdir(parents=True, exist_ok=True)
     pkgs = ["gsplat==1.5.3", "pycolmap==4.2.1", "plyfile", "torchmetrics[image]", "ninja", "huggingface_hub",
-            "trimesh", "scikit-image", "fast-simplification"]
+            "trimesh", "scikit-image", "fast-simplification", "piexif"]
     sh([sys.executable, "-m", "pip", "install", "-q", *pkgs])
     if os.environ.get("NAMMA_NEED_FILL"):
         sh([sys.executable, "-m", "pip", "install", "-q", "diffusers>=0.33", "accelerate", "peft", "opencv-python-headless"])
@@ -136,6 +136,20 @@ def remove_capture_vehicle(inputs: dict, enabled: bool = True) -> dict:
         return inputs
     src = inputs["pano_dir"]
     keep = masks_mod.static_vehicle_mask(src)
+    det = None
+    det_path = WORK / f"vehicle-det-{src.name}.npy"
+    if not det_path.exists():
+        venv = os.environ.copy()
+        venv["CUDA_VISIBLE_DEVICES"] = "0"
+        sh([sys.executable, HERE / "stage.py", "vehicle", "--scene", src, "--model", src, "--out", det_path],
+           env=venv, check=False)
+    if det_path.exists():
+        det = np.load(det_path)
+    if det is not None:
+        import cv2
+
+        det = cv2.resize(det.astype("uint8"), (keep.shape[1], keep.shape[0]), interpolation=cv2.INTER_NEAREST) > 0
+        keep = keep & cv2.erode(det.astype("uint8"), np.ones((7, 7), np.uint8)).astype(bool)
     frac = 1 - float(keep.mean())
     inputs["vehicle_erp"] = keep
     Image.fromarray((keep * 255).astype("uint8")).save(OUT / "vehicle_mask_erp.png")
@@ -160,6 +174,23 @@ def remove_capture_vehicle(inputs: dict, enabled: bool = True) -> dict:
     return inputs
 
 
+def gps_exif(lat, lon) -> bytes:
+    """EXIF with only GPS lat/lon, so COLMAP stores a position prior for spatial matching."""
+    import piexif
+
+    if lat is None or lon is None:
+        return b""
+
+    def dms(x):
+        x = abs(float(x))
+        d = int(x); m = int((x - d) * 60); s_ = (x - d - m / 60) * 3600
+        return ((d, 1), (m, 1), (int(round(s_ * 10000)), 10000))
+
+    gps = {piexif.GPSIFD.GPSLatitudeRef: b"N" if lat >= 0 else b"S", piexif.GPSIFD.GPSLatitude: dms(lat),
+           piexif.GPSIFD.GPSLongitudeRef: b"E" if lon >= 0 else b"W", piexif.GPSIFD.GPSLongitude: dms(lon)}
+    return piexif.dump({"GPS": gps})
+
+
 def panoramax_inputs(cfg) -> dict:
     """Street-level 360 route from Panoramax (open data, no key), resized to pano_width."""
     from PIL import Image
@@ -172,8 +203,11 @@ def panoramax_inputs(cfg) -> dict:
     pano_dir = WORK / f"{raw.name}-{width}"
     if not (pano_dir / ".ok").exists():
         pano_dir.mkdir(parents=True, exist_ok=True)
+        man = json.loads((raw / "manifest.json").read_text())
+        gps = {e["image"]: (e.get("lat"), e.get("lon")) for e in man["panoramas"]}
         for p in sorted(raw.glob("*.jpg")):
-            Image.open(p).convert("RGB").resize((width, width // 2), Image.LANCZOS).save(pano_dir / p.name, quality=95)
+            Image.open(p).convert("RGB").resize((width, width // 2), Image.LANCZOS).save(
+                pano_dir / p.name, quality=95, exif=gps_exif(*gps.get(p.name, (None, None))))
         (pano_dir / ".ok").touch()
     shutil.copy2(raw / "manifest.json", OUT / "route_manifest.json")
     return {"pano_dir": pano_dir, "gt_poses": None, "gt_ply": None, "gt_refs": {},

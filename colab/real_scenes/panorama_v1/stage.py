@@ -48,7 +48,7 @@ def run_priors(sdir: Path, pri: dict, log):
 
 def main():
     p = argparse.ArgumentParser()
-    p.add_argument("stage", choices=["fill", "fixer", "export", "priors"])
+    p.add_argument("stage", choices=["fill", "fixer", "export", "priors", "vehicle"])
     p.add_argument("--priors", default="{}")
     p.add_argument("--pano-dir", type=Path)
     p.add_argument("--manifest", type=Path)
@@ -59,6 +59,15 @@ def main():
     p.add_argument("--max-views", type=int, default=160)
     a = p.parse_args()
     log = lambda *x: print(*x, flush=True)  # noqa: E731
+    if a.stage == "vehicle":
+        import numpy as np
+
+        import masks as masks_mod
+
+        keep = masks_mod.detected_vehicle_mask(a.scene, device="cuda", log=log)
+        if keep is not None:
+            np.save(a.out, keep)
+        return
     if a.stage == "priors":
         run_priors(a.scene, json.loads(a.priors), log)
         return
