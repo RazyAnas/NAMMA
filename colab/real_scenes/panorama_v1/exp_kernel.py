@@ -153,6 +153,10 @@ def remove_capture_vehicle(inputs: dict, enabled: bool = True) -> dict:
     frac = 1 - float(keep.mean())
     inputs["vehicle_erp"] = keep
     Image.fromarray((keep * 255).astype("uint8")).save(OUT / "vehicle_mask_erp.png")
+    first = sorted(src.glob("*.jpg"))[0]
+    pano = np.asarray(Image.open(first).convert("RGB").resize((keep.shape[1], keep.shape[0])))
+    over = np.where(keep[..., None], pano, (0.45 * pano + 0.55 * np.array([255, 0, 255])).astype("uint8"))
+    Image.fromarray(over.astype("uint8")).save(OUT / "vehicle_mask_overlay.jpg", quality=88)
     say(f"capture vehicle covers {frac:.3%} of each panorama")
     if frac < 0.002:
         return inputs
@@ -160,6 +164,7 @@ def remove_capture_vehicle(inputs: dict, enabled: bool = True) -> dict:
     if not (dst / ".ok").exists():
         dst.mkdir(parents=True, exist_ok=True)
         for p in sorted(src.glob("*.jpg")):
+            exif = Image.open(p).info.get("exif", b"")  # keep GPS: COLMAP's spatial matcher needs it
             img = cv2.imread(str(p))
             m = cv2.resize((~keep).astype("uint8"), (img.shape[1], img.shape[0]), interpolation=cv2.INTER_NEAREST)
             m = cv2.dilate(m, np.ones((15, 15), np.uint8))
@@ -168,14 +173,15 @@ def remove_capture_vehicle(inputs: dict, enabled: bool = True) -> dict:
             fill = cv2.resize(cv2.inpaint(small, ms, 7, cv2.INPAINT_TELEA), (img.shape[1], img.shape[0]),
                               interpolation=cv2.INTER_LINEAR)
             fill = cv2.GaussianBlur(fill, (31, 31), 0)  # featureless: nothing for SIFT to match
-            cv2.imwrite(str(dst / p.name), np.where(m[..., None] > 0, fill, img), [cv2.IMWRITE_JPEG_QUALITY, 95])
+            out_bgr = np.where(m[..., None] > 0, fill, img)
+            Image.fromarray(out_bgr[..., ::-1]).save(dst / p.name, quality=95, exif=exif)
         (dst / ".ok").touch()
     inputs["pano_dir"] = dst
     return inputs
 
 
-def gps_exif(lat, lon) -> bytes:
-    """EXIF with only GPS lat/lon, so COLMAP stores a position prior for spatial matching."""
+def gps_exif(lat, lon, alt: float = 35.0) -> bytes:
+    """EXIF with GPS lat/lon/alt only. COLMAP stores a position prior only when all three exist."""
     import piexif
 
     if lat is None or lon is None:
@@ -187,7 +193,8 @@ def gps_exif(lat, lon) -> bytes:
         return ((d, 1), (m, 1), (int(round(s_ * 10000)), 10000))
 
     gps = {piexif.GPSIFD.GPSLatitudeRef: b"N" if lat >= 0 else b"S", piexif.GPSIFD.GPSLatitude: dms(lat),
-           piexif.GPSIFD.GPSLongitudeRef: b"E" if lon >= 0 else b"W", piexif.GPSIFD.GPSLongitude: dms(lon)}
+           piexif.GPSIFD.GPSLongitudeRef: b"E" if lon >= 0 else b"W", piexif.GPSIFD.GPSLongitude: dms(lon),
+           piexif.GPSIFD.GPSAltitudeRef: 0, piexif.GPSIFD.GPSAltitude: (int(round(alt * 100)), 100)}
     return piexif.dump({"GPS": gps})
 
 

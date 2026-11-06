@@ -31,7 +31,7 @@ def test_detected_vehicle_mask_projects_downward_view_back_to_panorama(tmp_path,
         def __init__(self, *a, **k):
             pass
 
-        def __call__(self, img, prompt=None):
+        def __call__(self, img, prompt=None, **kw):
             h, w = img.shape[:2]
             yy, xx = np.mgrid[0:h, 0:w]
             return ((yy - h / 2) ** 2 + (xx - w / 2) ** 2) > (0.2 * w) ** 2

@@ -59,7 +59,7 @@ def static_vehicle_mask(pano_dir, max_panos: int = 60, width: int = 1024,
 
 
 def detected_vehicle_mask(pano_dir, device: str = "cuda", samples: int = 12, width: int = 1024,
-                          vote: float = 0.5, log=print) -> np.ndarray | None:
+                          vote: float = 0.6, log=print) -> np.ndarray | None:
     """ERP keep-mask (True = keep) from a detector vote over straight-down views.
 
     A shiny bonnet reflects the passing street, so pixel statistics miss it; its
@@ -108,7 +108,7 @@ def detected_vehicle_mask(pano_dir, device: str = "cuda", samples: int = 12, wid
         pu = (((1 + yaw / math.pi) / 2) * W).astype(int) % W
         pv = np.clip(((1 - pitch * 2 / math.pi) / 2 * H).astype(int), 0, H - 1)
         view = pano[pv, pu]
-        keep_view = masker(view, prompt="car hood. car bonnet. vehicle. car roof. bicycle. motorcycle.")
+        keep_view = masker(view, prompt="car hood. car roof. bicycle handlebar.", max_area=0.7)
         hit = np.zeros((H, W), bool)
         hit[inside] = ~keep_view[vi[inside], ui[inside]]
         votes += hit
@@ -157,8 +157,8 @@ class DynamicMasker:
         self.sam = Sam2Model.from_pretrained("facebook/sam2.1-hiera-large",
                                              torch_dtype=torch.float32).to(device).eval()
 
-    def __call__(self, image_rgb: np.ndarray, prompt: str | None = None) -> np.ndarray:
-        """True = keep pixel (no moving object)."""
+    def __call__(self, image_rgb: np.ndarray, prompt: str | None = None, max_area: float = 1.0) -> np.ndarray:
+        """True = keep pixel (no moving object). Instances covering more than max_area of the image are ignored."""
         import torch
         from PIL import Image
 
@@ -176,7 +176,11 @@ class DynamicMasker:
             sin = self.sam_proc(images=im, input_boxes=[boxes], return_tensors="pt").to(self.device)
             so = self.sam(**sin, multimask_output=False)
             masks = self.sam_proc.post_process_masks(so.pred_masks.cpu(), sin["original_sizes"])[0]
-            m = masks.numpy().reshape(len(boxes), *image_rgb.shape[:2]).any(0)
+            inst = masks.numpy().reshape(len(boxes), *image_rgb.shape[:2])
+            inst = [mk for mk in inst if mk.mean() <= max_area]
+            if not inst:
+                return keep
+            m = np.stack(inst).any(0)
         # grow a little: motion blur and shadows sit just outside the outline
         import cv2
 
