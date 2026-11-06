@@ -44,8 +44,8 @@ def kernel_id(tag: str) -> str:
 def build_script(config: dict) -> str:
     buf = io.BytesIO()
     with tarfile.open(fileobj=buf, mode="w:gz") as tar:
-        for path in sorted(HERE.glob("*.py")):
-            tar.add(path, arcname=path.name)
+        for path in sorted(list(HERE.glob("*.py")) + list(HERE.glob("fixer_shim/**/*.py"))):
+            tar.add(path, arcname=str(path.relative_to(HERE)))
     blob = base64.b64encode(buf.getvalue()).decode()
     return (
         "import base64, io, json, os, sys, tarfile\n"

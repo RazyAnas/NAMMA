@@ -120,7 +120,8 @@ def train(scene_dir: Path, out: Path, steps: int = 7000, cap: int = 1_000_000,
           long_side: int = 960, sh_degree: int = 1, depth_weight: float = 0.0,
           sky: bool = False, aniso_max: float = 10.0, aniso_weight: float = 0.0,
           scale_reg: float = 0.01, opacity_reg: float = 0.01, max_minutes: float = 600.0,
-          seed: int = 0, device: str = "cuda", carve: bool = False, carve_every: int = 500) -> dict:
+          seed: int = 0, device: str = "cuda", carve: bool = False, carve_every: int = 500,
+          init_ckpt: Path | None = None, lr_scale: float = 1.0) -> dict:
     import torch
     import torch.nn.functional as F
     from gsplat import rasterization
@@ -132,8 +133,13 @@ def train(scene_dir: Path, out: Path, steps: int = 7000, cap: int = 1_000_000,
     out = Path(out)
     out.mkdir(parents=True, exist_ok=True)
     cameras, points, meta = scene_io.read_scene(scene_dir)
-    centre, scale = normalisation(cameras)
-    up_world = scene_io.world_up_from_cameras(cameras)
+    ck0 = None
+    if init_ckpt:
+        ck0 = torch.load(init_ckpt, map_location=device, weights_only=False)
+        centre, scale, up_world = np.asarray(ck0["centre"]), float(ck0["scale"]), np.asarray(ck0["up"])
+    else:
+        centre, scale = normalisation(cameras)
+        up_world = scene_io.world_up_from_cameras([c for c in cameras if c.get("kind") != "generated"])
 
     views = load_views(cameras, long_side)
     train_v = [v for v in views if v["cam"]["split"] == "train"]
@@ -171,9 +177,13 @@ def train(scene_dir: Path, out: Path, steps: int = 7000, cap: int = 1_000_000,
         "sh0": torch.nn.Parameter(((torch.tensor(rgb, dtype=torch.float32, device=device) - 0.5) / C0)[:, None, :]),
         "shN": torch.nn.Parameter(torch.zeros((n, K_sh - 1, 3), device=device)),
     })
+    if ck0 is not None:
+        params = torch.nn.ParameterDict({k: torch.nn.Parameter(v.to(device).float())
+                                         for k, v in ck0["params"].items()})
     scene_scale = 1.0
     lrs = {"means": 1.6e-4 * scene_scale, "scales": 5e-3, "quats": 1e-3,
            "opacities": 5e-2, "sh0": 2.5e-3, "shN": 2.5e-3 / 20}
+    lrs = {k: v * lr_scale for k, v in lrs.items()}
     opts = {k: torch.optim.Adam([params[k]], lr=lrs[k], eps=1e-15) for k in params}
 
     # per-view colour affine (exposure / white balance), identity at start
@@ -183,7 +193,10 @@ def train(scene_dir: Path, out: Path, steps: int = 7000, cap: int = 1_000_000,
 
     env = None
     if sky:
-        env = torch.nn.Parameter(torch.full((1, 3, 256, 512), 0.6, device=device))
+        init_env = (torch.logit(ck0["env"].to(device).clamp(1e-3, 1 - 1e-3))
+                    if ck0 is not None and ck0.get("env") is not None
+                    else torch.full((1, 3, 256, 512), 0.4, device=device))
+        env = torch.nn.Parameter(init_env)
         opt_env = torch.optim.Adam([env], lr=1e-2)
     up_n = torch.tensor(up_world, dtype=torch.float32, device=device)
 
@@ -191,7 +204,12 @@ def train(scene_dir: Path, out: Path, steps: int = 7000, cap: int = 1_000_000,
     if carve:
         import depth_memory
 
-        grid = depth_memory.build_carve_grid(cameras, centre, scale, out / "carve.pt", device=device)
+        if init_ckpt and (Path(init_ckpt).parent / "carve.pt").is_file():
+            grid = depth_memory.CarveGrid.load(Path(init_ckpt).parent / "carve.pt", device)
+            grid.save(out / "carve.pt")
+        else:
+            grid = depth_memory.build_carve_grid(cameras, centre, scale, out / "carve.pt", points=points,
+                                                 device=device)
         print(f"[train] carve grid: {int((grid.empty >= 2).sum())} seen-empty voxels", flush=True)
 
     def carve_now(final=False):
@@ -412,9 +430,12 @@ def main():
     p.add_argument("--aniso-weight", type=float, default=0.0)
     p.add_argument("--max-minutes", type=float, default=600)
     p.add_argument("--carve", action="store_true")
+    p.add_argument("--init-ckpt", type=Path)
+    p.add_argument("--lr-scale", type=float, default=1.0)
     a = p.parse_args()
     train(a.scene, a.out, a.steps, a.cap, a.long_side, a.sh_degree, a.depth_weight,
-          a.sky, aniso_weight=a.aniso_weight, max_minutes=a.max_minutes, carve=a.carve)
+          a.sky, aniso_weight=a.aniso_weight, max_minutes=a.max_minutes, carve=a.carve,
+          init_ckpt=a.init_ckpt, lr_scale=a.lr_scale)
 
 
 if __name__ == "__main__":

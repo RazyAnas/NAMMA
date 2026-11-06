@@ -72,7 +72,7 @@ def offpath_cameras(cameras, centre, scale, up, count: int = 10):
     return cams
 
 
-def scorecard(params, radius_units: float = 3.0) -> dict:
+def scorecard(params, radius_units: float = 10.0, grid=None) -> dict:
     import torch
 
     with torch.no_grad():
@@ -90,7 +90,52 @@ def scorecard(params, radius_units: float = 3.0) -> dict:
             "opacity_below_0_05": float((op < 0.05).float().mean()),
             "floater_fraction_far": float((r > radius_units).float().mean()),
             "floater_fraction_far_visible": float(((r > radius_units) & (op > 0.2)).float().mean()),
+            "floater_fraction_in_seen_empty_space": (float(grid.is_empty(means).float().mean())
+                                                     if grid is not None else None),
         }
+
+
+def make_renderer(ck: dict, device: str = "cuda"):
+    """render(V, K, w, h, with_depth=False) -> (rgb uint8, alpha [H,W], depth [H,W] normalised or None)."""
+    import torch
+    import torch.nn.functional as F
+    from gsplat import rasterization
+
+    params = {k: v.to(device) for k, v in ck["params"].items()}
+    up = np.asarray(ck["up"])
+    sh_deg = int(ck.get("sh_degree", 0))
+    env = None if ck.get("env") is None else ck["env"].to(device)
+
+    def render(V, K, w, h, with_depth=False):
+        with torch.no_grad():
+            colors = torch.cat([params["sh0"], params["shN"]], 1)
+            img, alpha, _ = rasterization(
+                params["means"], F.normalize(params["quats"], dim=-1), torch.exp(params["scales"]),
+                torch.sigmoid(params["opacities"]), colors,
+                torch.tensor(V, dtype=torch.float32, device=device)[None],
+                torch.tensor(K, dtype=torch.float32, device=device)[None], w, h, sh_degree=sh_deg,
+                render_mode="RGB+ED" if with_depth else "RGB")
+            rgb = img[0, ..., :3]
+            if env is not None:
+                from train_splats import sky_colour
+                ys, xs = torch.meshgrid(torch.arange(h, device=device), torch.arange(w, device=device), indexing="ij")
+                Kt = torch.tensor(K, dtype=torch.float32, device=device)
+                d = torch.stack([(xs + 0.5 - Kt[0, 2]) / Kt[0, 0], (ys + 0.5 - Kt[1, 2]) / Kt[1, 1],
+                                 torch.ones_like(xs, dtype=torch.float32)], -1)
+                d = F.normalize(d @ torch.tensor(V[:3, :3], dtype=torch.float32, device=device), dim=-1)
+                upv = torch.tensor(up, dtype=torch.float32, device=device)
+                helper = (torch.tensor([1.0, 0, 0], device=device) if abs(float(upv[0])) < 0.9
+                          else torch.tensor([0, 0, 1.0], device=device))
+                fwd = F.normalize(torch.cross(upv, helper, dim=0), dim=0)
+                right = torch.cross(fwd, upv, dim=0)
+                dirs = torch.stack([d @ right, d @ upv, d @ fwd], -1)
+                rgb = rgb + (1 - alpha[0]) * sky_colour(env, dirs)
+            out_rgb = (rgb.clamp(0, 1).cpu().numpy() * 255).astype(np.uint8)
+            a = alpha[0, ..., 0].cpu().numpy()
+            depth = img[0, ..., 3].cpu().numpy() if with_depth else None
+        return out_rgb, a, depth
+
+    return render
 
 
 def build_sheet(model_dir: Path, scene_dir: Path, out_png: Path, device: str = "cuda",
@@ -106,29 +151,10 @@ def build_sheet(model_dir: Path, scene_dir: Path, out_png: Path, device: str = "
     sh_deg = int(ck.get("sh_degree", 0))
     cameras, _, _ = scene_io.read_scene(scene_dir)
 
+    render_full = make_renderer(ck, device)
+
     def render(V, K, w, h):
-        colors = torch.cat([params["sh0"], params["shN"]], 1)
-        img, alpha, _ = rasterization(
-            params["means"], F.normalize(params["quats"], dim=-1), torch.exp(params["scales"]),
-            torch.sigmoid(params["opacities"]), colors,
-            torch.tensor(V, dtype=torch.float32, device=device)[None],
-            torch.tensor(K, dtype=torch.float32, device=device)[None], w, h, sh_degree=sh_deg)
-        rgb = img[0, ..., :3]
-        if ck.get("env") is not None:
-            # sky dome behind the splats (same lookup as the trainer)
-            from train_splats import sky_colour
-            ys, xs = torch.meshgrid(torch.arange(h, device=device), torch.arange(w, device=device), indexing="ij")
-            Kt = torch.tensor(K, dtype=torch.float32, device=device)
-            d = torch.stack([(xs + 0.5 - Kt[0, 2]) / Kt[0, 0], (ys + 0.5 - Kt[1, 2]) / Kt[1, 1],
-                             torch.ones_like(xs, dtype=torch.float32)], -1)
-            d = F.normalize(d @ torch.tensor(V[:3, :3], dtype=torch.float32, device=device), dim=-1)
-            upv = torch.tensor(up, dtype=torch.float32, device=device)
-            helper = torch.tensor([1.0, 0, 0], device=device) if abs(float(upv[0])) < 0.9 else torch.tensor([0, 0, 1.0], device=device)
-            fwd = F.normalize(torch.cross(upv, helper, dim=0), dim=0)
-            right = torch.cross(fwd, upv, dim=0)
-            dirs = torch.stack([d @ right, d @ upv, d @ fwd], -1)
-            rgb = rgb + (1 - alpha[0]) * sky_colour(ck["env"].to(device), dirs)
-        return (rgb.clamp(0, 1).cpu().numpy() * 255).astype(np.uint8)
+        return render_full(V, K, w, h)[0]
 
     tiles = []
     # held-out panorama views: photo | render
@@ -161,7 +187,11 @@ def build_sheet(model_dir: Path, scene_dir: Path, out_png: Path, device: str = "
         draw.text((x + 4, y + 2), label, fill=(240, 240, 240))
     out_png.parent.mkdir(parents=True, exist_ok=True)
     sheet.save(out_png, quality=90)
-    card = scorecard(params)
+    grid = None
+    if (Path(model_dir) / "carve.pt").is_file():
+        import depth_memory
+        grid = depth_memory.CarveGrid.load(Path(model_dir) / "carve.pt", device)
+    card = scorecard(params, grid=grid)
     return card
 
 

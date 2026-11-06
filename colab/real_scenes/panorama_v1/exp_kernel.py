@@ -54,6 +54,8 @@ def install_env():
     WORK.mkdir(parents=True, exist_ok=True)
     pkgs = ["gsplat==1.5.3", "pycolmap==4.2.1", "plyfile", "torchmetrics[image]", "ninja", "huggingface_hub"]
     sh([sys.executable, "-m", "pip", "install", "-q", *pkgs])
+    if os.environ.get("NAMMA_NEED_FILL"):
+        sh([sys.executable, "-m", "pip", "install", "-q", "diffusers>=0.33", "accelerate", "peft", "opencv-python-headless"])
     if os.environ.get("NAMMA_NEED_MOGE"):
         sh([sys.executable, "-m", "pip", "install", "-q", "--no-deps", "git+https://github.com/microsoft/MoGe.git@0744441"])
         sh([sys.executable, "-m", "pip", "install", "-q",
@@ -113,6 +115,26 @@ def ggps_inputs(cfg) -> dict:
     gt_refs = {Path(n).stem: refs[n] for n in picked if n in refs}
     say(f"GGPS {len(picked)} panoramas, {len(gt)} with GT poses, pano dir {pano_dir}")
     return {"pano_dir": pano_dir, "gt_poses": gt, "gt_ply": ply, "gt_refs": gt_refs}
+
+
+def panoramax_inputs(cfg) -> dict:
+    """Street-level 360 route from Panoramax (open data, no key), resized to pano_width."""
+    from PIL import Image
+    import fetch_panoramax
+
+    raw = WORK / f"pmx-{cfg['collection'][:8]}-{cfg.get('start', 0)}-{cfg.get('count', 40)}"
+    fetch_panoramax.fetch(cfg["collection"], raw, int(cfg.get("count", 40)), float(cfg.get("spacing_m", 10.0)),
+                          int(cfg.get("start", 0)), cfg.get("asset", "hd"), log=say)
+    width = int(cfg.get("pano_width", 4096))
+    pano_dir = WORK / f"{raw.name}-{width}"
+    if not (pano_dir / ".ok").exists():
+        pano_dir.mkdir(parents=True, exist_ok=True)
+        for p in sorted(raw.glob("*.jpg")):
+            Image.open(p).convert("RGB").resize((width, width // 2), Image.LANCZOS).save(pano_dir / p.name, quality=95)
+        (pano_dir / ".ok").touch()
+    shutil.copy2(raw / "manifest.json", OUT / "route_manifest.json")
+    return {"pano_dir": pano_dir, "gt_poses": None, "gt_ply": None, "gt_refs": {},
+            "manifest": json.loads((raw / "manifest.json").read_text())}
 
 
 # ---------------------------------------------------------------- views
@@ -177,14 +199,15 @@ def scene_gt(exp, inputs, sdir: Path):
                              "pano": f"p{pi:05d}", "width": w, "height": h, "K": K,
                              "w2c": T @ gt[name]})
         cams = scene_io.assign_splits(cams)
-    pts = scene_io.read_ply_points(inputs["gt_ply"])
-    # keep only points near the chosen panoramas (the GT cloud covers all 354)
+    # initial points = the openMVG structure points the chosen panoramas observed,
+    # coloured from colorized.ply (same coordinates; it also holds camera centres)
     from scipy.spatial import cKDTree
 
-    C = np.stack([scene_io.camera_centre(T) for T in gt.values()])
-    span = np.linalg.norm(C.max(0) - C.min(0)) + 1e-6
-    d, _ = cKDTree(C).query(pts[:, :3])
-    pts = pts[d < 1.5 * span]
+    cloud = scene_io.read_ply_points(inputs["gt_ply"], max_points=10_000_000)
+    seen = np.unique(np.concatenate([v for v in inputs["gt_refs"].values()]), axis=0)
+    d, idx = cKDTree(cloud[:, :3]).query(seen)
+    pts = np.concatenate([seen, cloud[idx, 3:6]], 1).astype(np.float32)[d < 1e-4]
+    say(f"GT init points observed by the chosen panoramas: {len(pts)}")
     check = scene_io.colour_check(cams, pts)
     say("GT colour check", json.dumps(check))
     refs = dict(inputs["gt_refs"])
@@ -289,8 +312,20 @@ def run_experiment(exp, inputs):
             import masks as masks_mod
 
             up = scene_io.world_up_from_cameras(cams)
+            vehicle = None
+            rots = None
+            if pri.get("vehicle", True) and exp["views"] == "rig":
+                import pycolmap.panorama as P
+                from PIL import Image
+
+                vehicle = masks_mod.static_vehicle_mask(inputs["pano_dir"])
+                rots = P.get_virtual_rotations(RIG["num_steps_yaw"], RIG["pitches_deg"])
+                Image.fromarray((vehicle * 255).astype("uint8")).save(out / "vehicle_mask_erp.png")
+                say(name, "vehicle mask covers", round(1 - float(vehicle.mean()), 4), "of the panorama")
             rep_m = masks_mod.build_masks(cams, sdir / "masks_dyn", up, device=f"cuda:{int(exp.get('gpu', 0))}",
-                                          dynamic=pri.get("dynamic", True), log=lambda *a: say(name, *a))
+                                          dynamic=pri.get("dynamic", True), log=lambda *a: say(name, *a),
+                                          nadir_deg=float(pri.get("nadir_deg", 89.0)),
+                                          vehicle_erp=vehicle, rotations=rots)
             meta["masks"] = rep_m
         if not pri.get("sky_mask", pri.get("depth")):
             for c in cams:
@@ -313,11 +348,46 @@ def run_experiment(exp, inputs):
         if tr.get("carve"):
             args.append("--carve")
         sh(args, env=env, log=log)
-        sh([sys.executable, HERE / "offpath.py", "--model", sdir / "model", "--scene", sdir, "--out", out],
+        model_dir, scene_now = sdir / "model", sdir
+        shutil.copy2(model_dir / "metrics.json", out / "metrics_base.json")
+        sh([sys.executable, HERE / "offpath.py", "--model", model_dir, "--scene", scene_now, "--out", out / "base"],
            env=env, log=log)
-        shutil.copy2(sdir / "model" / "metrics.json", out / "metrics.json")
+        # optional refinement rounds: hole-only generative fill, then masked Fixer
+        rounds = [("fill", r) for r in range(int(exp.get("fill", {}).get("rounds", 0)))]
+        rounds += [("fixer", r) for r in range(int(exp.get("fixer", {}).get("rounds", 0)))]
+        for kind, r in rounds:
+            opts = exp.get(kind, {})
+            rdir = sdir / f"{kind}{r}"
+            sh([sys.executable, HERE / "stage.py", kind, "--scene", scene_now, "--model", model_dir,
+                "--out", rdir, "--max-views", opts.get("max_views", 160)], env=env, log=log)
+            for rep_name in ("fill_report.json", "fixer_report.json"):
+                if (rdir / rep_name).is_file():
+                    shutil.copy2(rdir / rep_name, out / f"{kind}{r}_{rep_name}")
+            if (rdir / "sheet").is_dir():
+                shutil.copytree(rdir / "sheet", out / f"{kind}{r}_sheet", dirs_exist_ok=True)
+            new_model = sdir / f"model_{kind}{r}"
+            ft = [sys.executable, HERE / "train_splats.py", "--scene", rdir / "scene", "--out", new_model,
+                  "--steps", opts.get("steps", 3000), "--cap", tr.get("cap", 1_000_000),
+                  "--long-side", tr.get("long_side", 960), "--sh-degree", tr.get("sh_degree", 1),
+                  "--depth-weight", tr.get("depth_weight", 0.0), "--aniso-weight", tr.get("aniso_weight", 0.0),
+                  "--init-ckpt", model_dir / "splats.pt", "--lr-scale", opts.get("lr_scale", 0.5),
+                  "--max-minutes", opts.get("max_minutes", 90)]
+            if tr.get("sky"):
+                ft.append("--sky")
+            if tr.get("carve"):
+                ft.append("--carve")
+            sh(ft, env=env, log=log)
+            model_dir, scene_now = new_model, rdir / "scene"
+            shutil.copy2(model_dir / "metrics.json", out / f"metrics_{kind}{r}.json")
+        sh([sys.executable, HERE / "offpath.py", "--model", model_dir, "--scene", scene_now, "--out", out],
+           env=env, log=log)
+        shutil.copy2(model_dir / "metrics.json", out / "metrics.json")
         if exp.get("keep_ply", True):
-            shutil.copy2(sdir / "model" / "model.ply", out / "model.ply")
+            shutil.copy2(model_dir / "model.ply", out / "model.ply")
+        if (model_dir / "carve.pt").is_file() and exp.get("keep_ply", True):
+            shutil.copy2(model_dir / "carve.pt", out / "carve.pt")
+        if exp.get("keep_scene", False):
+            shutil.copy2(scene_now / "scene.json", out / "scene.json")
         status = {"name": name, "status": "ok"}
     except Exception as exc:
         status = {"name": name, "status": "failed", "error": f"{type(exc).__name__}: {exc}"[-4000:]}
@@ -333,11 +403,13 @@ def main():
     OUT.mkdir(parents=True, exist_ok=True)
     (OUT / "config.json").write_text(json.dumps(cfg, indent=2))
     sh(["nvidia-smi", "--query-gpu=name,memory.total", "--format=csv,noheader"], check=False)
-    if any(e.get("priors", {}).get("depth") for e in cfg["experiments"]):
+    if any(e.get("priors", {}).get("depth") or e.get("fill") for e in cfg["experiments"]):
         os.environ["NAMMA_NEED_MOGE"] = "1"
+    if any(e.get("fill") for e in cfg["experiments"]):
+        os.environ["NAMMA_NEED_FILL"] = "1"
     install_env()
     data = cfg.get("data", {})
-    inputs = ggps_inputs(data) if data.get("source", "ggps") == "ggps" else None
+    inputs = ggps_inputs(data) if data.get("source", "ggps") == "ggps" else panoramax_inputs(data)
     from concurrent.futures import ThreadPoolExecutor
 
     with ThreadPoolExecutor(max_workers=2) as pool:

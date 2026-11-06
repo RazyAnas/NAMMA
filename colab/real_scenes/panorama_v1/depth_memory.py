@@ -30,10 +30,8 @@ def load_moge(device: str = "cuda"):
     import torch
     from moge.model.v2 import MoGeModel
 
-    model = MoGeModel.from_pretrained("Ruicheng/moge-2-vitl-normal").to(device).eval()
-    if device.startswith("cuda"):
-        model = model.half()
-    return model
+    # fp32 weights; MoGe runs its own fp16 autocast internally where safe (as in World v1)
+    return MoGeModel.from_pretrained("Ruicheng/moge-2-vitl-normal").to(device).eval()
 
 
 def moge_view_depth(model, image_rgb: np.ndarray, hfov_deg: float, device: str = "cuda",
@@ -42,8 +40,6 @@ def moge_view_depth(model, image_rgb: np.ndarray, hfov_deg: float, device: str =
     import torch
 
     x = torch.tensor(image_rgb, dtype=torch.float32, device=device).permute(2, 0, 1) / 255.0
-    if next(model.parameters()).dtype == torch.float16:
-        x = x.half()
     with torch.no_grad():
         out = model.infer(x, fov_x=float(hfov_deg), resolution_level=level)
     depth = out["depth"].float().cpu().numpy()
@@ -121,16 +117,23 @@ def depth_edge_mask(depth: np.ndarray, rtol: float = 0.04) -> np.ndarray:
 class CarveGrid:
     """Voxel free-space grid in a given (normalised) frame."""
 
-    def __init__(self, lo: np.ndarray, hi: np.ndarray, res: int = 256, device: str = "cuda"):
+    def __init__(self, lo: np.ndarray, hi: np.ndarray, max_voxels: int = 48_000_000, device: str = "cuda",
+                 dims=None):
         import torch
 
         self.lo = np.asarray(lo, dtype=np.float32)
         self.hi = np.asarray(hi, dtype=np.float32)
-        self.res = int(res)
-        self.size = (self.hi - self.lo) / self.res
+        ext = np.maximum(self.hi - self.lo, 1e-6)
+        if dims is None:
+            vox = float((np.prod(ext) / max_voxels) ** (1 / 3))
+            dims = np.maximum(1, np.ceil(ext / vox)).astype(int)
+        self.dims = np.asarray(dims, dtype=int)
+        self.size = (ext / self.dims).astype(np.float32)
+        self.res = int(self.dims.max())
         self.device = device
-        self.empty = torch.zeros((res, res, res), dtype=torch.int16, device=device)
-        self.surface = torch.zeros((res, res, res), dtype=torch.int16, device=device)
+        shape = tuple(int(d) for d in self.dims)
+        self.empty = torch.zeros(shape, dtype=torch.int16, device=device)
+        self.surface = torch.zeros(shape, dtype=torch.int16, device=device)
 
     def _index(self, pts):
         import torch
@@ -138,7 +141,8 @@ class CarveGrid:
         lo = torch.tensor(self.lo, device=pts.device)
         size = torch.tensor(self.size, device=pts.device)
         ijk = torch.floor((pts - lo) / size).long()
-        ok = ((ijk >= 0) & (ijk < self.res)).all(-1)
+        dims = torch.tensor(self.dims, device=pts.device)
+        ok = ((ijk >= 0) & (ijk < dims)).all(-1)
         return ijk, ok
 
     def add_view(self, depth, K, w2c, stride: int = 8, margin: float = 0.92, max_samples: int = 256):
@@ -181,10 +185,11 @@ class CarveGrid:
             ijk, inside = self._index(pts)
             ijk = ijk[inside]
             # count each voxel once per view
-            flat = torch.unique(ijk[:, 0] * self.res * self.res + ijk[:, 1] * self.res + ijk[:, 2])
-            i0 = flat // (self.res * self.res)
-            i1 = (flat // self.res) % self.res
-            i2 = flat % self.res
+            d1, d2 = int(self.dims[1]), int(self.dims[2])
+            flat = torch.unique(ijk[:, 0] * d1 * d2 + ijk[:, 1] * d2 + ijk[:, 2])
+            i0 = flat // (d1 * d2)
+            i1 = (flat // d2) % d1
+            i2 = flat % d2
             self.empty.index_put_((i0, i1, i2), torch.ones(len(flat), dtype=torch.int16, device=dev),
                                   accumulate=True)
 
@@ -203,7 +208,7 @@ class CarveGrid:
     def save(self, path: Path):
         import torch
 
-        torch.save({"lo": self.lo, "hi": self.hi, "res": self.res,
+        torch.save({"lo": self.lo, "hi": self.hi, "dims": self.dims,
                     "empty": self.empty.cpu(), "surface": self.surface.cpu()}, path)
 
     @classmethod
@@ -211,9 +216,14 @@ class CarveGrid:
         import torch
 
         d = torch.load(path, map_location=device, weights_only=False)
-        g = cls(d["lo"], d["hi"], d["res"], device)
+        g = cls(d["lo"], d["hi"], device=device, dims=d["dims"])
         g.empty, g.surface = d["empty"].to(device), d["surface"].to(device)
         return g
+
+
+def scene_io_centre(cam) -> np.ndarray:
+    w2c = np.asarray(cam["w2c"], dtype=np.float64)
+    return -w2c[:3, :3].T @ w2c[:3, 3]
 
 
 # ----------------------------------------------------------- orchestration
@@ -276,10 +286,18 @@ def build_memory(cameras: list[dict], ref_points_by_pano: dict[str, np.ndarray],
     return report
 
 
-def build_carve_grid(cameras: list[dict], centre, scale, out_path: Path, res: int = 256,
-                     extent: float = 3.0, device: str = "cuda") -> CarveGrid:
-    """Grid in the trainer's normalised frame, |x| <= extent."""
-    grid = CarveGrid(np.full(3, -extent), np.full(3, extent), res, device)
+def build_carve_grid(cameras: list[dict], centre, scale, out_path: Path, points: np.ndarray | None = None,
+                     device: str = "cuda") -> CarveGrid:
+    """Grid in the trainer's normalised frame, bounding the scene's points (p1-p99, padded)."""
+    C = np.stack([(scene_io_centre(c) - centre) * scale for c in cameras if c["split"] == "train"])
+    if points is not None and len(points):
+        P = (points[:, :3] - centre) * scale
+        lo = np.minimum(np.percentile(P, 1, 0), C.min(0))
+        hi = np.maximum(np.percentile(P, 99, 0), C.max(0))
+    else:
+        lo, hi = C.min(0) - 1.0, C.max(0) + 1.0
+    pad = 0.05 * (hi - lo) + 1e-3
+    grid = CarveGrid(lo - pad, hi + pad, device=device)
     for cam in cameras:
         if cam["split"] != "train" or not cam.get("depth"):
             continue
