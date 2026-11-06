@@ -161,7 +161,7 @@ def run_densify(scene_dir: Path, model_dir: Path, out_dir: Path, device: str = "
     render = offpath.make_renderer(ck, device)
     f = frame_w / 2 / math.tan(math.radians(40))
     K = np.array([[f, 0, frame_w / 2], [0, f, frame_h / 2], [0, 0, 1.0]])
-    real = RealViews(cameras, device)
+    real = RealViews(cameras, device, render=render, centre=centre, scale=scale)
     log(f"[densify] {len(real.cams)} real views in RAM, {len(clips)} clips, {m_per_norm:.2f} m per unit")
     filler = None
     new_cams, crisp_splat, crisp_ibr, real_frac, gen_frac = [], [], [], [], []
@@ -230,15 +230,31 @@ def run_densify(scene_dir: Path, model_dir: Path, out_dir: Path, device: str = "
 class RealViews:
     """All real rig views: full-resolution colour in RAM, aligned depth for visibility checks."""
 
-    def __init__(self, cameras, device: str = "cuda"):
+    def __init__(self, cameras, device: str = "cuda", render=None, centre=None, scale: float = 1.0,
+                 depth_w: int = 640):
+        """render: splat renderer (offpath.make_renderer). When given, the visibility depth of every real
+        view is rendered from the splats, so it agrees with the novel view's splat depth; per-view MoGe
+        depth (log-std ~0.2 between views) rejected nearly every pixel at a 6% tolerance on H8."""
         from PIL import Image
 
-        self.cams = [c for c in cameras if c.get("kind") != "generated" and c.get("depth")]
+        self.cams = [c for c in cameras if c.get("kind") != "generated" and (render is not None or c.get("depth"))]
         self.device = device
         self.imgs, self.depths = [], []
         for c in self.cams:
             self.imgs.append(np.asarray(Image.open(c["path"]).convert("RGB")))
-            self.depths.append(np.load(c["depth"]).astype(np.float32))
+            if render is not None:
+                s_ = depth_w / c["width"]
+                dh = max(1, round(c["height"] * s_))
+                K = np.array(c["K"], dtype=np.float64).copy()
+                K[:2] *= s_
+                w2c = np.asarray(c["w2c"], dtype=np.float64)
+                V = np.eye(4)
+                V[:3, :3] = w2c[:3, :3]
+                V[:3, 3] = (w2c[:3, :3] @ np.asarray(centre) + w2c[:3, 3]) * scale
+                _, alpha, dn = render(V, K, depth_w, dh, with_depth=True)
+                self.depths.append(np.where(alpha > 0.5, dn / scale, 0.0).astype(np.float32))  # world units
+            else:
+                self.depths.append(np.load(c["depth"]).astype(np.float32))
         self.centres = np.stack([scene_io.camera_centre(np.asarray(c["w2c"])) for c in self.cams])
 
     def nearest(self, eye_world: np.ndarray, k: int = 36) -> list[int]:
