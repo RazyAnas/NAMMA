@@ -261,7 +261,7 @@ const reflectorBallRigs: ReflectorBallRig[] = [];
   scene.add(reflectorBallsGroup);
 }
 
-rapierWorld.updateSceneQueries();
+rapierWorld.propagateModifiedBodyPositionsToColliders(); // NAMMA: Rapier 0.20 removed updateSceneQueries
 
 function syncReflectorBallsFromPhysics() {
   for (const { mesh, body } of reflectorBallRigs) {
@@ -849,7 +849,7 @@ function bakeColliderPhysics() {
     const idx = new Uint32Array(indices);
     staticColliderBody = rapierWorld.createRigidBody(RAPIER.RigidBodyDesc.fixed());
     rapierWorld.createCollider(RAPIER.ColliderDesc.trimesh(verts, idx), staticColliderBody);
-    rapierWorld.updateSceneQueries();
+    rapierWorld.propagateModifiedBodyPositionsToColliders(); // NAMMA: Rapier 0.20 removed updateSceneQueries
   } catch (e) {
     console.error(`${WORLD_ASSETS.colliderGlb}: failed to build triangle-mesh collider`, e);
   }
