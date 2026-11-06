@@ -482,7 +482,9 @@ def run_experiment(exp, inputs):
             args.append("--sky")
         if tr.get("carve"):
             args.append("--carve")
+        args += ["--snapshot", out / "snapshot.pt"]
         sh(args, env=env, log=log)
+        (out / "snapshot.pt").unlink(missing_ok=True)
         model_dir, scene_now = sdir / "model", sdir
         shutil.copy2(model_dir / "metrics.json", out / "metrics_base.json")
         sh([sys.executable, HERE / "offpath.py", "--model", model_dir, "--scene", scene_now, "--out", out / "base"],

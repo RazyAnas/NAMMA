@@ -121,7 +121,8 @@ def train(scene_dir: Path, out: Path, steps: int = 7000, cap: int = 1_000_000,
           sky: bool = False, aniso_max: float = 10.0, aniso_weight: float = 0.0,
           scale_reg: float = 0.01, opacity_reg: float = 0.01, max_minutes: float = 600.0,
           seed: int = 0, device: str = "cuda", carve: bool = False, carve_every: int = 500,
-          init_ckpt: Path | None = None, lr_scale: float = 1.0, crop_px: int = 1024) -> dict:
+          init_ckpt: Path | None = None, lr_scale: float = 1.0, crop_px: int = 1024,
+          snapshot: Path | None = None, snapshot_minutes: float = 30.0) -> dict:
     import torch
     import torch.nn.functional as F
     from gsplat import rasterization
@@ -318,6 +319,7 @@ def train(scene_dir: Path, out: Path, steps: int = 7000, cap: int = 1_000_000,
     TILE = [32]  # 32 px tiles cut intersections ~4x for large splats; falls back to 16 if the kernel refuses
     MAX_LOG_SCALE = math.log(0.15)  # normalised units (~3 m); stops screen-filling splats
     oom_skips = 0
+    last_snap = time.time()
     log_every = max(1, steps // 20)
     for step in range(steps):
         if (time.time() - t0) / 60 > max_minutes:
@@ -362,6 +364,15 @@ def train(scene_dir: Path, out: Path, steps: int = 7000, cap: int = 1_000_000,
             torch.cuda.empty_cache()
             continue
         stepped(step, info, loss)
+        if snapshot and (time.time() - last_snap) / 60 > snapshot_minutes:
+            # a run cut off by the Kaggle quota or time limit still leaves a usable model behind
+            tmp = Path(str(snapshot) + ".tmp")
+            torch.save({"params": {k: p.detach().cpu() for k, p in params.items()}, "centre": centre,
+                        "scale": scale, "up": up_world, "step": step, "sh_degree": sh_degree,
+                        "env": None if env is None else torch.sigmoid(env).detach().cpu()}, tmp)
+            tmp.replace(snapshot)
+            last_snap = time.time()
+            print(f"[train] snapshot at step {step} -> {snapshot}", flush=True)
         if step % log_every == 0 or step == steps - 1:
             print(f"[train] step {step}/{steps} loss {loss.item():.4f} splats {len(params['means'])} "
                   f"oom-skips {oom_skips} {(time.time() - t0) / 60:.1f} min", flush=True)
@@ -493,10 +504,11 @@ def main():
     p.add_argument("--init-ckpt", type=Path)
     p.add_argument("--lr-scale", type=float, default=1.0)
     p.add_argument("--crop", type=int, default=1024)
+    p.add_argument("--snapshot", type=Path)
     a = p.parse_args()
     train(a.scene, a.out, a.steps, a.cap, a.long_side, a.sh_degree, a.depth_weight,
           a.sky, aniso_weight=a.aniso_weight, max_minutes=a.max_minutes, carve=a.carve,
-          init_ckpt=a.init_ckpt, lr_scale=a.lr_scale, crop_px=a.crop)
+          init_ckpt=a.init_ckpt, lr_scale=a.lr_scale, crop_px=a.crop, snapshot=a.snapshot)
 
 
 if __name__ == "__main__":
