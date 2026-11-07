@@ -125,3 +125,19 @@ Per-step logs: with a 5M cap the transparent share climbs in step with MCMC grow
 The 3 m cap helps (+1.5 dB). PanoVGGT now loads (0 missing keys) and gives slightly steadier depth than MoGe-2
 (per-view scale log-std 0.199 vs 0.213).
 H10 queued: PanoVGGT, 1.6M cap, 3 m cap; arm A 8K panoramas / 1600 px windows + densify, arm B 960 px H7c-like.
+
+## H10 (PanoVGGT, 1.6M cap, 3 m size cap, 30k steps): trained, still collapsed; export stalled
+| Arm | PSNR | exp.-fair | SSIM | LPIPS | transparent (<0.05) | aniso p50 | minutes |
+|---|---:|---:|---:|---:|---:|---:|---:|
+| H10-safe (960 px, unpacked, inv depth) | 17.81 | 19.20 | 0.689 | 0.587 | 94 % | 5.8 | 92 |
+| H10-hires (8K panos, 1024 px windows) | 16.56 | 17.75 | 0.678 | 0.668 | 99 % | 1.6 | 86 |
+- The 1.6M cap did not stop the collapse: H10-safe went 65 % transparent at step 1.5k, 96 % at 4.5k, ~100 % from 6k to 22k,
+  back to 94 % once MCMC refinement stopped; median splat grew from ~15 cm to ~2.4 m, single-view loss spiked to 0.7.
+  Renders: wide streets readable but soft, near-camera blobs, narrow-street held-out views are grey fog.
+- Not like-for-like with H7c: H7c's incremental SfM kept only 24 panoramas of one straight street (252 views). Since H7d the
+  global mapper registers all 40, a route with two sharp turns (pano 6 and 16); held-out pano 16 sits on a corner and pano 8
+  right after a turn. PanoVGGT depth aligned well (388/480 views, inlier median 0.87).
+- Densify crashed on a missing package (ftfy, fixed). Export ran 5+ h in the collider/texture step (H8 stalled at the same point)
+  until the job was stopped: UV unwrap and the export stage now have hard time limits.
+- H11 queued: same scene, 8 variants stopped at ~8k steps of the 30k schedule: no carving, no sky dome, no opacity
+  regulariser, 10x less MCMC noise, initial opacity 0.5, no size cap, and the straight street only (pano 16-39).
