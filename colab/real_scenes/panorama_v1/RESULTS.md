@@ -108,3 +108,20 @@ dome's flat colour. Densify could not help (real-pixel fraction 0). The size cap
 ~22 m here, not 3 m (1 normalised unit = route radius, 147 m); the cap now comes from panorama spacing (0.3 x ~10 m).
 Ablation `dbg` queued: H8 settings vs old/new cap, no depth loss, inverse depth loss, unpacked raster, no training window,
 aniso 0.01, and an H7c-like reference, 4k steps each on the same scene.
+
+## Ablation `dbg` (same scene, 4k steps each): the collapse comes from growing past ~1.6M splats
+| Variant | PSNR | transparent (<0.05) |
+|---|---:|---:|
+| H8 settings, old ~22 m cap | 15.7 | 99 % |
+| H8 settings, 3 m cap | 17.2 | 99 % |
+| no depth loss | 12.1 | 99.7 % |
+| inverse depth loss | 16.7 | 99 % |
+| unpacked raster | 15.2 | 99 % |
+| aniso 0.01 | 14.0 | 99 % |
+| no training window | eval crashed (tile 0 bug, fixed) | 96 % at step 2.4k and rising |
+| H7c-like (1.6M cap, 960 px, unpacked) | eval crashed (same bug) | **69 %, stable** |
+Per-step logs: with a 5M cap the transparent share climbs in step with MCMC growth (66 % at 1.7M splats, 90 % at 2.1M,
+100 % at 3.1M); with the 1.6M cap it settles at ~0.6-0.7. Window, packed raster and depth-loss form are not the cause.
+The 3 m cap helps (+1.5 dB). PanoVGGT now loads (0 missing keys) and gives slightly steadier depth than MoGe-2
+(per-view scale log-std 0.199 vs 0.213).
+H10 queued: PanoVGGT, 1.6M cap, 3 m cap; arm A 8K panoramas / 1600 px windows + densify, arm B 960 px H7c-like.
