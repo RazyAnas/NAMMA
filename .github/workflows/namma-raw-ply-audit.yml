@@ -1,0 +1,59 @@
+name: NAMMA raw panorama PLY forensic audit
+
+on:
+  push:
+    branches:
+      - feature/streetview-panorama-3d
+    paths:
+      - "tools/inspect_raw_ply.py"
+      - ".github/workflows/namma-raw-ply-audit.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: namma-raw-ply-audit
+  cancel-in-progress: false
+
+jobs:
+  inspect-raw-ply:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    env:
+      HF_TOKEN: ${{ secrets.HF_TOKEN || secrets.HUGGINGFACE_WRITE_TOKEN || secrets.HF_TOKEN_backup || secrets.HUGGINGFACE_WRITE_TOKEN_backup || secrets.HF_TOKEN_BACKUP || secrets.HUGGINGFACE_WRITE_TOKEN_BACKUP }}
+    steps:
+      - name: Check out panorama feature branch
+        uses: actions/checkout@v4
+        with:
+          ref: feature/streetview-panorama-3d
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: "pip"
+
+      - name: Install inspection tools
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install "huggingface_hub>=0.28" numpy plyfile matplotlib
+
+      - name: Verify Hugging Face access is configured
+        run: |
+          test -n "$HF_TOKEN" || {
+            echo "Missing Hugging Face write token secret. No token value will be printed."
+            exit 1
+          }
+
+      - name: Download, parse, and inspect the raw 354 MB PLY
+        run: python tools/inspect_raw_ply.py
+
+      - name: Preserve forensic images and JSON even on later failures
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: namma-raw-ply-forensic-audit
+          path: audit-output/
+          if-no-files-found: warn
+          retention-days: 30

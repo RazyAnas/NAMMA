@@ -1,0 +1,51 @@
+# Fast validation for the isolated panorama package only.
+name: NAMMA Panorama tests
+
+on:
+  push:
+    branches:
+      - main
+      - feature/streetview-panorama-3d
+    paths:
+      - "colab/real_scenes/panorama_v1/**"
+      - "tests/panorama_v1/**"
+      - ".github/workflows/panorama-tests.yml"
+      - ".github/workflows/namma-panorama.yml"
+  pull_request:
+    paths:
+      - "colab/real_scenes/panorama_v1/**"
+      - "tests/panorama_v1/**"
+      - ".github/workflows/panorama-tests.yml"
+      - ".github/workflows/namma-panorama.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  panorama-tests:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: "pip"
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+      - name: Install panorama test dependencies
+        run: python -m pip install numpy scipy pillow opencv-python-headless plyfile trimesh pytest
+      - name: Compile panorama Python modules
+        run: |
+          python -m py_compile colab/real_scenes/panorama_v1/*.py
+      - name: Validate committed panorama job manifests
+        run: |
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          for path in sorted(Path('colab/real_scenes/panorama_v1/jobs').glob('*.json')):
+              json.loads(path.read_text(encoding='utf-8'))
+              print(f'VALID JSON: {path}')
+          PY
+      - name: Run panorama-only unit tests
+        run: pytest -q --confcutdir=tests/panorama_v1 tests/panorama_v1

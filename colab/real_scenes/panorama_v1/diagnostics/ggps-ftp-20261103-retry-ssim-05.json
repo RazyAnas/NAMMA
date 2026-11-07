@@ -1,0 +1,6 @@
+{
+  "job_id": "ggps-ftp-20261103-retry-ssim-05",
+  "kernel_id": "suryanshsinha28/namma-pano-ggps-ftp-20261103-re-84424625a1",
+  "output_dataset": "anasrazy/namma-panorama-out",
+  "diagnostics_attempt": 2
+}

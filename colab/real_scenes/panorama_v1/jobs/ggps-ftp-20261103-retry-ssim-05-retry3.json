@@ -1,0 +1,18 @@
+{
+  "job_id": "ggps-ftp-20261103-retry-ssim-05",
+  "pipeline": "panorama_v1",
+  "hf_dataset": "anasrazy/namma-panorama-inbox",
+  "bundle_path": "ggps-ftp-20261102-161501/bundle.zip",
+  "output_dataset": "anasrazy/namma-panorama-out",
+  "tour_space": "anasrazy/namma-tour",
+  "parameters": {
+    "steps": 30000,
+    "max_splats": 1500000,
+    "max_panoramas": 40,
+    "image_size": 1280,
+    "view_count": 12,
+    "hfov_deg": 60,
+    "sequence_window": 18,
+    "retrieval_count": 0
+  }
+}

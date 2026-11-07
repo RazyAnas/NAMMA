@@ -1,0 +1,116 @@
+name: NAMMA street world (build + publish browser game)
+
+# Builds the browser game for one exported panorama world and publishes it to the
+# NAMMA tour Space under world/<tag>/. It never starts GPU training.
+on:
+  # A pushed world request (colab/real_scenes/panorama_v1/worlds/<tag>.json) builds and publishes it.
+  # Push triggers work on this feature branch without touching main.
+  push:
+    branches:
+      - feature/streetview-panorama-3d
+    paths:
+      - "colab/real_scenes/panorama_v1/worlds/*.json"
+  workflow_dispatch:
+    inputs:
+      request:
+        description: "Path of the world request JSON to build"
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: namma-street-world
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    env:
+      KAGGLE_API_TOKEN: ${{ secrets.KAGGLE_TOKEN || secrets.KAGGLE_API_TOKEN || secrets.KAGGLE_TOKEN_BACKUP }}
+      HF_TOKEN: ${{ secrets.HF_TOKEN || secrets.HUGGINGFACE_WRITE_TOKEN }}
+      CLIENT: colab/real_scenes/panorama_v1/game_client
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 2
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+      - name: Read the world request
+        run: |
+          REQ="${{ inputs.request }}"
+          if [ -z "$REQ" ]; then
+            REQ=$(git diff --name-only HEAD~1 HEAD -- 'colab/real_scenes/panorama_v1/worlds/*.json' | tail -1)
+          fi
+          echo "request: $REQ"; cat "$REQ"
+          python - "$REQ" >> "$GITHUB_ENV" <<'PY'
+          import json, sys
+          r = json.load(open(sys.argv[1]))
+          print(f"TAG={r['tag']}")
+          print(f"KERNEL={r.get('kernel', '')}")
+          print(f"EXPERIMENT={r.get('experiment', '')}")
+          print(f"LOD_QUALITY={'true' if r.get('lod_quality', True) else 'false'}")
+          PY
+      - name: Python tools
+        run: python -m pip install -q "kaggle==2.2.5" six "huggingface_hub>=0.28" numpy pillow plyfile trimesh
+      - name: Fetch the exported world from Kaggle
+        if: ${{ env.KERNEL != '' }}
+        run: |
+          mkdir -p kout
+          kaggle kernels output "$KERNEL" -p kout -o -q \
+            --file-pattern "^out/$EXPERIMENT/game/.*" --page-size 200
+          mkdir -p "$CLIENT/public/world"
+          cp -r "kout/out/$EXPERIMENT/game/." "$CLIENT/public/world/"
+          ls -la "$CLIENT/public/world"
+      - name: Synthetic test world
+        if: ${{ env.KERNEL == '' }}
+        run: python "$CLIENT/make_synthetic_world.py" "$CLIENT/public/world"
+      - name: Build the streamable LoD tree (Spark build-lod, Rust)
+        run: |
+          git clone -q --depth 1 --branch v2.4.0 https://github.com/sparkjsdev/spark /tmp/spark
+          cd /tmp/spark/rust/build-lod
+          cargo build --release -q
+          Q=""; if [ "$LOD_QUALITY" = "true" ]; then Q="--quality"; fi
+          cd "$GITHUB_WORKSPACE/$CLIENT/public/world"
+          /tmp/spark/rust/target/release/build-lod scene.ply $Q || /tmp/spark/rust/build-lod/target/release/build-lod scene.ply $Q
+          ls -la
+          python - <<'PY'
+          import json, pathlib
+          p = pathlib.Path("game.json"); g = json.loads(p.read_text())
+          rad = sorted(pathlib.Path(".").glob("*-lod.rad"))
+          if rad:
+              g["files"]["rad"] = rad[0].name
+              p.write_text(json.dumps(g, indent=1))
+              print("using", rad[0].name)
+          PY
+          rm -f scene.ply  # the streamed .rad replaces it in the published site
+      - name: CC0 avatar (three.js RobotExpressive, Tomás Laulhé / Quaternius)
+        run: |
+          mkdir -p "$CLIENT/public/avatars"
+          curl -sSfL -o "$CLIENT/public/avatars/RobotExpressive.glb" \
+            https://raw.githubusercontent.com/mrdoob/three.js/r184/examples/models/gltf/RobotExpressive/RobotExpressive.glb
+      - name: Type-check and build the client
+        run: |
+          cd "$CLIENT"
+          npm install --no-audit --no-fund
+          npm run build
+          du -sh dist
+      - name: Publish to the NAMMA tour Space
+        run: |
+          test -n "$HF_TOKEN" || { echo "Missing Hugging Face write token secret."; exit 1; }
+          python - <<'PY'
+          import os
+          from huggingface_hub import HfApi
+          api = HfApi(token=os.environ["HF_TOKEN"])
+          tag = os.environ["TAG"]
+          api.upload_folder(repo_id="anasrazy/namma-tour", repo_type="space",
+                            folder_path=os.path.join(os.environ["CLIENT"], "dist"), path_in_repo=f"world/{tag}",
+                            commit_message=f"NAMMA street world {tag}")
+          print(f"https://anasrazy-namma-tour.static.hf.space/world/{tag}/index.html")
+          PY
