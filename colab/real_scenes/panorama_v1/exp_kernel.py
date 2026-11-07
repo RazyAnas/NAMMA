@@ -58,7 +58,8 @@ def install_env():
     if os.environ.get("NAMMA_NEED_FILL"):
         # Kaggle's torchao 0.10 makes peft refuse every LoRA (video pipeline World job hit the same)
         sh([sys.executable, "-m", "pip", "uninstall", "-y", "-q", "torchao"], check=False)
-        sh([sys.executable, "-m", "pip", "install", "-q", "diffusers>=0.33", "accelerate", "peft", "opencv-python-headless"])
+        sh([sys.executable, "-m", "pip", "install", "-q", "diffusers>=0.33", "accelerate", "peft", "opencv-python-headless",
+            "ftfy"])  # Wan VACE prompt cleaning imports ftfy (H10 densify crashed without it)
     if os.environ.get("NAMMA_NEED_MOGE"):
         sh([sys.executable, "-m", "pip", "install", "-q", "--no-deps", "git+https://github.com/microsoft/MoGe.git@0744441"])
         sh([sys.executable, "-m", "pip", "install", "-q",
