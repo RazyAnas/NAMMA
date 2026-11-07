@@ -443,7 +443,7 @@ def run_variants(exp, tr, sdir, out, env, log):
                 "--max-minutes", vt.get("max_minutes", 60), "--packed", int(vt.get("packed", 1)),
                 "--depth-loss", vt.get("depth_loss", "rel"), "--crop", vt.get("crop", 1024),
                 "--scale-cap-frac", vt.get("scale_cap_frac", 0.3),
-                "--opacity-reg", vt.get("opacity_reg", 0.01), "--noise-lr", vt.get("noise_lr", 5e5),
+                "--opacity-reg", vt.get("opacity_reg", 0.0), "--noise-lr", vt.get("noise_lr", 5e5),
                 "--init-opacity", vt.get("init_opacity", 0.1), "--panos", vt.get("panos", "")]
         if vt.get("sky"):
             args.append("--sky")
@@ -533,7 +533,7 @@ def run_experiment(exp, inputs):
                 "--max-minutes", tr.get("max_minutes", 240),
                 "--packed", int(tr.get("packed", 1)), "--depth-loss", tr.get("depth_loss", "rel"),
                 "--crop", tr.get("crop", 1024), "--scale-cap-frac", tr.get("scale_cap_frac", 0.3),
-                "--opacity-reg", tr.get("opacity_reg", 0.01), "--noise-lr", tr.get("noise_lr", 5e5),
+                "--opacity-reg", tr.get("opacity_reg", 0.0), "--noise-lr", tr.get("noise_lr", 5e5),
                 "--init-opacity", tr.get("init_opacity", 0.1), "--panos", tr.get("panos", "")]
         if tr.get("sky"):
             args.append("--sky")
@@ -574,7 +574,7 @@ def run_experiment(exp, inputs):
                       "--max-minutes", opts.get("max_minutes", 90),
                 "--packed", int(tr.get("packed", 1)), "--depth-loss", tr.get("depth_loss", "rel"),
                 "--crop", tr.get("crop", 1024), "--scale-cap-frac", tr.get("scale_cap_frac", 0.3),
-                "--opacity-reg", tr.get("opacity_reg", 0.01), "--noise-lr", tr.get("noise_lr", 5e5),
+                "--opacity-reg", tr.get("opacity_reg", 0.0), "--noise-lr", tr.get("noise_lr", 5e5),
                 "--init-opacity", tr.get("init_opacity", 0.1), "--panos", tr.get("panos", "")]
                 if tr.get("sky"):
                     ft.append("--sky")

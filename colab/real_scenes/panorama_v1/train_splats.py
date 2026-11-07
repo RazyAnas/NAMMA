@@ -159,7 +159,7 @@ def sky_colour(env, dirs):
 def train(scene_dir: Path, out: Path, steps: int = 7000, cap: int = 1_000_000,
           long_side: int = 960, sh_degree: int = 1, depth_weight: float = 0.0,
           sky: bool = False, aniso_max: float = 10.0, aniso_weight: float = 0.0,
-          scale_reg: float = 0.01, opacity_reg: float = 0.01, max_minutes: float = 600.0,
+          scale_reg: float = 0.01, opacity_reg: float = 0.0, max_minutes: float = 600.0,
           seed: int = 0, device: str = "cuda", carve: bool = False, carve_every: int = 500,
           init_ckpt: Path | None = None, lr_scale: float = 1.0, crop_px: int = 1024,
           snapshot: Path | None = None, snapshot_minutes: float = 30.0, packed: bool = True,
@@ -566,7 +566,7 @@ def main():
     p.add_argument("--packed", type=int, default=1)
     p.add_argument("--depth-loss", choices=["rel", "inv"], default="rel")
     p.add_argument("--scale-cap-frac", type=float, default=0.3)
-    p.add_argument("--opacity-reg", type=float, default=0.01)
+    p.add_argument("--opacity-reg", type=float, default=0.0)
     p.add_argument("--noise-lr", type=float, default=5e5)
     p.add_argument("--init-opacity", type=float, default=0.1)
     p.add_argument("--panos", default="", help="train on panoramas with route index in a range, e.g. 16-39")
