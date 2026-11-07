@@ -522,7 +522,9 @@ def run_experiment(exp, inputs):
                 "--steps", tr.get("steps", 7000), "--cap", tr.get("cap", 1_000_000),
                 "--long-side", tr.get("long_side", 960), "--sh-degree", tr.get("sh_degree", 1),
                 "--depth-weight", tr.get("depth_weight", 0.0), "--aniso-weight", tr.get("aniso_weight", 0.0),
-                "--max-minutes", tr.get("max_minutes", 240)]
+                "--max-minutes", tr.get("max_minutes", 240),
+                "--packed", int(tr.get("packed", 1)), "--depth-loss", tr.get("depth_loss", "rel"),
+                "--crop", tr.get("crop", 1024), "--scale-cap-frac", tr.get("scale_cap_frac", 0.3)]
         if tr.get("sky"):
             args.append("--sky")
         if tr.get("carve"):
@@ -559,7 +561,9 @@ def run_experiment(exp, inputs):
                       "--long-side", tr.get("long_side", 960), "--sh-degree", tr.get("sh_degree", 1),
                       "--depth-weight", tr.get("depth_weight", 0.0), "--aniso-weight", tr.get("aniso_weight", 0.0),
                       "--init-ckpt", model_dir / "splats.pt", "--lr-scale", opts.get("lr_scale", 0.5),
-                      "--max-minutes", opts.get("max_minutes", 90)]
+                      "--max-minutes", opts.get("max_minutes", 90),
+                "--packed", int(tr.get("packed", 1)), "--depth-loss", tr.get("depth_loss", "rel"),
+                "--crop", tr.get("crop", 1024), "--scale-cap-frac", tr.get("scale_cap_frac", 0.3)]
                 if tr.get("sky"):
                     ft.append("--sky")
                 if tr.get("carve"):
@@ -568,7 +572,8 @@ def run_experiment(exp, inputs):
                 model_dir, scene_now = new_model, rdir / "scene"
                 shutil.copy2(model_dir / "metrics.json", out / f"metrics_{kind}{r}.json")
             except Exception as exc:  # noqa: BLE001 - keep the last good model and still export
-                round_errors[f"{kind}{r}"] = f"{type(exc).__name__}: {exc}"[-1500:]
+                msg = f"{type(exc).__name__}: {exc}"
+                round_errors[f"{kind}{r}"] = msg if len(msg) < 1800 else msg[:400] + " ... " + msg[-1400:]
                 say(name, f"{kind}{r} failed, keeping the previous model:", str(exc)[-300:])
         if round_errors:
             (out / "round_errors.json").write_text(json.dumps(round_errors, indent=2))

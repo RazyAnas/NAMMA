@@ -417,7 +417,7 @@ def train(scene_dir: Path, out: Path, steps: int = 7000, cap: int = 1_000_000,
         print(f"[train] carved {carved} splats in proven-empty space", flush=True)
 
     # ---------------------------------------------------------------- eval
-    metrics = evaluate(params, val_v, render, env, ray_dirs_world, device, tile=min(CROP, 768))
+    metrics = evaluate(params, val_v, render, env, ray_dirs_world, device, tile=min(CROP, 768) if CROP > 0 else 768)
     metrics["carved_splats"] = carved
     metrics.update({"steps": steps, "splats": int(len(params["means"])),
                     "train_views": len(train_v), "val_views": len(val_v),
