@@ -182,9 +182,17 @@ def fuse_collider(cameras, R, origin, scale_m, out_dir: Path, corridor_m: float 
         c2w[:3, 3] = scale_m * (R @ (c2w_world[:3, 3] - origin))
         rgb = np.asarray(Image.open(c["path"]).convert("RGB").resize((d.shape[1], d.shape[0])))
         frames.append((torch.tensor(d, device=device), K, c2w, torch.tensor(rgb, device=device)))
+    import time
+
+    t0 = time.time()
+    step = lambda msg: print(f"[export] {msg} ({time.time() - t0:.0f} s)", flush=True)  # noqa: E731
+    step(f"collider: {len(frames)} depth frames loaded, grid {np.ceil((hi - lo) / vox).astype(int).tolist()} at {vox:.2f} m")
     t, w, col = tsdf.fuse(frames, lo, hi, np.eye(3), vox, trunc=3, device=device)
+    del frames
+    step("collider: tsdf fused")
     mesh = tsdf.extract(t, w, col, lo, np.eye(3), vox, centres, min_faces=200)
     faces_in = len(mesh.faces)
+    step(f"collider: mesh extracted, {faces_in} faces")
     if faces_in > 400_000:
         try:
             import fast_simplification
@@ -195,6 +203,7 @@ def fuse_collider(cameras, R, origin, scale_m, out_dir: Path, corridor_m: float 
         except Exception as exc:  # noqa: BLE001 - keep the full mesh if simplification is unavailable
             print("[export] simplification skipped:", exc, flush=True)
     mesh.export(out_dir / "collider.glb")
+    step(f"collider: saved, {len(mesh.faces)} faces")
     rep_tex = None
     try:
         rep_tex = bake_textured_mesh(mesh, cameras, R, origin, scale_m, out_dir / "surface.glb", device=device,
@@ -202,7 +211,9 @@ def fuse_collider(cameras, R, origin, scale_m, out_dir: Path, corridor_m: float 
         mesh.export(out_dir / "_surface_geom.ply")  # for hybrid pruning (not published)
     except Exception as exc:  # noqa: BLE001 - the splats still work without the base layer
         rep_tex = {"error": f"{type(exc).__name__}: {exc}"[:500]}
+    step(f"surface: {'error ' + rep_tex['error'][:200] if 'error' in (rep_tex or {}) else 'baked'}")
     ground = heightfield(t, w, lo, vox, centres)
+    step("ground heightfield done")
     (out_dir / "ground.json").write_text(json.dumps(ground))
     ground_mesh(ground).export(out_dir / "ground.glb")
     return {"surface": rep_tex, "voxel_m": vox, "collider_faces": int(len(mesh.faces)), "collider_faces_before": faces_in,
@@ -368,8 +379,44 @@ def export(scene_dir: Path, model_dir: Path, out_dir: Path, pano_dir: Path | Non
     return rep
 
 # --------------------------------------------------- textured base mesh (any-angle crisp layer)
+_UV_CHILD = r"""
+import sys, numpy as np, xatlas
+d = np.load(sys.argv[1]); atlas = int(sys.argv[3])
+a = xatlas.Atlas(); a.add_mesh(d["V"], d["F"])
+co = xatlas.ChartOptions(); co.max_iterations = 1
+po = xatlas.PackOptions(); po.resolution = atlas; po.padding = 2
+a.generate(co, po)
+vmap, idx, uvs = a[0]
+np.savez(sys.argv[2], vmap=vmap, idx=idx, uvs=uvs)
+"""
+
+
+def uv_unwrap(V: np.ndarray, F: np.ndarray, atlas: int, timeout_s: float = 900, log=print):
+    """xatlas UV unwrap in a child process with a hard time limit.
+
+    A TSDF street mesh has thousands of small disconnected pieces; xatlas's default chart search and packing
+    ran for 5+ hours on 300k faces (H8 and H10 both hit the Kaggle 12 h limit inside it). One chart iteration
+    and a fixed atlas resolution keep it to minutes; if it still runs over, the caller drops the textured layer.
+    """
+    import subprocess
+    import sys
+    import tempfile
+    import time
+
+    with tempfile.TemporaryDirectory() as td:
+        src, dst = Path(td) / "in.npz", Path(td) / "out.npz"
+        np.savez(src, V=V, F=F)
+        t = time.time()
+        subprocess.run([sys.executable, "-c", _UV_CHILD, str(src), str(dst), str(atlas)], check=True,
+                       timeout=timeout_s)
+        log(f"[texture] uv unwrap {len(F)} faces in {time.time() - t:.0f} s")
+        r = np.load(dst)
+        return r["vmap"], r["idx"], r["uvs"]
+
+
 def bake_textured_mesh(mesh, cameras, R, origin, scale_m, out_glb: Path, atlas: int = 4096,
-                       device: str = "cuda", max_faces: int = 300_000, log=print) -> dict:
+                       device: str = "cuda", max_faces: int = 150_000, uv_timeout_s: float = 900,
+                       log=print) -> dict:
     """UV-unwrap the street surface (xatlas, MIT) and bake each texel from the best real view.
 
     Best view = the real training view that sees the texel most head-on and closest, among views whose
@@ -379,7 +426,6 @@ def bake_textured_mesh(mesh, cameras, R, origin, scale_m, out_glb: Path, atlas: 
     """
     import torch
     import trimesh
-    import xatlas
     from PIL import Image
 
     m = mesh
@@ -391,7 +437,7 @@ def bake_textured_mesh(mesh, cameras, R, origin, scale_m, out_glb: Path, atlas: 
         m = trimesh.Trimesh(v, f, process=False)
     V = np.asarray(m.vertices, np.float32)
     F = np.asarray(m.faces, np.int64)
-    vmap, faces_uv, uvs = xatlas.parametrize(V, F)
+    vmap, faces_uv, uvs = uv_unwrap(V, F, atlas, timeout_s=uv_timeout_s, log=log)
     Vuv = V[vmap]
     log(f"[texture] {len(F)} faces, {len(Vuv)} uv vertices, atlas {atlas}^2")
 

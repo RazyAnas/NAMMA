@@ -33,13 +33,17 @@ def say(*a):
     print(f"[{(time.time() - T0) / 60:6.1f} min]", *a, flush=True)
 
 
-def sh(cmd, env=None, log=None, check=True):
+def sh(cmd, env=None, log=None, check=True, timeout=None):
     say("$", " ".join(map(str, cmd))[:300])
-    if log:
-        with open(log, "a", encoding="utf-8") as f:
-            p = subprocess.run(list(map(str, cmd)), env=env, stdout=f, stderr=subprocess.STDOUT, text=True)
-    else:
-        p = subprocess.run(list(map(str, cmd)), env=env, text=True)
+    try:
+        if log:
+            with open(log, "a", encoding="utf-8") as f:
+                p = subprocess.run(list(map(str, cmd)), env=env, stdout=f, stderr=subprocess.STDOUT, text=True,
+                                   timeout=timeout)
+        else:
+            p = subprocess.run(list(map(str, cmd)), env=env, text=True, timeout=timeout)
+    except subprocess.TimeoutExpired:
+        raise RuntimeError(f"timed out after {timeout / 60:.0f} min: {' '.join(map(str, cmd))[:200]}") from None
     if check and p.returncode:
         tail = Path(log).read_text(errors="replace")[-3000:] if log else ""
         raise RuntimeError(f"failed ({p.returncode}): {' '.join(map(str, cmd))[:200]}\n{tail}")
@@ -471,6 +475,7 @@ def run_experiment(exp, inputs):
     log = out / "run.log"
     sdir = WORK / "scenes" / name
     t = time.time()
+    export_error = None
     try:
         if exp["poses"] == "gt":
             cams, pts, meta, refs = scene_gt(exp, inputs, sdir)
@@ -593,8 +598,14 @@ def run_experiment(exp, inputs):
                       "--atlas", str(exp.get("atlas", 8192))]
             if (OUT / "route_manifest.json").is_file():
                 args_e += ["--manifest", OUT / "route_manifest.json"]
-            sh(args_e, env=env, log=log)
+            try:  # the trained model and metrics stand on their own; a stuck export must not eat the 12 h job
+                sh(args_e, env=env, log=log, timeout=60 * exp.get("export_minutes", 60))
+            except Exception as exc:  # noqa: BLE001
+                export_error = f"{type(exc).__name__}: {exc}"[-1500:]
+                say(name, "export failed:", export_error[:300])
         status = {"name": name, "status": "ok"}
+        if export_error:
+            status["export_error"] = export_error
     except Exception as exc:
         status = {"name": name, "status": "failed", "error": f"{type(exc).__name__}: {exc}"[-4000:]}
     status["minutes"] = round((time.time() - t) / 60, 1)
