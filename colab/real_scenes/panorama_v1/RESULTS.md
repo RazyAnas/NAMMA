@@ -156,7 +156,7 @@ H10 queued: PanoVGGT, 1.6M cap, 3 m cap; arm A 8K panoramas / 1600 px windows + 
 
 - Only removing the opacity regulariser stops the collapse: transparent fraction holds at ~24% from step 4.5k to 9k
   (base: 96% at 4.5k) and median splat size stays ~15 cm (base grows to ~0.9 m). +3.3 dB on the same scene.
-- With the dense 1.5M-point init the 0.01 × mean-opacity term outweighs the photometric gradient per splat, so MCMC
+- Likely mechanism (not measured): with the dense 1.5M-point init the 0.01 × mean-opacity term outweighs the photometric gradient per splat, so MCMC
   relocates dead splats, they grow to cover the gap, and the reg pushes them transparent again.
 - Contact sheets: opreg0 shows readable Paris facades, trees and street furniture from mid-path, side-step and
   raised views; base is grey fog. The road under the capture car (car-spot-down) is still a grey patch in both:
