@@ -141,3 +141,26 @@ H10 queued: PanoVGGT, 1.6M cap, 3 m cap; arm A 8K panoramas / 1600 px windows + 
   until the job was stopped: UV unwrap and the export stage now have hard time limits.
 - H11 queued: same scene, 8 variants stopped at ~8k steps of the 30k schedule: no carving, no sky dome, no opacity
   regulariser, 10x less MCMC noise, initial opacity 0.5, no size cap, and the straight street only (pano 16-39).
+
+## H11 ablation (same scene as H10-safe, 30k schedule cut at 25 min ≈ 8–9k steps): the opacity regulariser causes the collapse
+| Variant | PSNR | Exposure-fair | SSIM | LPIPS | Opacity < 0.05 | Aniso p50 | Off-path sharpness |
+|---|---:|---:|---:|---:|---:|---:|---:|
+| base (H10-safe settings) | 16.28 | 17.58 | 0.668 | 0.648 | 95% | 3.8 | 7.2 |
+| no carving | 16.27 | 17.79 | 0.670 | 0.602 | 99% | 4.6 | 19.8 |
+| no sky dome | 16.10 | 17.70 | 0.651 | 0.642 | 93% | 3.1 | 1.7 |
+| **opacity reg 0** | **19.56** | **20.42** | **0.709** | **0.549** | **23%** | **1.7** | **48.3** |
+| straight street only (panos 16–39) | 20.02 | 20.86 | 0.702 | 0.550 | 79% | 5.6 | 67.1 |
+| MCMC noise ÷10 | 15.70 | 17.33 | 0.653 | 0.598 | 100% | 4.8 | 33.4 |
+| initial opacity 0.5 | 16.14 | 17.49 | 0.672 | 0.634 | 97% | 4.0 | 3.9 |
+| no 3 m size cap | 12.91 | 15.58 | 0.636 | 0.676 | 98% | 4.4 | 0.4 |
+
+- Only removing the opacity regulariser stops the collapse: transparent fraction holds at ~24% from step 4.5k to 9k
+  (base: 96% at 4.5k) and median splat size stays ~15 cm (base grows to ~0.9 m). +3.3 dB on the same scene.
+- With the dense 1.5M-point init the 0.01 × mean-opacity term outweighs the photometric gradient per splat, so MCMC
+  relocates dead splats, they grow to cover the gap, and the reg pushes them transparent again.
+- Contact sheets: opreg0 shows readable Paris facades, trees and street furniture from mid-path, side-step and
+  raised views; base is grey fog. The road under the capture car (car-spot-down) is still a grey patch in both:
+  that is the vehicle mask hole, for densify/fill to cover.
+- The straight-street subset scores higher but still collapses (79%), so the turns are not the cause.
+- Default `opacity_reg` is now 0. H12 queued: full route and straight street, opacity reg 0, full 30k steps,
+  densify 1 round, export with time limits.
