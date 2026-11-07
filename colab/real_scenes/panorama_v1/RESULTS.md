@@ -99,3 +99,12 @@ PanoVGGT still fell back to MoGe (pinning omegaconf did not help). Fixes: gsplat
 tile intersections for big splats, falls back to 16), max splat axis 3 m, the training window shrinks by 15% per
 10 out-of-memory skips (floor 512 px) instead of stopping, 768 px eval tiles; PanoVGGT config read with plain YAML
 (no OmegaConf), and checkpoint key mismatches are now reported instead of ignored.
+
+## H8 v4 (30k steps, 5M cap, 1024 px windows): trained to the end, but the model collapsed
+Both arms finished training (no crash; 10 out-of-memory skips), then Kaggle stopped the job at its 12 h limit during export.
+Held-out PSNR **11.4 dB** (MoGe) / 11.3 dB (PanoVGGT label, still MoGe in practice), SSIM 0.63, LPIPS 0.70 - versus 22 dB for H7c.
+99.9 % of splats have opacity < 0.05 and splats are near-spheres (anisotropy p50 1.03 vs 9 in H7c): every render is the sky
+dome's flat colour. Densify could not help (real-pixel fraction 0). The size cap was also wrong: log(0.15) normalised units is
+~22 m here, not 3 m (1 normalised unit = route radius, 147 m); the cap now comes from panorama spacing (0.3 x ~10 m).
+Ablation `dbg` queued: H8 settings vs old/new cap, no depth loss, inverse depth loss, unpacked raster, no training window,
+aniso 0.01, and an H7c-like reference, 4k steps each on the same scene.
