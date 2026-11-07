@@ -135,7 +135,8 @@ def train(scene_dir: Path, out: Path, steps: int = 7000, cap: int = 1_000_000,
           scale_reg: float = 0.01, opacity_reg: float = 0.01, max_minutes: float = 600.0,
           seed: int = 0, device: str = "cuda", carve: bool = False, carve_every: int = 500,
           init_ckpt: Path | None = None, lr_scale: float = 1.0, crop_px: int = 1024,
-          snapshot: Path | None = None, snapshot_minutes: float = 30.0) -> dict:
+          snapshot: Path | None = None, snapshot_minutes: float = 30.0, packed: bool = True,
+          depth_loss: str = "rel", scale_cap_frac: float = 0.3) -> dict:
     import torch
     import torch.nn.functional as F
     from gsplat import rasterization
@@ -247,7 +248,7 @@ def train(scene_dir: Path, out: Path, steps: int = 7000, cap: int = 1_000_000,
             params["means"], F.normalize(params["quats"], dim=-1), torch.exp(params["scales"]),
             torch.sigmoid(params["opacities"]), colors, v["V"][None], v["Kt"][None],
             v["w"], v["h"], sh_degree=sh_deg, render_mode="RGB+ED" if depth_weight > 0 else "RGB",
-            packed=True, absgrad=False, tile_size=TILE[0],
+            packed=packed, absgrad=False, tile_size=TILE[0],
         )
         return img[0], alpha[0], info
 
@@ -269,7 +270,7 @@ def train(scene_dir: Path, out: Path, steps: int = 7000, cap: int = 1_000_000,
     def step_loss(v, c, i, sh_deg, step):
         # high-res views: train on a random window (principal point shifted) so the tile-intersection
         # buffer stays inside a 16 GB T4 while every pixel keeps its full resolution
-        if v["w"] * v["h"] > CROP * CROP:
+        if CROP > 0 and v["w"] * v["h"] > CROP * CROP:
             cw, ch = min(CROP, v["w"]), min(CROP, v["h"])
             x0, y0 = np.random.randint(0, v["w"] - cw + 1), np.random.randint(0, v["h"] - ch + 1)
             v = crop_view(v, x0, y0, cw, ch)
@@ -302,7 +303,10 @@ def train(scene_dir: Path, out: Path, steps: int = 7000, cap: int = 1_000_000,
                 valid = valid & (c["mask"] > 0)
             if valid.any():
                 dw = depth_weight * (0.01 ** (step / steps)) ** 0.5
-                loss = loss + dw * (gd[valid] / ed[valid].clamp_min(1e-4) - 1).abs().clamp(max=1.0).mean()
+                if depth_loss == "inv":
+                    loss = loss + dw * (1 / ed[valid].clamp_min(1e-3) - 1 / gd[valid].clamp_min(1e-3)).abs().mean()
+                else:
+                    loss = loss + dw * (gd[valid] / ed[valid].clamp_min(1e-4) - 1).abs().clamp(max=1.0).mean()
         loss = loss + opacity_reg * torch.sigmoid(params["opacities"]).mean()
         loss = loss + scale_reg * torch.exp(params["scales"]).mean()
         if aniso_weight > 0:
@@ -326,12 +330,15 @@ def train(scene_dir: Path, out: Path, steps: int = 7000, cap: int = 1_000_000,
         if grid is not None and step % carve_every == 0 and step > 0:
             carve_now()
         with torch.no_grad():
-            params["scales"].clamp_(max=MAX_LOG_SCALE)
+            if MAX_LOG_SCALE is not None:
+                params["scales"].clamp_(max=MAX_LOG_SCALE)
 
     CROP = crop_px
     TILE = [32]  # 32 px tiles cut intersections ~4x for large splats; falls back to 16 if the kernel refuses
-    MAX_LOG_SCALE = math.log(max_splat_size(cameras, scale))  # ~3 m; stops screen-filling splats
-    print(f"[train] splat size cap {math.exp(MAX_LOG_SCALE):.4f} normalised units", flush=True)
+    # ~3 m at the default 0.3 x panorama spacing; stops screen-filling splats (0 = no cap)
+    MAX_LOG_SCALE = math.log(max_splat_size(cameras, scale, scale_cap_frac)) if scale_cap_frac > 0 else None
+    print(f"[train] splat size cap {'none' if MAX_LOG_SCALE is None else f'{math.exp(MAX_LOG_SCALE):.4f}'} "
+          f"normalised units; packed {packed}, window {CROP}, depth loss {depth_loss}", flush=True)
     oom_skips = 0
     last_snap = time.time()
     log_every = max(1, steps // 20)
@@ -388,8 +395,14 @@ def train(scene_dir: Path, out: Path, steps: int = 7000, cap: int = 1_000_000,
             last_snap = time.time()
             print(f"[train] snapshot at step {step} -> {snapshot}", flush=True)
         if step % log_every == 0 or step == steps - 1:
+            with torch.no_grad():
+                op = torch.sigmoid(params["opacities"])
+                big = torch.exp(params["scales"]).max(-1).values
+                at_cap = 0.0 if MAX_LOG_SCALE is None else float((big > 0.98 * math.exp(MAX_LOG_SCALE)).float().mean())
             print(f"[train] step {step}/{steps} loss {loss.item():.4f} splats {len(params['means'])} "
-                  f"oom-skips {oom_skips} {(time.time() - t0) / 60:.1f} min", flush=True)
+                  f"oom-skips {oom_skips} {(time.time() - t0) / 60:.1f} min | transparent {float((op < 0.05).float().mean()):.3f} "
+                  f"size p50 {float(big.median()):.5f} p99 {float(big[::max(1, len(big) // 1_000_000)].quantile(0.99)):.4f} "
+                  f"at-cap {at_cap:.3f}", flush=True)
 
     opts.clear(); state.clear()
     torch.cuda.empty_cache()
@@ -519,10 +532,14 @@ def main():
     p.add_argument("--lr-scale", type=float, default=1.0)
     p.add_argument("--crop", type=int, default=1024)
     p.add_argument("--snapshot", type=Path)
+    p.add_argument("--packed", type=int, default=1)
+    p.add_argument("--depth-loss", choices=["rel", "inv"], default="rel")
+    p.add_argument("--scale-cap-frac", type=float, default=0.3)
     a = p.parse_args()
     train(a.scene, a.out, a.steps, a.cap, a.long_side, a.sh_degree, a.depth_weight,
           a.sky, aniso_weight=a.aniso_weight, max_minutes=a.max_minutes, carve=a.carve,
-          init_ckpt=a.init_ckpt, lr_scale=a.lr_scale, crop_px=a.crop, snapshot=a.snapshot)
+          init_ckpt=a.init_ckpt, lr_scale=a.lr_scale, crop_px=a.crop, snapshot=a.snapshot,
+          packed=bool(a.packed), depth_loss=a.depth_loss, scale_cap_frac=a.scale_cap_frac)
 
 
 if __name__ == "__main__":

@@ -423,6 +423,44 @@ def scene_legacy(exp, inputs, sdir: Path, log: Path):
 
 
 # ------------------------------------------------------------- one experiment
+def run_variants(exp, tr, sdir, out, env, log):
+    results = {}
+    for var in exp["variants"]:
+        vt = {**tr, **var.get("train", {})}
+        vname = var["name"]
+        vout = out / vname
+        vout.mkdir(parents=True, exist_ok=True)
+        mdir = sdir / f"model_{vname}"
+        args = [sys.executable, HERE / "train_splats.py", "--scene", sdir, "--out", mdir,
+                "--steps", vt.get("steps", 4000), "--cap", vt.get("cap", 1_000_000),
+                "--long-side", vt.get("long_side", 960), "--sh-degree", vt.get("sh_degree", 1),
+                "--depth-weight", vt.get("depth_weight", 0.0), "--aniso-weight", vt.get("aniso_weight", 0.0),
+                "--max-minutes", vt.get("max_minutes", 60), "--packed", int(vt.get("packed", 1)),
+                "--depth-loss", vt.get("depth_loss", "rel"), "--crop", vt.get("crop", 1024),
+                "--scale-cap-frac", vt.get("scale_cap_frac", 0.3)]
+        if vt.get("sky"):
+            args.append("--sky")
+        if vt.get("carve"):
+            args.append("--carve")
+        t0 = time.time()
+        try:
+            sh(args, env=env, log=vout / "train.log")
+            shutil.copy2(mdir / "metrics.json", vout / "metrics.json")
+            sh([sys.executable, HERE / "offpath.py", "--model", mdir, "--scene", sdir, "--out", vout],
+               env=env, log=vout / "train.log")
+            results[vname] = json.loads((mdir / "metrics.json").read_text())
+            sc = vout / "scorecard.json"
+            if sc.is_file():
+                results[vname]["scorecard"] = json.loads(sc.read_text())
+        except Exception as exc:  # noqa: BLE001 - one broken variant must not hide the others
+            results[vname] = {"error": f"{type(exc).__name__}: {exc}"[-1500:]}
+        results[vname]["variant_minutes"] = round((time.time() - t0) / 60, 1)
+        shutil.rmtree(mdir, ignore_errors=True)
+        (out / "variants.json").write_text(json.dumps(results, indent=2))
+        say(exp["name"], vname, json.dumps({k: results[vname].get(k) for k in ("psnr", "ssim", "lpips", "error")})[:400])
+    return results
+
+
 def run_experiment(exp, inputs):
     import scene_io
 
@@ -473,6 +511,13 @@ def run_experiment(exp, inputs):
         env["PYTORCH_CUDA_ALLOC_CONF"] = "expandable_segments:True"
         env["PYTHONPATH"] = str(HERE) + os.pathsep + env.get("PYTHONPATH", "")
         tr = exp.get("train", {})
+        if exp.get("variants"):
+            # ablation: several short trainings on the same scene and priors, one switch changed per variant
+            status = {"name": name, "status": "ok", "variants": run_variants(exp, tr, sdir, out, env, log)}
+            status["minutes"] = round((time.time() - t) / 60, 1)
+            (out / "status.json").write_text(json.dumps(status, indent=2))
+            say(name, "variants done")
+            return status
         args = [sys.executable, HERE / "train_splats.py", "--scene", sdir, "--out", sdir / "model",
                 "--steps", tr.get("steps", 7000), "--cap", tr.get("cap", 1_000_000),
                 "--long-side", tr.get("long_side", 960), "--sh-degree", tr.get("sh_degree", 1),
