@@ -85,6 +85,33 @@ def normalisation(cameras):
     return centre, 1.0 / radius
 
 
+def pano_subset(cameras, points, spec: str, margin: float = 4.0):
+    """Keep the views of panoramas whose route index (leading digits of the panorama name) lies in spec "a-b",
+    and the initial points within margin x the median panorama spacing of a kept panorama centre."""
+    a, b = (int(x) for x in spec.split("-"))
+
+    def idx(c):
+        head = str(c.get("pano", "")).split("_")[0]
+        return int(head) if head.isdigit() else -1
+
+    kept = [c for c in cameras if a <= idx(c) <= b]
+    if not kept:
+        raise ValueError(f"no panoramas in range {spec}")
+    if points is None or not len(points):
+        return kept, points
+    pc = scene_io.pano_centres([c for c in kept if c.get("kind") != "generated"])
+    C = np.stack(list(pc.values()))
+    from scipy.spatial import cKDTree
+
+    if len(C) > 1:
+        dd, _ = cKDTree(C).query(C, k=2)
+        spacing = float(np.median(dd[:, 1]))
+    else:
+        spacing = 1.0
+    d, _ = cKDTree(C).query(points[:, :3], k=1)
+    return kept, points[d < margin * spacing]
+
+
 def max_splat_size(cameras, scale: float, frac: float = 0.3) -> float:
     """Largest allowed splat scale in normalised units: 0.3 x the median gap between neighbouring
     panoramas (~3 m for Street View's ~10 m spacing). The normalised unit itself is the route radius
@@ -136,7 +163,8 @@ def train(scene_dir: Path, out: Path, steps: int = 7000, cap: int = 1_000_000,
           seed: int = 0, device: str = "cuda", carve: bool = False, carve_every: int = 500,
           init_ckpt: Path | None = None, lr_scale: float = 1.0, crop_px: int = 1024,
           snapshot: Path | None = None, snapshot_minutes: float = 30.0, packed: bool = True,
-          depth_loss: str = "rel", scale_cap_frac: float = 0.3) -> dict:
+          depth_loss: str = "rel", scale_cap_frac: float = 0.3, noise_lr: float = 5e5,
+          init_opacity: float = 0.1, panos: str = "") -> dict:
     import torch
     import torch.nn.functional as F
     from gsplat import rasterization
@@ -148,6 +176,9 @@ def train(scene_dir: Path, out: Path, steps: int = 7000, cap: int = 1_000_000,
     out = Path(out)
     out.mkdir(parents=True, exist_ok=True)
     cameras, points, meta = scene_io.read_scene(scene_dir)
+    if panos:
+        cameras, points = pano_subset(cameras, points, panos)
+        print(f"[train] panorama subset {panos}: {len(cameras)} views, {len(points)} points", flush=True)
     ck0 = None
     if init_ckpt:
         ck0 = torch.load(init_ckpt, map_location=device, weights_only=False)
@@ -188,7 +219,7 @@ def train(scene_dir: Path, out: Path, steps: int = 7000, cap: int = 1_000_000,
         "means": torch.nn.Parameter(torch.tensor(xyz, dtype=torch.float32, device=device)),
         "scales": torch.nn.Parameter(torch.log(torch.tensor(dist, dtype=torch.float32, device=device))[:, None].repeat(1, 3)),
         "quats": torch.nn.Parameter(torch.tensor([[1.0, 0, 0, 0]], device=device).repeat(n, 1)),
-        "opacities": torch.nn.Parameter(torch.logit(torch.full((n,), 0.1, device=device))),
+        "opacities": torch.nn.Parameter(torch.logit(torch.full((n,), init_opacity, device=device))),
         "sh0": torch.nn.Parameter(((torch.tensor(rgb, dtype=torch.float32, device=device) - 0.5) / C0)[:, None, :]),
         "shN": torch.nn.Parameter(torch.zeros((n, K_sh - 1, 3), device=device)),
     })
@@ -235,7 +266,7 @@ def train(scene_dir: Path, out: Path, steps: int = 7000, cap: int = 1_000_000,
             params["opacities"][dead] = torch.logit(torch.tensor(1e-3, device=device))
             return dead
 
-    strat = MCMCStrategy(cap_max=cap, refine_stop_iter=int(steps * 0.8), verbose=False)
+    strat = MCMCStrategy(cap_max=cap, refine_stop_iter=int(steps * 0.8), noise_lr=noise_lr, verbose=False)
     strat.check_sanity(params, opts)
     state = strat.initialize_state()
 
@@ -535,11 +566,16 @@ def main():
     p.add_argument("--packed", type=int, default=1)
     p.add_argument("--depth-loss", choices=["rel", "inv"], default="rel")
     p.add_argument("--scale-cap-frac", type=float, default=0.3)
+    p.add_argument("--opacity-reg", type=float, default=0.01)
+    p.add_argument("--noise-lr", type=float, default=5e5)
+    p.add_argument("--init-opacity", type=float, default=0.1)
+    p.add_argument("--panos", default="", help="train on panoramas with route index in a range, e.g. 16-39")
     a = p.parse_args()
     train(a.scene, a.out, a.steps, a.cap, a.long_side, a.sh_degree, a.depth_weight,
           a.sky, aniso_weight=a.aniso_weight, max_minutes=a.max_minutes, carve=a.carve,
           init_ckpt=a.init_ckpt, lr_scale=a.lr_scale, crop_px=a.crop, snapshot=a.snapshot,
-          packed=bool(a.packed), depth_loss=a.depth_loss, scale_cap_frac=a.scale_cap_frac)
+          packed=bool(a.packed), depth_loss=a.depth_loss, scale_cap_frac=a.scale_cap_frac,
+          opacity_reg=a.opacity_reg, noise_lr=a.noise_lr, init_opacity=a.init_opacity, panos=a.panos)
 
 
 if __name__ == "__main__":
