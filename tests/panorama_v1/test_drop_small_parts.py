@@ -8,9 +8,15 @@ import pytest
 
 trimesh = pytest.importorskip("trimesh")
 pytest.importorskip("scipy")
-sys.modules.setdefault("torch", types.ModuleType("torch"))
 sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "colab/real_scenes/panorama_v1"))
-import tsdf  # noqa: E402
+_stub = "torch" not in sys.modules
+if _stub:  # tsdf imports torch at module level; drop_small_parts does not need it
+    sys.modules["torch"] = types.ModuleType("torch")
+try:
+    import tsdf  # noqa: E402
+finally:
+    if _stub:
+        del sys.modules["torch"]
 
 
 def test_drops_fragments_keeps_big_parts():
