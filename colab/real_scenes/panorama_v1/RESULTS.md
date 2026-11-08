@@ -246,5 +246,22 @@ Same Paris route as H13. New in the trainer: fit on 40 training views and a phot
   scooters, close facades). This is view sparsity, not fitting.
 - Fix in code (not yet run): `ground_seed.py` puts an opaque flat road disk (radius 0.35 × pano spacing) at the
   road height measured from nearby cloud points under every panorama. A `--solid-weight` loss makes every pixel
-  below the horizon or not sky opaque, masked or not. H15 (road fix; road fix + depth weight 0.5) is
-  configured in `experiments/h15.json` but blocked: the Kaggle account's 30 h weekly GPU quota is used up.
+  below the horizon or not sky opaque, masked or not. Tested in H15 below.
+
+## H15: road seed + solid ground (2026-11-08)
+Run on the backup Kaggle account (`suryanshsinha28/namma-pano-exp-h15`) through `.github/workflows/namma-pano-exp.yml`,
+because anasrazy's weekly GPU quota was used up. Same route and settings as H14-base, plus `ground_seed` (106,680 road
+splats under 40 panoramas) and `solid_weight 0.1`.
+
+| arm | held-out PSNR / SSIM / LPIPS | training-view PSNR / SSIM | aniso p50 | needles | off-path sharpness | train min |
+|---|---|---|---|---|---|---|
+| H15-ground | 19.55 / 0.716 / 0.435 | 25.75 / 0.860 | 4.8 | 12.6 % | 225 | 82 |
+| H15-ground-depth (depth 0.5) | 19.63 / 0.723 / 0.437 | 25.13 / 0.842 | 4.5 | 10.7 % | 185 | 79 |
+
+- Road fixed: every `car-spot-down` view in H14 showed the pale sky dome through the road with shards; in both H15 arms
+  it is now asphalt and lane markings continue through. Same in `mid-forward` / `mid-back` (no pale patch).
+- Held-out scores barely move (+0.1–0.2 dB), as expected: the masked road is not in the score.
+- Depth weight 0.5 does not reduce shards on near objects between panoramas (bins, parked cars, trees) and is a bit
+  blurrier, so H15-ground is published as `paris-h15`.
+- Still open: near objects between panoramas (view sparsity → generative fill / Fixer, plan H4/H5); the textured
+  surface step still times out in xatlas after 900 s (world ships without it).
