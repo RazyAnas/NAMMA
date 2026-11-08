@@ -213,3 +213,17 @@ World: https://anasrazy-namma-street.static.hf.space/world/paris-h13/index.html 
 - Still wrong: the learned sky dome (`sky.jpg`, 2048×1024) has the buildings baked into it, so blocky buildings
   show wherever splats are thin (raised views, holes); smeared near-camera clutter (parked scooters); the grey
   vehicle-mask patch on the road. Not yet checked: whether `.rad` itself is broken or was only hidden by bug 3.
+
+## Sky backdrop fixed (2026-11-08)
+- Cause: the trainer's sky dome (256×512) learned from every see-through pixel, so facades were baked into
+  `sky.jpg`; export also sampled it nearest-neighbour. In the game this showed as blocky buildings wherever
+  splats were thin.
+- Trainer: the dome now gets gradients only from MoGe sky pixels (it is still composited everywhere, frozen),
+  and records which texels were seen as sky (`env_hits` in `splats.pt`). Export samples bilinearly and fills
+  unseen texels from the sky above, fading to haze at the horizon (`sky_clean.py`). Not yet run on a GPU.
+- Old exports: the publish workflow runs `sky_clean.py` (guesses sky texels: bright, smooth, connected to the
+  zenith) when `game.json` has no `sky_clean` flag. paris-h13 republished this way; checked in Chrome: plain sky
+  at street level and from the raised benchmark view, no buildings in it.
+- Also fixed: the avatar still fell through the road strip after the splats loaded (it spawned exactly on the
+  floor's top face). Spawn is now 0.3 m above a 2 m thick strip, the fall reset runs before the move, and fall
+  speed is capped. Stable on the street after load; benchmark 30.1 fps average, 1%-low 30.
