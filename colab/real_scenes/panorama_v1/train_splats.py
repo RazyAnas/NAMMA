@@ -164,7 +164,8 @@ def train(scene_dir: Path, out: Path, steps: int = 7000, cap: int = 1_000_000,
           init_ckpt: Path | None = None, lr_scale: float = 1.0, crop_px: int = 1024,
           snapshot: Path | None = None, snapshot_minutes: float = 30.0, packed: bool = True,
           depth_loss: str = "rel", scale_cap_frac: float = 0.3, noise_lr: float = 5e5,
-          init_opacity: float = 0.1, panos: str = "") -> dict:
+          init_opacity: float = 0.1, panos: str = "", ground_seed: bool = False,
+          solid_weight: float = 0.0) -> dict:
     import torch
     import torch.nn.functional as F
     from gsplat import rasterization
@@ -213,13 +214,27 @@ def train(scene_dir: Path, out: Path, steps: int = 7000, cap: int = 1_000_000,
 
     d, _ = cKDTree(xyz).query(xyz, k=4)
     dist = np.sqrt(np.mean(d[:, 1:] ** 2, axis=1)).clip(1e-4, 0.05)
+    sc0 = np.repeat(dist[:, None], 3, 1)
+    q0 = np.tile([1.0, 0, 0, 0], (len(xyz), 1))
+    op0 = np.full(len(xyz), init_opacity)
+    if ground_seed and ck0 is None:
+        # the capture car hides the road under every panorama: give neighbours an opaque road to colour
+        import ground_seed as gs
+
+        pc = scene_io.pano_centres([c for c in cameras if c.get("kind") != "generated"])
+        Cn = (np.stack(list(pc.values())) - centre) * scale
+        gx, gc, gsz, gq = gs.ground_seeds(Cn, xyz, rgb, up_world)
+        xyz, rgb = np.concatenate([xyz, gx]), np.concatenate([rgb, gc])
+        sc0, q0 = np.concatenate([sc0, gsz]), np.concatenate([q0, gq])
+        op0 = np.concatenate([op0, np.full(len(gx), 0.6)])
+        print(f"[train] ground seed: {len(gx)} road splats under {len(Cn)} panoramas", flush=True)
     n = len(xyz)
     K_sh = (sh_degree + 1) ** 2
     params = torch.nn.ParameterDict({
         "means": torch.nn.Parameter(torch.tensor(xyz, dtype=torch.float32, device=device)),
-        "scales": torch.nn.Parameter(torch.log(torch.tensor(dist, dtype=torch.float32, device=device))[:, None].repeat(1, 3)),
-        "quats": torch.nn.Parameter(torch.tensor([[1.0, 0, 0, 0]], device=device).repeat(n, 1)),
-        "opacities": torch.nn.Parameter(torch.logit(torch.full((n,), init_opacity, device=device))),
+        "scales": torch.nn.Parameter(torch.log(torch.tensor(sc0, dtype=torch.float32, device=device))),
+        "quats": torch.nn.Parameter(torch.tensor(q0, dtype=torch.float32, device=device)),
+        "opacities": torch.nn.Parameter(torch.logit(torch.tensor(op0, dtype=torch.float32, device=device))),
         "sh0": torch.nn.Parameter(((torch.tensor(rgb, dtype=torch.float32, device=device) - 0.5) / C0)[:, None, :]),
         "shN": torch.nn.Parameter(torch.zeros((n, K_sh - 1, 3), device=device)),
     })
@@ -308,8 +323,9 @@ def train(scene_dir: Path, out: Path, steps: int = 7000, cap: int = 1_000_000,
             c = {k: (None if t is None else t[y0:y0 + ch, x0:x0 + cw]) for k, t in c.items()}
         out_img, alpha, info = render(v, sh_deg)
         rgb = out_img[..., :3]
+        dirs = ray_dirs_world(v) if (env is not None or solid_weight > 0) else None
         if env is not None:
-            sky_rgb = sky_colour(torch.sigmoid(env), ray_dirs_world(v))
+            sky_rgb = sky_colour(torch.sigmoid(env), dirs)
             if c["sky"] is not None:
                 # the dome learns only from sky pixels; elsewhere it is shown but frozen, so buildings seen
                 # through thin splats push the splats to fill in instead of being baked into the sky (paris-h13)
@@ -331,6 +347,12 @@ def train(scene_dir: Path, out: Path, steps: int = 7000, cap: int = 1_000_000,
         if c["sky"] is not None:
             # sky pixels (mask==0 in sky_mask) must stay transparent to splats
             loss = loss + 0.05 * (alpha[..., 0] * (1 - c["sky"])).mean()
+        if solid_weight > 0:
+            # nothing below the horizon is see-through, masked or not (the road under the capture car included)
+            solid = (dirs[..., 1] < -0.05).float()
+            if c["sky"] is not None:
+                solid = torch.maximum(solid, c["sky"])
+            loss = loss + solid_weight * ((1 - alpha[..., 0]) * solid).mean()
         if depth_weight > 0 and c["depth"] is not None:
             ed = out_img[..., 3]
             gd = c["depth"] * scale
@@ -638,13 +660,16 @@ def main():
     p.add_argument("--opacity-reg", type=float, default=0.0)
     p.add_argument("--noise-lr", type=float, default=5e5)
     p.add_argument("--init-opacity", type=float, default=0.1)
+    p.add_argument("--ground-seed", type=int, default=0)
+    p.add_argument("--solid-weight", type=float, default=0.0)
     p.add_argument("--panos", default="", help="train on panoramas with route index in a range, e.g. 16-39")
     a = p.parse_args()
     train(a.scene, a.out, a.steps, a.cap, a.long_side, a.sh_degree, a.depth_weight,
           a.sky, aniso_weight=a.aniso_weight, max_minutes=a.max_minutes, carve=a.carve,
           init_ckpt=a.init_ckpt, lr_scale=a.lr_scale, crop_px=a.crop, snapshot=a.snapshot,
           packed=bool(a.packed), depth_loss=a.depth_loss, scale_cap_frac=a.scale_cap_frac,
-          opacity_reg=a.opacity_reg, noise_lr=a.noise_lr, init_opacity=a.init_opacity, panos=a.panos)
+          opacity_reg=a.opacity_reg, noise_lr=a.noise_lr, init_opacity=a.init_opacity, panos=a.panos,
+          ground_seed=bool(a.ground_seed), solid_weight=a.solid_weight)
 
 
 if __name__ == "__main__":

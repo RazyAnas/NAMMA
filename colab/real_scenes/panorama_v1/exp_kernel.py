@@ -534,7 +534,8 @@ def run_experiment(exp, inputs):
                 "--packed", int(tr.get("packed", 1)), "--depth-loss", tr.get("depth_loss", "rel"),
                 "--crop", tr.get("crop", 1024), "--scale-cap-frac", tr.get("scale_cap_frac", 0.3),
                 "--opacity-reg", tr.get("opacity_reg", 0.0), "--noise-lr", tr.get("noise_lr", 5e5),
-                "--init-opacity", tr.get("init_opacity", 0.1), "--panos", tr.get("panos", "")]
+                "--init-opacity", tr.get("init_opacity", 0.1), "--panos", tr.get("panos", ""),
+                "--ground-seed", int(tr.get("ground_seed", 0)), "--solid-weight", tr.get("solid_weight", 0.0)]
         if tr.get("sky"):
             args.append("--sky")
         if tr.get("carve"):
@@ -581,7 +582,8 @@ def run_experiment(exp, inputs):
                 "--packed", int(tr.get("packed", 1)), "--depth-loss", tr.get("depth_loss", "rel"),
                 "--crop", tr.get("crop", 1024), "--scale-cap-frac", tr.get("scale_cap_frac", 0.3),
                 "--opacity-reg", tr.get("opacity_reg", 0.0), "--noise-lr", tr.get("noise_lr", 5e5),
-                "--init-opacity", tr.get("init_opacity", 0.1), "--panos", tr.get("panos", "")]
+                "--init-opacity", tr.get("init_opacity", 0.1), "--panos", tr.get("panos", ""),
+                "--ground-seed", int(tr.get("ground_seed", 0)), "--solid-weight", tr.get("solid_weight", 0.0)]
                 if tr.get("sky"):
                     ft.append("--sky")
                 if tr.get("carve"):
