@@ -328,12 +328,16 @@ if (!NAMMA.probes.length) new THREE.TextureLoader().load(
 );
 
 /** Gaussian splat background ([Spark docs](https://sparkjs.dev/docs/)); URL from `WORLD_ASSETS`. */
+const lodQuery = new URLSearchParams(location.search); // NAMMA: ?lodscale=4&render=1&budget=3000000&nolod=1 for live LoD tests
 const sparkRenderer = new SparkRenderer({
   renderer,
-  enableLod: true,
+  enableLod: lodQuery.get('nolod') !== '1',
   /** Higher skips tinier screen-space splats; ~2 is often hard to notice ([performance tuning](https://sparkjs.dev/docs/)). */
-  lodRenderScale: 2,
+  lodRenderScale: Number(lodQuery.get('render') ?? 2),
+  lodSplatScale: Number(lodQuery.get('lodscale') ?? 1),
+  ...(lodQuery.get('budget') ? { lodSplatCount: Number(lodQuery.get('budget')) } : {}),
 });
+(window as unknown as { nammaSpark: unknown }).nammaSpark = sparkRenderer;
 scene.add(sparkRenderer);
 const splatMesh = new SplatMesh({
   url: WORLD_ASSETS.splatSpz,
@@ -345,6 +349,7 @@ splatMesh.quaternion.identity();
 splatMesh.position.set(0, 0, 0);
 splatMesh.scale.setScalar(tuning.splatUniformScale);
 scene.add(splatMesh);
+(window as unknown as { nammaSplats: unknown }).nammaSplats = splatMesh;
 
 const controls = new OrbitControls(camera, renderer.domElement);
 controls.enableDamping = true;
