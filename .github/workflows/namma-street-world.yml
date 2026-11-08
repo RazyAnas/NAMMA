@@ -30,6 +30,9 @@ jobs:
     timeout-minutes: 90
     env:
       KAGGLE_API_TOKEN: ${{ secrets.KAGGLE_TOKEN || secrets.KAGGLE_API_TOKEN || secrets.KAGGLE_TOKEN_BACKUP }}
+      KAGGLE_TOKEN_A: ${{ secrets.KAGGLE_TOKEN }}
+      KAGGLE_TOKEN_B: ${{ secrets.KAGGLE_TOKEN_BACKUP }}
+      KAGGLE_TOKEN_C: ${{ secrets.KAGGLE_API_TOKEN }}
       HF_TOKEN: ${{ secrets.HF_TOKEN || secrets.HUGGINGFACE_WRITE_TOKEN }}
       CLIENT: colab/real_scenes/panorama_v1/game_client
     steps:
@@ -63,8 +66,15 @@ jobs:
         if: ${{ env.KERNEL != '' }}
         run: |
           mkdir -p kout
-          kaggle kernels output "$KERNEL" -p kout -o -q \
-            --file-pattern "^out/$EXPERIMENT/game/.*" --page-size 200
+          # the kernel may belong to either Kaggle account: try each stored token until one can read it
+          ok=""
+          for T in "$KAGGLE_TOKEN_A" "$KAGGLE_TOKEN_B" "$KAGGLE_TOKEN_C"; do
+            [ -n "$T" ] || continue
+            if KAGGLE_API_TOKEN="$T" kaggle kernels output "$KERNEL" -p kout -o -q \
+                 --file-pattern "^out/$EXPERIMENT/game/.*" --page-size 200; then ok=1; break; fi
+            echo "token could not read $KERNEL, trying the next one"
+          done
+          test -n "$ok" || { echo "no stored Kaggle token can read $KERNEL"; exit 1; }
           mkdir -p "$CLIENT/public/world"
           cp -r "kout/out/$EXPERIMENT/game/." "$CLIENT/public/world/"
           ls -la "$CLIENT/public/world"
