@@ -227,3 +227,24 @@ World: https://anasrazy-namma-street.static.hf.space/world/paris-h13/index.html 
 - Also fixed: the avatar still fell through the road strip after the splats loaded (it spawned exactly on the
   floor's top face). Spawn is now 0.3 m above a 2 m thick strip, the fall reset runs before the move, and fall
   speed is capped. Stable on the street after load; benchmark 30.1 fps average, 1%-low 30.
+
+## H14: why roads and buildings look bad (2026-11-08)
+Same Paris route as H13. New in the trainer: fit on 40 training views and a photo|render sheet (`fit_sheet.jpg`).
+
+| arm | splats | held-out PSNR / SSIM / LPIPS | training-view PSNR / SSIM | train min |
+|---|---|---|---|---|
+| H14-base (H13 settings) | 1.6M | 19.42 / 0.713 / 0.422 | 26.07 / 0.844 | 78 |
+| H14-big (long side 1024) | 4.0M | 19.36 / 0.704 / 0.419 | 26.55 / 0.861 | 118 |
+
+- Poses are not the main problem: training views line up and facades are sharp (26 dB).
+- 2.5× more splats changes nothing held-out, so capacity is not the problem either.
+- Road: the capture car is cut out of every panorama below about −46° (`vehicle_mask_erp.png`, 30 % of the
+  panorama). Nothing ever trains the road within ~2.5 m of each capture spot. It stays see-through, and the pale
+  sky dome shows as a grey blob with shards (visible in every training view and every `car-spot-down` off-path
+  view).
+- Buildings and near objects: good where photographed, shards and smears between panoramas 10 m apart (bins,
+  scooters, close facades). This is view sparsity, not fitting.
+- Fix in code (not yet run): `ground_seed.py` puts an opaque flat road disk (radius 0.35 × pano spacing) at the
+  road height measured from nearby cloud points under every panorama. A `--solid-weight` loss makes every pixel
+  below the horizon or not sky opaque, masked or not. H15 (road fix; road fix + depth weight 0.5) is
+  configured in `exp/h15.json` but blocked: the Kaggle account's 30 h weekly GPU quota is used up.
