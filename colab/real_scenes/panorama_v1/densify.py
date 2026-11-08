@@ -140,7 +140,7 @@ class Refiner:
 def run_densify(scene_dir: Path, model_dir: Path, out_dir: Path, device: str = "cuda", max_clips: int = 40,
                 step_m: float = 1.0, lane_m: float = 1.5, walk_eye_m: float = 1.6,
                 camera_height_m: float | None = None, manifest: dict | None = None, frame_w: int = 1280,
-                frame_h: int = 720, fill_holes: bool = True, log=print) -> dict:
+                frame_h: int = 720, fill_holes: bool = True, max_minutes: float = 0.0, log=print) -> dict:
     import time
 
     import torch
@@ -167,6 +167,9 @@ def run_densify(scene_dir: Path, model_dir: Path, out_dir: Path, device: str = "
     new_cams, crisp_splat, crisp_ibr, real_frac, gen_frac = [], [], [], [], []
     t0 = time.time()
     for ci, (label, mats) in enumerate(clips):
+        if max_minutes and (time.time() - t0) / 60 > max_minutes:
+            log(f"[densify] time budget {max_minutes:.0f} min reached after {ci} clips")
+            break
         frames, holes, splat_frames, rmasks = [], [], [], []
         for V in mats:
             rgb, alpha, depth = render(V, K, frame_w, frame_h, with_depth=True)

@@ -68,6 +68,7 @@ def main():
     p.add_argument("--out", type=Path, required=True)
     p.add_argument("--work", type=Path, default=Path("/kaggle/temp/namma-exp/fixer"))
     p.add_argument("--max-views", type=int, default=160)
+    p.add_argument("--max-minutes", type=float, default=0.0, help="densify time budget, 0 = none")
     a = p.parse_args()
     log = lambda *x: print(*x, flush=True)  # noqa: E731
     if a.stage == "vehicle":
@@ -95,7 +96,8 @@ def main():
         import densify
 
         man = json.loads(a.manifest.read_text()) if a.manifest and a.manifest.is_file() else None
-        rep = densify.run_densify(a.scene, a.model, a.out, device="cuda", max_clips=a.max_views, manifest=man, log=log)
+        rep = densify.run_densify(a.scene, a.model, a.out, device="cuda", max_clips=a.max_views, manifest=man,
+                                   max_minutes=a.max_minutes, log=log)
         print("[stage] densify", json.dumps(rep), flush=True)
         return
     if a.stage == "fill":

@@ -557,9 +557,13 @@ def run_experiment(exp, inputs):
                 rdir = sdir / f"{kind}{r}"
                 st = [sys.executable, HERE / "stage.py", kind, "--scene", scene_now, "--model", model_dir,
                       "--out", rdir, "--max-views", opts.get("max_views", 160)]
+                stage_min = float(opts.get("stage_minutes", 60))
+                if kind == "densify":
+                    st += ["--max-minutes", stage_min]
                 if (OUT / "route_manifest.json").is_file():
                     st += ["--manifest", OUT / "route_manifest.json"]
-                sh(st, env=env, log=log)
+                # backstop: H12 densify ran 10 h (21 min per clip) and ate the 12 h Kaggle limit before export
+                sh(st, env=env, log=log, timeout=60 * (stage_min + 45))
                 for rep_name in ("fill_report.json", "fixer_report.json", "densify_report.json"):
                     if (rdir / rep_name).is_file():
                         shutil.copy2(rdir / rep_name, out / f"{kind}{r}_{rep_name}")
