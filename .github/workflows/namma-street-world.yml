@@ -1,7 +1,7 @@
 name: NAMMA street world (build + publish browser game)
 
 # Builds the browser game for one exported panorama world and publishes it to the
-# NAMMA tour Space under world/<tag>/. It never starts GPU training.
+# NAMMA street Space (anasrazy/namma-street) under world/<tag>/. It never starts GPU training.
 on:
   # A pushed world request (colab/real_scenes/panorama_v1/worlds/<tag>.json) builds and publishes it.
   # Push triggers work on this feature branch without touching main.
@@ -119,8 +119,11 @@ jobs:
           from huggingface_hub import HfApi
           api = HfApi(token=os.environ["HF_TOKEN"])
           tag = os.environ["TAG"]
-          api.upload_folder(repo_id="anasrazy/namma-tour", repo_type="space",
+          # street worlds get their own static Space: namma-tour hit its 1 GB storage limit (2026-11-08)
+          space = "anasrazy/namma-street"
+          api.create_repo(space, repo_type="space", space_sdk="static", exist_ok=True)
+          api.upload_folder(repo_id=space, repo_type="space",
                             folder_path=os.path.join(os.environ["CLIENT"], "dist"), path_in_repo=f"world/{tag}",
                             commit_message=f"NAMMA street world {tag}")
-          print(f"https://anasrazy-namma-tour.static.hf.space/world/{tag}/index.html")
+          print(f"https://anasrazy-namma-street.static.hf.space/world/{tag}/index.html")
           PY
