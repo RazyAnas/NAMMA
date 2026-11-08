@@ -34,7 +34,19 @@ def kaggle(*args, check=True) -> str:
 
 
 def user() -> str:
-    return "anasrazy"
+    """The signed-in Kaggle account (KAGGLE_USER overrides; the GitHub launcher may use a backup account)."""
+    import os
+
+    if os.environ.get("KAGGLE_USER"):
+        return os.environ["KAGGLE_USER"]
+    try:
+        from kaggle.api.kaggle_api_extended import KaggleApi
+
+        api = KaggleApi()
+        api.authenticate()
+        return api.get_config_value("username") or "anasrazy"
+    except Exception:  # noqa: BLE001
+        return "anasrazy"
 
 
 def kernel_id(tag: str) -> str:

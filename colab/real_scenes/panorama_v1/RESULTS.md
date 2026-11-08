@@ -247,4 +247,4 @@ Same Paris route as H13. New in the trainer: fit on 40 training views and a phot
 - Fix in code (not yet run): `ground_seed.py` puts an opaque flat road disk (radius 0.35 × pano spacing) at the
   road height measured from nearby cloud points under every panorama. A `--solid-weight` loss makes every pixel
   below the horizon or not sky opaque, masked or not. H15 (road fix; road fix + depth weight 0.5) is
-  configured in `exp/h15.json` but blocked: the Kaggle account's 30 h weekly GPU quota is used up.
+  configured in `experiments/h15.json` but blocked: the Kaggle account's 30 h weekly GPU quota is used up.
