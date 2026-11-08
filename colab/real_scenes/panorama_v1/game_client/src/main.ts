@@ -13,7 +13,7 @@ import { SparkRenderer, SplatMesh } from '@sparkjsdev/spark';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 // NAMMA: world, sky, panorama lighting, car, HUD (src/namma.ts)
-import { NAMMA, addSkyDome, addSurface, ProbeLighting, Car, Hud } from './namma';
+import { NAMMA, addSkyDome, addSurface, addRouteFloor, ProbeLighting, Car, Hud } from './namma';
 await RAPIER.init();
 
 /**
@@ -147,6 +147,7 @@ Object.assign(tuning, NAMMA.tuning); // NAMMA: metric speeds, no colour grading 
 const capsuleCenterY = 0.5 * characterHeightStanding + characterRadiusStanding;
 
 const rapierWorld = new RAPIER.World({ x: 0, y: tuning.gravityY, z: 0 });
+const routeFloorY = addRouteFloor(rapierWorld); // NAMMA: no falling through the capture-car hole
 
 const characterController = rapierWorld.createCharacterController(characterPadding);
 characterController.setUp({ x: 0, y: 1, z: 0 });
@@ -1271,6 +1272,11 @@ function animate() {
   const movement = characterController.computedMovement();
 
   const t0 = playerBody.translation();
+  if (Number.isFinite(routeFloorY) ? t0.y < routeFloorY - 30 : t0.y < spawnFeetY - 200) { // NAMMA: fell out of the world
+    t0.x = spawnX; t0.y = spawnFeetY + capsuleCenterY; t0.z = spawnZ;
+    playerBody.setTranslation(t0, true);
+    characterState.linearVelocity.set(0, 0, 0);
+  }
   playerBody.setNextKinematicTranslation({
     x: t0.x + movement.x,
     y: t0.y + movement.y,

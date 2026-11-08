@@ -12,6 +12,7 @@ type GameJson = {
   units?: string;
   files: { splats: string; rad?: string; collider: string; ground_mesh?: string; sky?: string | null; surface?: string | null };
   spawn?: { pos: number[]; look_at: number[] };
+  camera_height_m?: number;
   route?: number[][];
   ibl?: { file: string; pos: number[] }[];
   character?: { glb: string; clips: { idle: string; air: string; walk: string; trick: string } };
@@ -29,6 +30,7 @@ export const NAMMA = {
   surfaceUrl: GAME.files.surface && !params.has('nosurface') ? WORLD_BASE + GAME.files.surface : null,
   spawn: GAME.spawn ?? { pos: [0, 1.7, 0], look_at: [0, 1.7, -1] },
   route: GAME.route ?? [],
+  cameraHeight: GAME.camera_height_m ?? 1.7,
   probes: (GAME.ibl ?? []).map((p) => ({ url: WORLD_BASE + p.file, pos: p.pos })),
   // CC0 avatar (three.js RobotExpressive by Tomás Laulhé / Quaternius) until VRM avatars land
   character: GAME.character ?? {
@@ -271,4 +273,33 @@ export class Hud {
       (b ? `<br>bench ${b.avg_fps} avg · ${b.low1_fps} 1%-low` : '');
     return driving;
   }
+}
+
+// ── road strip collider along the capture route ──
+// The TSDF collider has a hole under every capture point (the capture car is masked out of the depth), and the
+// player spawns right there, so without this the avatar falls forever (paris-h13, 2026-11-08). Each route segment
+// gets a flat 6 m wide, 0.4 m thick box whose top sits camera_height_m below the panorama centres.
+export function addRouteFloor(world: RAPIER.World, width = 6, thick = 0.4): number {
+  const r = NAMMA.route;
+  if (r.length < 2) return Infinity;
+  const body = world.createRigidBody(RAPIER.RigidBodyDesc.fixed());
+  let lowest = Infinity;
+  for (let i = 0; i + 1 < r.length; i++) {
+    const a = new THREE.Vector3(r[i][0], r[i][1] - NAMMA.cameraHeight, r[i][2]);
+    const b = new THREE.Vector3(r[i + 1][0], r[i + 1][1] - NAMMA.cameraHeight, r[i + 1][2]);
+    const d = b.clone().sub(a);
+    const len = d.length();
+    if (len < 1e-3) continue;
+    const mid = a.clone().add(b).multiplyScalar(0.5);
+    const q = new THREE.Quaternion().setFromUnitVectors(new THREE.Vector3(0, 0, 1), d.clone().normalize());
+    world.createCollider(
+      RAPIER.ColliderDesc.cuboid(width / 2, thick / 2, len / 2 + width / 2)
+        .setTranslation(mid.x, mid.y - thick / 2, mid.z)
+        .setRotation({ x: q.x, y: q.y, z: q.z, w: q.w })
+        .setFriction(0.8),
+      body,
+    );
+    lowest = Math.min(lowest, a.y, b.y);
+  }
+  return lowest;
 }
