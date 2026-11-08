@@ -31,6 +31,27 @@ def fuse(frames, lo, hi, R, vox, trunc=4, device='cuda', chunk=1 << 22):
     col = col / cw.clamp(min=1)[:, None]
     return tsdf.view(*dims).cpu().numpy(), wt.view(*dims).cpu().numpy(), col.view(*dims, 3).cpu().numpy()
 
+def drop_small_parts(m, min_faces=500):
+    """Keep faces in connected parts with >= min_faces faces. One sparse connected-components pass instead of
+    trimesh.split, which built one Trimesh per fragment and took ~53 min on a 2.7M-face street (H13 export)."""
+    import trimesh
+    from scipy.sparse import coo_matrix
+    from scipy.sparse.csgraph import connected_components
+    F = np.asarray(m.faces); nv = len(m.vertices)
+    if len(F) == 0:
+        return m
+    e = np.concatenate([F[:, [0, 1]], F[:, [1, 2]]])
+    g = coo_matrix((np.ones(len(e), np.int8), (e[:, 0], e[:, 1])), shape=(nv, nv))
+    _, lab = connected_components(g, directed=False)
+    flab = lab[F[:, 0]]
+    keep = np.bincount(flab)[flab] >= min_faces
+    if keep.all():
+        return m
+    sub = trimesh.Trimesh(m.vertices, F[keep], vertex_colors=m.visual.vertex_colors, process=False)
+    sub.remove_unreferenced_vertices()
+    return sub
+
+
 def extract(tsdf, wt, col, lo, R, vox, cams_world, min_faces=500):
     """Marching cubes on observed voxels -> (verts world, faces, colours uint8), loose bits dropped, faces turned to the cameras."""
     from skimage.measure import marching_cubes
@@ -39,8 +60,7 @@ def extract(tsdf, wt, col, lo, R, vox, cams_world, min_faces=500):
     ijk = np.clip(np.round(v / vox - 0.5).astype(int), 0, np.array(tsdf.shape) - 1)
     c = col[ijk[:, 0], ijk[:, 1], ijk[:, 2]]
     m = trimesh.Trimesh((lo + v + 0.5 * vox) @ R, f, vertex_colors=np.clip(c, 0, 255).astype(np.uint8), process=False)
-    parts = m.split(only_watertight=False)
-    m = trimesh.util.concatenate([p for p in parts if len(p.faces) >= min_faces]) if len(parts) > 1 else m
+    m = drop_small_parts(m, min_faces)
     fc = m.triangles_center; s = np.random.default_rng(0).choice(len(fc), min(20000, len(fc)), replace=False)
     near = cams_world[np.argmin(((fc[s, None] - cams_world[None]) ** 2).sum(-1), 1)]
     if (np.einsum('ij,ij->i', m.face_normals[s], near - fc[s]) > 0).mean() < 0.5: m.invert()   # normals face the free space
