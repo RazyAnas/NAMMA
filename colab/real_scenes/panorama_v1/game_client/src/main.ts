@@ -174,7 +174,7 @@ const characterState: CharacterState = {
   grounded: false,
 };
 
-const spawnFeetY = NAMMA.spawn.pos[1] - 1.7; // NAMMA: spawn on the route (eye height 1.7 m)
+const spawnFeetY = NAMMA.spawn.pos[1] - 1.7 + 0.3; // NAMMA: on the route (eye 1.7 m), dropped from 0.3 m so the capsule never starts inside the floor
 const spawnX = NAMMA.spawn.pos[0];
 const spawnZ = NAMMA.spawn.pos[2];
 const playerBodyDesc = RAPIER.RigidBodyDesc.kinematicPositionBased().setTranslation(
@@ -1263,6 +1263,15 @@ function animate() {
     oldFeet.set(t.x, t.y - capsuleCenterY, t.z);
   }
 
+  { // NAMMA: fell out of the world -> back to the spawn point, at rest (checked before the move is computed)
+    const tf = playerBody.translation();
+    if (Number.isFinite(routeFloorY) ? tf.y < routeFloorY - 30 : tf.y < spawnFeetY - 200) {
+      playerBody.setTranslation({ x: spawnX, y: spawnFeetY + capsuleCenterY, z: spawnZ }, true);
+      playerBody.setNextKinematicTranslation({ x: spawnX, y: spawnFeetY + capsuleCenterY, z: spawnZ });
+      characterState.linearVelocity.set(0, 0, 0);
+    }
+  }
+  characterState.linearVelocity.y = Math.max(characterState.linearVelocity.y, -30); // NAMMA: terminal speed, no tunnelling
   const desired = new THREE.Vector3(
     characterState.linearVelocity.x * deltaTime,
     characterState.linearVelocity.y * deltaTime,
@@ -1272,11 +1281,6 @@ function animate() {
   const movement = characterController.computedMovement();
 
   const t0 = playerBody.translation();
-  if (Number.isFinite(routeFloorY) ? t0.y < routeFloorY - 30 : t0.y < spawnFeetY - 200) { // NAMMA: fell out of the world
-    t0.x = spawnX; t0.y = spawnFeetY + capsuleCenterY; t0.z = spawnZ;
-    playerBody.setTranslation(t0, true);
-    characterState.linearVelocity.set(0, 0, 0);
-  }
   playerBody.setNextKinematicTranslation({
     x: t0.x + movement.x,
     y: t0.y + movement.y,

@@ -278,8 +278,8 @@ export class Hud {
 // ── road strip collider along the capture route ──
 // The TSDF collider has a hole under every capture point (the capture car is masked out of the depth), and the
 // player spawns right there, so without this the avatar falls forever (paris-h13, 2026-11-08). Each route segment
-// gets a flat 6 m wide, 0.4 m thick box whose top sits camera_height_m below the panorama centres.
-export function addRouteFloor(world: RAPIER.World, width = 6, thick = 0.4): number {
+// gets a flat 6 m wide, 2 m thick box whose top sits camera_height_m below the panorama centres.
+export function addRouteFloor(world: RAPIER.World, width = 6, thick = 2.0): number {
   const r = NAMMA.route;
   if (r.length < 2) return Infinity;
   const body = world.createRigidBody(RAPIER.RigidBodyDesc.fixed());
