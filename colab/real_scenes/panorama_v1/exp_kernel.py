@@ -544,6 +544,8 @@ def run_experiment(exp, inputs):
         (out / "snapshot.pt").unlink(missing_ok=True)
         model_dir, scene_now = sdir / "model", sdir
         shutil.copy2(model_dir / "metrics.json", out / "metrics_base.json")
+        if (model_dir / "fit_sheet.jpg").is_file():
+            shutil.copy2(model_dir / "fit_sheet.jpg", out / "fit_sheet.jpg")
         sh([sys.executable, HERE / "offpath.py", "--model", model_dir, "--scene", scene_now, "--out", out / "base"],
            env=env, log=log)
         # optional refinement rounds: hole-only generative fill, then masked Fixer

@@ -453,7 +453,19 @@ def train(scene_dir: Path, out: Path, steps: int = 7000, cap: int = 1_000_000,
         print(f"[train] carved {carved} splats in proven-empty space", flush=True)
 
     # ---------------------------------------------------------------- eval
-    metrics = evaluate(params, val_v, render, env, ray_dirs_world, device, tile=min(CROP, 768) if CROP > 0 else 768)
+    tile = min(CROP, 768) if CROP > 0 else 768
+    shots = []
+    metrics = evaluate(params, val_v, render, env, ray_dirs_world, device, tile=tile, keep=shots, n_keep=6)
+    # fit on views it trained on: high here + low on held-out = sparse views; low here too = poses/depth/capacity
+    tr_eval = [train_v[i] for i in np.linspace(0, len(train_v) - 1, min(40, len(train_v))).round().astype(int)]
+    tm = evaluate(params, tr_eval, render, env, ray_dirs_world, device, tile=tile, keep=shots, n_keep=6, lpips_on=False)
+    metrics.update({"train_psnr": tm["psnr"], "train_psnr_exposure_fair": tm["psnr_exposure_fair"],
+                    "train_ssim": tm["ssim"]})
+    print(f"[train] fit on training views: psnr {tm['psnr']:.2f} ssim {tm['ssim']:.3f}", flush=True)
+    try:
+        save_fit_sheet(shots, out / "fit_sheet.jpg")
+    except Exception as exc:  # noqa: BLE001 - a missing sheet must not lose the model
+        print("[train] fit sheet failed:", exc, flush=True)
     metrics["carved_splats"] = carved
     metrics.update({"steps": steps, "splats": int(len(params["means"])),
                     "train_views": len(train_v), "val_views": len(val_v),
@@ -496,12 +508,40 @@ def train(scene_dir: Path, out: Path, steps: int = 7000, cap: int = 1_000_000,
     return metrics
 
 
-def evaluate(params, val_v, render, env, ray_dirs_world, device, tile=768):
+def save_fit_sheet(shots, path: Path, width: int = 640):
+    """Photo | render pairs, one row per view: held-out first, then training views."""
+    from PIL import Image, ImageDraw
+
+    rows = []
+    for label, rgb, gt in shots:
+        h = int(round(width * rgb.shape[0] / rgb.shape[1]))
+        a = Image.fromarray((gt * 255).astype(np.uint8)).resize((width, h))
+        b = Image.fromarray((rgb * 255).astype(np.uint8)).resize((width, h))
+        row = Image.new("RGB", (2 * width, h))
+        row.paste(a, (0, 0))
+        row.paste(b, (width, 0))
+        ImageDraw.Draw(row).text((6, 4), f"{label}: photo | render", fill=(255, 255, 0))
+        rows.append(row)
+    if not rows:
+        return
+    sheet = Image.new("RGB", (2 * width, sum(r.height for r in rows)))
+    y = 0
+    for r in rows:
+        sheet.paste(r, (0, y))
+        y += r.height
+    sheet.save(path, quality=88)
+
+
+def evaluate(params, val_v, render, env, ray_dirs_world, device, tile=768, keep=None, n_keep=0, lpips_on=True):
     import torch
 
     if not val_v:
         return {"psnr": None}
+    keep_idx = set(np.linspace(0, len(val_v) - 1, n_keep).round().astype(int).tolist()) if keep is not None and n_keep else set()
+    lpips = None
     try:
+        if not lpips_on:
+            raise RuntimeError("off")
         from torchmetrics.image.lpip import LearnedPerceptualImagePatchSimilarity
         lpips = LearnedPerceptualImagePatchSimilarity(net_type="alex", normalize=True).to(device)
     except Exception as exc:  # pragma: no cover - optional metric
@@ -521,6 +561,9 @@ def evaluate(params, val_v, render, env, ray_dirs_world, device, tile=768):
                     rgb[y0:y0 + t["h"], x0:x0 + t["w"]] = part
             rgb = rgb.clamp(0, 1)
             gt = torch.from_numpy(v["rgb"]).to(device).float() / 255.0
+            if len(psnr) in keep_idx:
+                keep.append((("held-out " if lpips_on else "train ") + str(v["cam"].get("name", "")),
+                             rgb.cpu().numpy(), gt.cpu().numpy()))
             mask = None if v["mask"] is None else torch.from_numpy(v["mask"]).to(device).bool()
             sel = (lambda t: t[mask]) if mask is not None else (lambda t: t.reshape(-1, 3))
             mse = ((sel(rgb) - sel(gt)) ** 2).mean()
