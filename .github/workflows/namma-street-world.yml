@@ -59,6 +59,7 @@ jobs:
           print(f"KERNEL={r.get('kernel', '')}")
           print(f"EXPERIMENT={r.get('experiment', '')}")
           print(f"LOD_QUALITY={'true' if r.get('lod_quality', True) else 'false'}")
+          print(f"RAD={'true' if r.get('rad', True) else 'false'}")
           PY
       - name: Python tools
         run: python -m pip install -q "kaggle==2.2.5" six "huggingface_hub>=0.28" numpy pillow plyfile trimesh
@@ -82,6 +83,9 @@ jobs:
         if: ${{ env.KERNEL == '' }}
         run: python "$CLIENT/make_synthetic_world.py" "$CLIENT/public/world"
       - name: Build the streamable LoD tree (Spark build-lod, Rust)
+        # "rad": false ships scene.ply and lets Spark build the LoD tree in the browser: the build-lod .rad of
+        # paris-h13 rendered as coarse square blocks while the same PLY rendered sharp (2026-11-08)
+        if: ${{ env.RAD != 'false' }}
         run: |
           git clone -q --depth 1 --branch v2.4.0 https://github.com/sparkjsdev/spark /tmp/spark
           cd /tmp/spark/rust/build-lod
