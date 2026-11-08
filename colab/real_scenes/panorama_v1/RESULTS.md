@@ -164,3 +164,20 @@ H10 queued: PanoVGGT, 1.6M cap, 3 m cap; arm A 8K panoramas / 1600 px windows + 
 - The straight-street subset scores higher but still collapses (79%), so the turns are not the cause.
 - Default `opacity_reg` is now 0. H12 queued: full route and straight street, opacity reg 0, full 30k steps,
   densify 1 round, export with time limits.
+
+## H12 (opacity reg 0, full 30k steps): no collapse; densify then ran out the 12 h limit
+| Arm | PSNR | Exposure-fair | SSIM | LPIPS | Opacity < 0.05 | Aniso p50 | Needles | Off-path sharpness |
+|---|---:|---:|---:|---:|---:|---:|---:|---:|
+| H12-full (40 panos, 420/60 views) | 18.90 | 19.97 | 0.694 | 0.444 | 11% | 5.3 | 17% | 243 |
+| H12-straight (panos 16–39, 252/36 views) | 21.04 | 21.86 | 0.736 | 0.370 | 9% | 6.7 | 21% | 414 |
+
+- Training is stable to the end: transparent fraction 24% → 11% (full) and 26% → 9% (straight), median splat
+  size ~15 cm throughout, 79–82 min for 30k steps. LPIPS 0.444 vs 0.587 for H10-safe on the same scene.
+- Contact sheets: mid-path, side-step and raised views show sharp, readable Paris facades, trees, shopfronts and
+  road markings. Problems left: spiky needles on the near road, and the grey vehicle-mask hole under the car.
+  The straight arm's held-out panos 8 and 16 sit outside its training range, so those tiles are not meaningful.
+- Densify (Wan VACE) took ~21 min per clip; `max_minutes` only applied to the fine-tune, so 27–29 of 40 clips ran
+  for ~10 h and Kaggle stopped the job before export. No model was kept (`keep_ply` false). The straight arm's
+  densify also walked the whole route, so its clips outside panos 16–39 were 75–100% holes.
+- Fixed: densify now has a time budget (`stage_minutes`, default 60) and a hard subprocess timeout.
+- H13 queued: full route trained again with export and the model kept; arm B uses aniso weight 0.05 against the needles.
