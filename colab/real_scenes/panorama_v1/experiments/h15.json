@@ -1,0 +1,89 @@
+{
+ "data": {
+  "source": "panoramax",
+  "collection": "600d5cee-5328-4dd4-8838-5f27ef85aa59",
+  "count": 40,
+  "spacing_m": 10.0,
+  "start": 0,
+  "pano_width": 4096,
+  "asset": "hd",
+  "remove_vehicle": true
+ },
+ "experiments": [
+  {
+   "poses": "pano_sfm",
+   "views": "rig",
+   "matcher": "spatial",
+   "mapper": "global",
+   "priors": {
+    "depth": true,
+    "depth_source": "panovggt",
+    "masks": true,
+    "dynamic": true,
+    "vehicle": true,
+    "dense_init": true
+   },
+   "keep_ply": false,
+   "name": "H15-ground",
+   "gpu": 0,
+   "train": {
+    "steps": 30000,
+    "cap": 1600000,
+    "long_side": 960,
+    "sky": true,
+    "carve": true,
+    "depth_weight": 0.1,
+    "aniso_weight": 0.01,
+    "sh_degree": 1,
+    "max_minutes": 150,
+    "packed": 0,
+    "crop": 0,
+    "depth_loss": "inv",
+    "opacity_reg": 0.0,
+    "ground_seed": 1,
+    "solid_weight": 0.1
+   },
+   "export": true,
+   "atlas": 8192,
+   "export_minutes": 75
+  },
+  {
+   "poses": "pano_sfm",
+   "views": "rig",
+   "matcher": "spatial",
+   "mapper": "global",
+   "priors": {
+    "depth": true,
+    "depth_source": "panovggt",
+    "masks": true,
+    "dynamic": true,
+    "vehicle": true,
+    "dense_init": true
+   },
+   "keep_ply": false,
+   "name": "H15-ground-depth",
+   "gpu": 1,
+   "train": {
+    "steps": 30000,
+    "cap": 1600000,
+    "long_side": 960,
+    "sky": true,
+    "carve": true,
+    "depth_weight": 0.5,
+    "aniso_weight": 0.01,
+    "sh_degree": 1,
+    "max_minutes": 150,
+    "packed": 0,
+    "crop": 0,
+    "depth_loss": "inv",
+    "opacity_reg": 0.0,
+    "ground_seed": 1,
+    "solid_weight": 0.1
+   },
+   "export": true,
+   "atlas": 8192,
+   "export_minutes": 75
+  }
+ ],
+ "attempt": 2
+}

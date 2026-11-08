@@ -1,0 +1,94 @@
+# Independent Street View panorama -> 3D pipeline.
+# Triggered only by job manifests in panorama_v1/jobs/ or an explicit manual run.
+# It never reads or writes v3/RUN.json, the video inbox, or the video workflow.
+name: NAMMA Panorama to 3D
+
+on:
+  push:
+    branches:
+      - main
+      - feature/streetview-panorama-3d
+    # Only a new/edited job manifest should launch a push-triggered run.
+    # Editing pipeline code must never launch an unintended reconstruction.
+    paths:
+      - "colab/real_scenes/panorama_v1/jobs/*.json"
+  workflow_dispatch:
+    inputs:
+      job_file:
+        description: "Repository path to an existing panorama job JSON"
+        required: true
+        type: string
+      reuse_kernel:
+        description: "Optional completed Kaggle kernel (owner/slug) to publish without retraining"
+        required: false
+        type: string
+  schedule:
+    - cron: "*/5 * * * *"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: namma-panorama-queue
+  cancel-in-progress: false
+
+jobs:
+  panorama:
+    runs-on: ubuntu-latest
+    timeout-minutes: 358
+    env:
+      HF_TOKEN: ${{ secrets.HF_TOKEN || secrets.HUGGINGFACE_WRITE_TOKEN || secrets.HF_TOKEN_backup || secrets.HUGGINGFACE_WRITE_TOKEN_backup || secrets.HF_TOKEN_BACKUP || secrets.HUGGINGFACE_WRITE_TOKEN_BACKUP }}
+      # Panorama training is explicitly authorized to use the backup Kaggle
+      # credential.  Keep it direct so an unrelated primary secret can never
+      # silently select a different account.
+      KAGGLE_API_TOKEN: ${{ secrets.KAGGLE_TOKEN_BACKUP }}
+      PANORAMA_JOB_FILE: ${{ github.event.inputs.job_file }}
+      PANORAMA_REUSE_KERNEL: ${{ github.event.inputs.reuse_kernel }}
+    steps:
+      - name: Check out the panorama branch
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: "pip"
+
+      - name: Set up Node for the static tour exporter
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Install orchestration and publishing dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install "kaggle==2.2.5" "huggingface_hub>=0.28" six numpy scipy plyfile trimesh
+
+      - name: Install panorama smoke-test dependencies
+        run: python -m pip install numpy scipy pillow opencv-python-headless plyfile trimesh pytest
+
+      - name: Compile panorama Python modules
+        run: python -m py_compile colab/real_scenes/panorama_v1/*.py
+
+      - name: Validate all committed panorama job manifests
+        run: |
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          for path in sorted(Path('colab/real_scenes/panorama_v1/jobs').glob('*.json')):
+              json.loads(path.read_text(encoding='utf-8'))
+              print(f'VALID JSON: {path}')
+          PY
+
+      - name: Run panorama smoke tests before Kaggle
+        run: pytest -q --confcutdir=tests/panorama_v1 tests/panorama_v1
+
+      - name: Poll private inbox for browser-submitted jobs
+        if: github.event_name == 'schedule'
+        run: python colab/real_scenes/panorama_v1/poll_inbox.py
+
+      - name: Run an explicitly committed panorama job
+        if: github.event_name != 'schedule'
+        run: python colab/real_scenes/panorama_v1/gh_run.py
