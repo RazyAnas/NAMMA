@@ -79,6 +79,13 @@ jobs:
           mkdir -p "$CLIENT/public/world"
           cp -r "kout/out/$EXPERIMENT/game/." "$CLIENT/public/world/"
           ls -la "$CLIENT/public/world"
+      - name: Sky-only backdrop for exports made before the sky fix
+        if: ${{ env.KERNEL != '' }}
+        run: |
+          W="$CLIENT/public/world"
+          if [ -f "$W/sky.jpg" ] && ! python -c "import json,sys; sys.exit(0 if json.load(open('$W/game.json')).get('sky_clean') else 1)"; then
+            python colab/real_scenes/panorama_v1/sky_clean.py "$W/sky.jpg"
+          fi
       - name: Synthetic test world
         if: ${{ env.KERNEL == '' }}
         run: python "$CLIENT/make_synthetic_world.py" "$CLIENT/public/world"
