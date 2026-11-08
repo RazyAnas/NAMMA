@@ -181,3 +181,17 @@ H10 queued: PanoVGGT, 1.6M cap, 3 m cap; arm A 8K panoramas / 1600 px windows + 
   densify also walked the whole route, so its clips outside panos 16–39 were 75–100% holes.
 - Fixed: densify now has a time budget (`stage_minutes`, default 60) and a hard subprocess timeout.
 - H13 queued: full route trained again with export and the model kept; arm B uses aniso weight 0.05 against the needles.
+
+## H13 (H12-full settings, export on, model kept): first exported world since the collapse fix
+| Arm | PSNR | Exposure-fair | SSIM | LPIPS | Opacity < 0.05 | Aniso p50 | Needles | Total |
+|---|---:|---:|---:|---:|---:|---:|---:|---:|
+| H13-full (aniso 0.01) | 19.07 | 20.18 | 0.701 | 0.434 | 10% | 5.2 | 17% | 178 min |
+| H13-aniso05 (aniso 0.05) | 19.12 | 20.21 | 0.703 | 0.436 | 10% | 5.2 | 16% | 177 min |
+
+- Aniso weight 0.05 changed nothing measurable or visible; the near-road needles are not fixed by it.
+- Export finished in ~69 min. The new step logs show where H8/H10 stalled: TSDF fuse 57 s, **mesh extraction
+  53 min** (792×106×959 grid at 0.30 m, 2.7M faces), simplify to 400k 7 s, then the xatlas UV unwrap hit its
+  15 min limit, so there is no textured surface layer. Splats (1.53M out, 208k needles clamped), collider and
+  ground heightfield were written. Ground heightfield covers only 15% of its grid.
+- Next for export: extract the mesh on the GPU or at a coarser voxel, and unwrap the simplified 150k mesh only.
+- Published H13-full as world `paris-h13`.
