@@ -195,3 +195,21 @@ H10 queued: PanoVGGT, 1.6M cap, 3 m cap; arm A 8K panoramas / 1600 px windows + 
   ground heightfield were written. Ground heightfield covers only 15% of its grid.
 - Next for export: extract the mesh on the GPU or at a coarser voxel, and unwrap the simplified 150k mesh only.
 - Published H13-full as world `paris-h13`.
+
+## paris-h13 published and tested in Chrome (2026-11-08)
+World: https://anasrazy-namma-street.static.hf.space/world/paris-h13/index.html (new Space: `namma-tour` hit its 1 GB limit).
+- Readable Paris street around the avatar: facades, windows, shopfronts, crosswalk, scaffolding. Raw PLY in a bare
+  Spark page renders the same, so the exported splats are correct.
+- Four publish bugs found and fixed on the way:
+  1. The GitHub secret `KAGGLE_TOKEN` cannot read `anasrazy` kernels; the workflow now tries each stored token.
+  2. Spark `build-lod` `.rad`: published, but the scene never showed. Now `"rad": false` ships `scene.ply`
+     (140 MB, ~2 min to load) and Spark builds LoD in the browser.
+  3. The player spawned in the collider hole left by the vehicle mask and fell forever (camera at y = −142 km), so
+     only the sky dome was ever visible — this was the "blocky" look. Client now adds a 6 m road strip collider
+     along the route and resets the player if they fall.
+  4. Mesh cleanup `trimesh.split` took ~53 min in export; replaced with one sparse components pass (19 min → 0.2 s
+     on a 1.9M-face test mesh, identical output).
+- Measured: benchmark (B) 30.2 fps average, 1%-low 30.1, on this Mac in Chrome.
+- Still wrong: the learned sky dome (`sky.jpg`, 2048×1024) has the buildings baked into it, so blocky buildings
+  show wherever splats are thin (raised views, holes); smeared near-camera clutter (parked scooters); the grey
+  vehicle-mask patch on the road. Not yet checked: whether `.rad` itself is broken or was only hidden by bug 3.
