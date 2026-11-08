@@ -275,8 +275,10 @@ def game_dirs(w: int, h: int) -> np.ndarray:
 
 
 def export_sky(ck, R, out_path: Path, w: int = 2048, h: int = 1024) -> bool:
-    import torch
+    """Learned dome -> equirect in the game frame, sky only (buildings it absorbed are filled with sky)."""
     from PIL import Image
+
+    import sky_clean
 
     if ck.get("env") is None:
         return False
@@ -291,9 +293,21 @@ def export_sky(ck, R, out_path: Path, w: int = 2048, h: int = 1024) -> bool:
     lon = np.arctan2(x, z)
     lat = np.arcsin(np.clip(y, -1, 1))
     He, We = env.shape[:2]
-    cu = np.clip(((lon / math.pi + 1) / 2 * We).astype(int), 0, We - 1)
-    cv = np.clip(((lat / (math.pi / 2) + 1) / 2 * He).astype(int), 0, He - 1)
-    Image.fromarray((np.clip(env[cv, cu], 0, 1) * 255).astype(np.uint8)).save(out_path, quality=92)
+    fu = (lon / math.pi + 1) / 2 * We - 0.5   # bilinear: nearest sampling of the 512x256 dome looked blocky
+    fv = np.clip((lat / (math.pi / 2) + 1) / 2 * He - 0.5, 0, He - 1)
+    u0, v0 = np.floor(fu).astype(int), np.floor(fv).astype(int)
+    au, av = (fu - u0)[..., None], (fv - v0)[..., None]
+    u0, u1 = u0 % We, (u0 + 1) % We
+    v1 = np.minimum(v0 + 1, He - 1)
+    img = ((env[v0, u0] * (1 - au) + env[v0, u1] * au) * (1 - av) + (env[v1, u0] * (1 - au) + env[v1, u1] * au) * av)
+    observed = None
+    if ck.get("env_hits") is not None:
+        hits = np.asarray(ck["env_hits"])
+        cu = np.clip(((lon / math.pi + 1) / 2 * We).astype(int), 0, We - 1)
+        cv = np.clip(((lat / (math.pi / 2) + 1) / 2 * He).astype(int), 0, He - 1)
+        observed = hits[cv, cu] > 0
+    img = sky_clean.clean_sky(np.clip(img, 0, 1), observed)
+    Image.fromarray((img * 255).round().astype(np.uint8)).save(out_path, quality=92)
     return True
 
 
@@ -356,6 +370,7 @@ def export(scene_dir: Path, model_dir: Path, out_dir: Path, pano_dir: Path | Non
             rep["hybrid"] = {"error": f"{type(exc).__name__}: {exc}"[:400]}
         (out_dir / "_surface_geom.ply").unlink(missing_ok=True)
     rep["sky"] = export_sky(ck, R, out_dir / "sky.jpg")
+    rep["sky_clean"] = bool(rep["sky"])  # tells the publish workflow not to clean it again
     probes = export_ibl(cameras, pano_dir, R, origin, scale_m, out_dir / "ibl") if pano_dir else []
     g = json.loads((out_dir / "ground.json").read_text())
     route = [p["pos"] for p in probes]

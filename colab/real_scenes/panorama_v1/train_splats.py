@@ -310,6 +310,11 @@ def train(scene_dir: Path, out: Path, steps: int = 7000, cap: int = 1_000_000,
         rgb = out_img[..., :3]
         if env is not None:
             sky_rgb = sky_colour(torch.sigmoid(env), ray_dirs_world(v))
+            if c["sky"] is not None:
+                # the dome learns only from sky pixels; elsewhere it is shown but frozen, so buildings seen
+                # through thin splats push the splats to fill in instead of being baked into the sky (paris-h13)
+                ns = c["sky"][..., None]
+                sky_rgb = sky_rgb * (1 - ns) + sky_rgb.detach() * ns
             rgb = rgb + (1 - alpha) * sky_rgb
         A = cc[i]
         rgb_c = rgb @ (torch.eye(3, device=device) + A[:, :3]).T + A[:, 3]
@@ -461,9 +466,30 @@ def train(scene_dir: Path, out: Path, steps: int = 7000, cap: int = 1_000_000,
             lat = (torch.arange(He, device=device) + 0.5) / He * 180 - 90   # row 0 = straight down
             for pole_rows, ring in ((lat > 78, int(((78 + 90) / 180) * He) - 1), (lat < -78, int(((-78 + 90) / 180) * He))):
                 env[0, :, pole_rows, :] = env[0, :, ring:ring + 1, :].mean(-1, keepdim=True)
+    env_hits = None
+    if env is not None and any(v["sky_mask"] is not None for v in train_v):
+        # which dome texels were ever seen as sky: export fills the rest with sky instead of whatever is there
+        with torch.no_grad():
+            He, We = env.shape[2], env.shape[3]
+            env_hits = torch.zeros(He * We, device=device)
+            for v in train_v:
+                if v["sky_mask"] is None:
+                    continue
+                d = ray_dirs_world(v)[::4, ::4]
+                sky_px = to_tensor(v["sky_mask"]).float()[::4, ::4] < 0.5
+                d = d[sky_px]
+                if not len(d):
+                    continue
+                lon = torch.atan2(d[:, 0], d[:, 2])
+                lat = torch.asin(torch.clamp(d[:, 1], -1, 1))
+                cu = ((lon / math.pi + 1) / 2 * We).long().clamp(0, We - 1)
+                cv = ((lat / (math.pi / 2) + 1) / 2 * He).long().clamp(0, He - 1)
+                env_hits += torch.bincount(cv * We + cu, minlength=He * We).float()
+            env_hits = env_hits.view(He, We).cpu()
+            print(f"[train] sky dome: {float((env_hits > 0).float().mean()):.2f} of texels seen as sky", flush=True)
     torch.save({"params": {k: p.detach().cpu() for k, p in params.items()},
                 "centre": centre, "scale": scale, "up": up_world,
-                "env": None if env is None else torch.sigmoid(env).detach().cpu(),
+                "env": None if env is None else torch.sigmoid(env).detach().cpu(), "env_hits": env_hits,
                 "sh_degree": sh_degree}, out / "splats.pt")
     write_ply(out / "model.ply", params, centre, scale)
     print("[train] metrics", json.dumps(metrics), flush=True)
