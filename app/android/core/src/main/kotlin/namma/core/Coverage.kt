@@ -10,7 +10,7 @@ import kotlin.math.sqrt
  * Depth frames with their camera pose are fused into a sparse map of small cubes (voxels) on the surfaces of the room; each
  * voxel remembers from which directions it was seen (24 bins: 12 headings of 30 degrees x low / high). A photoreal model
  * needs every surface from several directions, so:
- *   level 0  seen once only (depth noise): not shown
+ *   level 0  seen fewer than minHits times (depth noise): not shown
  *   level 1  one direction    (red: come back to it)
  *   level 2  two directions   (yellow)
  *   level 3  three or more    (green: enough)
@@ -20,7 +20,7 @@ import kotlin.math.sqrt
  * Pure Kotlin, no Android: CoverageTest feeds it synthetic rooms. Not thread-safe: call it from one thread (the AR frame
  * thread) and hand [snapshot]s to the renderer.
  */
-class Coverage(voxel: Float = 0.04f, private val maxVoxels: Int = 120_000) {
+class Coverage(voxel: Float = 0.04f, private val maxVoxels: Int = 120_000, private val minHits: Int = 2) {
     var voxel = voxel; private set
     var count = 0; private set                      // voxels in the map
     var doublings = 0; private set
@@ -52,18 +52,19 @@ class Coverage(voxel: Float = 0.04f, private val maxVoxels: Int = 120_000) {
      * One depth image. [depthMm] = w x h distances along the optical axis in millimetres, 0 = no depth (ARCore's 16-bit
      * depth image); fx, fy, px, py = the intrinsics of that image in pixels; [camToWorld] = 4x4 column-major pose of the camera
      * in the world with OpenGL axes (+x right, +y up, -z where the camera looks) lined up with the image (image right = +x,
-     * image down = -y), as ARCore's Camera.getPose() is for its camera image. Every [stride]-th pixel between minM and maxM.
+     * image down = -y), as ARCore's Camera.getPose() is for its camera image. Every [stride]-th pixel between minM and maxM;
+     * with [confidence] (0..255 per pixel, ARCore's raw-depth confidence image) only pixels of at least [minConfidence].
      * Returns the number of points fused.
      */
     fun addDepth(depthMm: ShortArray, w: Int, h: Int, fx: Float, fy: Float, px: Float, py: Float, camToWorld: FloatArray,
-                 stride: Int = 2, minM: Float = 0.25f, maxM: Float = 4.5f): Int {
+                 stride: Int = 2, minM: Float = 0.25f, maxM: Float = 4.5f, confidence: ByteArray? = null, minConfidence: Int = 0): Int {
         val m = camToWorld; val cx = m[12]; val cy = m[13]; val cz = m[14]; var n = 0
         var v = stride / 2
         while (v < h) {
             var u = stride / 2
             while (u < w) {
                 val d = (depthMm[v * w + u].toInt() and 0xFFFF) * 0.001f
-                if (d in minM..maxM) {
+                if (d in minM..maxM && (confidence == null || (confidence[v * w + u].toInt() and 0xFF) >= minConfidence)) {
                     val xc = (u - px) * d / fx; val yc = -(v - py) * d / fy; val zc = -d
                     add(m[0] * xc + m[4] * yc + m[8] * zc + cx, m[1] * xc + m[5] * yc + m[9] * zc + cy, m[2] * xc + m[6] * yc + m[10] * zc + cz, cx, cy, cz); n++
                 }
@@ -130,7 +131,7 @@ class Coverage(voxel: Float = 0.04f, private val maxVoxels: Int = 120_000) {
     fun clear() { keys.fill(EMPTY); hits.fill(0); dirs.fill(0); sx.fill(0f); sy.fill(0f); sz.fill(0f); count = 0; version++ }
 
     // ---- the table
-    private fun level(i: Int): Int = if (hits[i] < 2) 0 else minOf(3, Integer.bitCount(dirs[i]))
+    private fun level(i: Int): Int = if (hits[i] < minHits) 0 else minOf(3, Integer.bitCount(dirs[i]))
 
     private fun key(x: Float, y: Float, z: Float) = pack(floor(x / voxel).toInt(), floor(y / voxel).toInt(), floor(z / voxel).toInt())
 

@@ -112,4 +112,21 @@ class CoverageTest {
         assertTrue(m.w in 19..21 && m.h == 1 && abs(m.x0 + 1f) < 0.05f && abs(m.z0 + 2f) < 0.05f, "a 2 m wall seen from above: ${m.w} x ${m.h}")
         assertTrue(m.level.take(8).all { it.toInt() == 3 } && m.level.takeLast(5).all { it.toInt() in 1..2 }, "left end green, right end not yet")
     }
+
+    @Test fun demoWalkPaintsTheRoomAndTheSecondLapTurnsItGreen() {
+        val d = CoverageDemo(); val c = Coverage(0.04f)
+        fun lap(from: Double) { var t = from; while (t < from + d.lapSeconds) { d.step(t); c.addDepth(d.depthMm, d.w, d.h, d.fx, d.fy, d.px, d.py, d.pose, stride = 1); t += 0.2 } }
+        lap(0.0); val one = c.stats()
+        assertTrue(one.seen > 5000, "the first lap paints the walls: $one")
+        val s = c.snapshot()                                                                 // every voxel lies on a wall, the floor, the ceiling or the table
+        for (k in 0 until s.n) {
+            val x = s.xyz[3 * k]; val y = s.xyz[3 * k + 1]; val z = s.xyz[3 * k + 2]
+            val onRoom = abs(abs(x) - 2f) < 0.05f || abs(abs(z) - 1.5f) < 0.05f || abs(y) < 0.05f || abs(y - 2.6f) < 0.05f
+            val onTable = abs(x) < 0.55f && abs(z) < 0.35f && y < 0.8f
+            assertTrue(onRoom || onTable, "a voxel floats in the air at $x, $y, $z")
+        }
+        lap(d.lapSeconds); val two = c.stats()                                                // looking across the room: new directions
+        assertTrue(two.percent > one.percent + 10 && two.seen >= one.seen, "the second lap improves coverage: $one -> $two")
+        assertNotNull(c.topDown(0.1f)).let { m -> assertTrue(m.w in 39..42 && m.h in 29..32, "a 4 x 3 m room from above: ${m.w} x ${m.h}") }
+    }
 }

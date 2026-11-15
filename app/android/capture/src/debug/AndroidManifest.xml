@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Test builds only (namma.capture.dev): the live-coverage screen can be opened straight from a computer,
+     adb shell am start -n namma.capture.dev/namma.capture.ScanActivity [-ez demo true], without tapping on the phone. -->
+<manifest xmlns:android="http://schemas.android.com/apk/res/android" xmlns:tools="http://schemas.android.com/tools">
+    <application>
+        <activity android:name=".ScanActivity" android:exported="true" tools:replace="android:exported" />
+    </application>
+</manifest>

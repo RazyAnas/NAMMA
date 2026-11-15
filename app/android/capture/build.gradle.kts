@@ -12,6 +12,7 @@ android {
         targetSdk = 35
         versionCode = (System.getenv("GITHUB_RUN_NUMBER") ?: "1").toInt()
         versionName = "1.0.$versionCode"
+        manifestPlaceholders["appLabel"] = "NAMMA Capture"
     }
     // CI signs with one key kept in the private HF dataset (KEYSTORE / KEYSTORE_PASS), so a new build installs over the old one
     val ks = System.getenv("KEYSTORE")
@@ -21,6 +22,7 @@ android {
         }
     }
     buildTypes {
+        debug { applicationIdSuffix = ".dev"; versionNameSuffix = "-dev"; manifestPlaceholders["appLabel"] = "NAMMA Capture DEV" }   // a local test build installs beside the released app
         release {
             isMinifyEnabled = false
             signingConfig = if (ks != null) signingConfigs.getByName("namma") else signingConfigs.getByName("debug")
@@ -31,4 +33,7 @@ android {
 
 kotlin { compilerOptions { jvmTarget.set(org.jetbrains.kotlin.gradle.dsl.JvmTarget.JVM_17) } }
 
-dependencies { implementation(project(":core")) }
+dependencies {
+    implementation(project(":core"))
+    implementation("com.google.ar:core:1.48.0")           // live coverage (ScanActivity): tracking + depth
+}

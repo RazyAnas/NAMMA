@@ -52,7 +52,7 @@ class SetupActivity : Activity() {
             }.start()
         }, this, 24))
         root.addView(msg)
-        setContentView(ScrollView(this).apply { setBackgroundColor(Ui.BG); addView(root) })
+        setContentView(ScrollView(this).apply { setBackgroundColor(Ui.BG); addView(root); Ui.insets(this, root) })
     }
 
     private fun field(hint: String) = EditText(this).apply {
