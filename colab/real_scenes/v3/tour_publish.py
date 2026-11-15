@@ -147,6 +147,9 @@ def publish(api, user, results_repo, run, tour_dir, say=print, url_path=None):
     # run's link pointed to until now), never upload over them blind
     was = (sp, folder) if os.environ.get('TOUR_FOLDER') else previous(api, user, results_repo, url_path or f'{run}/tour_url.txt')
     repo_pois = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'pois', run.replace('/', '_') + '.json')
+    try:                                           # the page's admin panel opens the collision editor on THIS tour: its run and its copy
+        ov = os.path.join(tour_dir, 'overlay.json'); o = json.load(open(ov)); o['src'] = dict(run=run, dst=os.environ.get('TOUR_DST', 'tour')); json.dump(o, open(ov, 'w'))
+    except (OSError, ValueError): pass             # (a generated world has no overlay.json)
     kept = keep_pois(api, was[0], was[1], tour_dir, say, repo_file=repo_pois) if was else keep_pois(api, sp, folder, tour_dir, say, repo_file=repo_pois)
     skip = ['plan.json'] + (['pois.json'] if kept is None else [])
     for k in range(1, 10):                         # a full free Space (1 GB) spills over to namma-tour-2, -3, ... (old links stay)
@@ -200,8 +203,12 @@ if __name__ == '__main__':
         while not api.file_exists(repo, f"{run}/{os.environ['TOUR_MODEL']}", repo_type='dataset'):
             assert time.time() - t0 < 5400, 'model never appeared'; print('waiting for', os.environ['TOUR_MODEL'], flush=True); time.sleep(30)
     src = os.environ.get('TOUR_DST', 'tour') if hd and not rb else 'tour'                # 'head': the stored tour it updates
-    d = snapshot_download(repo, repo_type='dataset', allow_patterns=[f'{run}/{src}/*', f'{run}/{src}/**'] + extra, local_dir='pub', token=tok)
-    tour = os.path.join(d, run, src); assert os.path.exists(f'{tour}/index.html'), f'no built tour in {repo}/{run}/{src}'
+    # TOUR_FROM (PUBLISH.json "from"): a trial of new page code on a copy. The stored tour <run>/<TOUR_FROM> is only read; the
+    # result is kept as <run>/<TOUR_DST> and published under its own link (url_name). Nothing of TOUR_FROM or its link changes.
+    frm = os.environ.get('TOUR_FROM'); get = src
+    if frm and frm != src and hd and not rb and not api.file_exists(repo, f'{run}/{src}/index.html', repo_type='dataset'): get = frm
+    d = snapshot_download(repo, repo_type='dataset', allow_patterns=[f'{run}/{get}/*', f'{run}/{get}/**'] + extra, local_dir='pub', token=tok)
+    tour = os.path.join(d, run, get); assert os.path.exists(f'{tour}/index.html'), f'no built tour in {repo}/{run}/{get}'
     if fp or co or rb or hd or rs: sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', 'final')); import make_tour
     if rs:                                                                                # spots at the exact filmed poses (make_tour.respot)
         import subprocess
@@ -241,6 +248,9 @@ if __name__ == '__main__':
         print('page start options updated', flush=True)
         for x in ('index.html', 'index.js', 'settings.json', 'overlay.json', 'tour.json'):     # page + repaired spots / fov kept with the run
             if os.path.exists(f'{tour}/{x}'): api.upload_file(path_or_fileobj=f'{tour}/{x}', path_in_repo=f'{run}/{src}/{x}', repo_id=repo, repo_type='dataset')
+    if get != src:                                                                        # the copy, whole, so it can be updated again later
+        api.upload_folder(folder_path=tour, path_in_repo=f'{run}/{src}', repo_id=repo, repo_type='dataset')   # with plan.json: the collision editor reads it
+        print(f'copy of {get} kept as {src}', flush=True)
     publish(api, user, repo, run, tour, url_path=f"{run}/{os.environ.get('TOUR_URL_NAME', 'tour_url.txt')}")   # a new name keeps the old link
     if os.environ.get('INBOX_JOB'):                                                       # finish an app job whose publish failed
         import inbox; inbox.set_status(os.environ['INBOX_JOB'], 'done', run=run, link=open('tour_url.txt').read().strip())

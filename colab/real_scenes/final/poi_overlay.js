@@ -270,7 +270,11 @@ if (admin) {
   const colI = $('nm-acol'), setCol = (on) => { const vs = window.viewer && window.viewer.state; if (!vs || !vs.hasCollisionOverlay) return false; try { vs.collisionOverlayEnabled = on; } catch (e) { return false; } return true; };
   colI.onchange = () => { if (!setCol(colI.checked)) { colI.checked = false; say('This tour has no collision view.'); } };
   { const t0 = Date.now(), k = setInterval(() => { const vs = window.viewer && window.viewer.state; if (vs && vs.loaded && vs.hasCollisionOverlay) { clearInterval(k); colI.checked = setCol(true); } else if (Date.now() - t0 > 90000) clearInterval(k); }, 500); }
-  $('nm-aedit').onclick = () => { window.open(new URL('../editor/index.html', location.href).toString(), '_blank', 'noopener'); };
+  // the editor lives beside the tours on the Space and is told which tour this is (its folder, its run and copy: overlay.json src)
+  $('nm-aedit').onclick = () => { if (!/\.hf\.space$/.test(location.hostname)) { say('The collision editor works on the published tour only: it signs in with Hugging Face and loads the mesh from your private dataset. Open this tour from its link and use this button there.'); return; }
+    const u = new URL('../editor/index.html', location.href), fo = location.pathname.split('/').filter(Boolean).filter((x) => !/\.html?$/.test(x)).pop() || '';
+    u.searchParams.set('folder', fo); u.searchParams.set('run', (o.src && o.src.run) || fo.replace(/-[0-9a-f]{20}$/, '')); if (o.src && o.src.dst) u.searchParams.set('dst', o.src.dst);
+    window.open(u.toString(), '_blank', 'noopener'); };
   panel = { list() { const L = $('nm-alist'); L.textContent = ''; pois.forEach((p) => { const b = document.createElement('button'); b.className = p.id === sel ? 'on' : '';
         b.innerHTML = `<span>${esc(p.name)}</span><small>${esc(p.category)}${p.source === 'ai' ? ' · AI' : ''}${nav && !p.approach ? ' · no route' : ''}</small>`; b.onclick = () => panel.edit(p.id); L.appendChild(b); });
       if (!pois.length) L.innerHTML = '<div class="st">No places yet. Tap to place the first one.</div>'; mark(); },
