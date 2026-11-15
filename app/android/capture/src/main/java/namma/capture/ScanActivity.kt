@@ -44,9 +44,10 @@ import kotlin.math.atan2
 import kotlin.math.sqrt
 
 /**
- * Recording with live coverage (16 Nov): the camera picture with the scanned surfaces painted on it while you film:
- * red = seen from one direction (come back to it), yellow = two, green = three or more (enough for the model); no paint =
- * not filmed yet. Top right: the same from above, with you as the white dot. The numbers say how much of what was seen is
+ * Recording with live coverage (16 Nov): the camera picture with a tinted film laid over the scanned surfaces while you
+ * film, following the real objects like plastic wrap, with a bright edge where the scanned part ends:
+ * thin violet = seen from one direction (come back to it), light blue = two, deep blue = three or more (enough for the
+ * model); no film = not filmed yet. Top right: the same from above, with you as the white dot. The numbers say how much of what was seen is
  * covered well, and the tip line points at the nearest red area. ARCore does the tracking and the depth (ArRig), the map is
  * namma.core.Coverage, the drawing CoverageGl. After STOP: the same video check, name and upload as the normal recorder.
  * Intent extra "demo" = true: a made-up room instead of the camera (CoverageDemo), to see the screen work without ARCore.
@@ -57,6 +58,8 @@ class ScanActivity : Activity(), GLSurfaceView.Renderer {
     private val gl = CoverageGl()
     private var rig: ArRig? = null
     private val sim = CoverageDemo(); private val simMap = Coverage(); private var simT0 = 0L; @Volatile private var simRec = false
+    private val simLevel = ByteArray(sim.w * sim.h); private val simK = floatArrayOf(sim.fx, sim.fy, sim.px, sim.py); private var filmK = simK
+    private var fpsAt = 0L; private var fpsFrames = 0
     private lateinit var title: TextView; private lateinit var timer: TextView; private lateinit var cue: TextView
     private lateinit var tip: TextView; private lateinit var info: TextView; private lateinit var recBtn: android.widget.Button
     private lateinit var mini: ImageView
@@ -120,7 +123,7 @@ class ScanActivity : Activity(), GLSurfaceView.Renderer {
         root.addView(cue, FrameLayout.LayoutParams(sw * 60 / 100, -2, Gravity.CENTER))
 
         val bottom = Ui.column(this, 8).apply { setBackgroundColor(0x99000000.toInt()) }
-        tip = Ui.text(this, "Stand at the entrance and tap REC. Walk slowly along the walls; paint everything green.", 13f); info = Ui.text(this, "", 11f, Ui.DIM)
+        tip = Ui.text(this, "Stand at the entrance and tap REC. Walk slowly along the walls until everything is wrapped in deep blue.", 13f); info = Ui.text(this, "", 11f, Ui.DIM)
         bottom.addView(tip); bottom.addView(info)
         root.addView(bottom, FrameLayout.LayoutParams(sw * 62 / 100, -2, Gravity.BOTTOM or Gravity.START))
 
@@ -164,17 +167,20 @@ class ScanActivity : Activity(), GLSurfaceView.Renderer {
     override fun onDrawFrame(g: GL10?) {
         val now = SystemClock.elapsedRealtime(); val dt = if (lastFrameAt == 0L) 0.033 else (now - lastFrameAt) / 1000.0; lastFrameAt = now; frames++
         GLES20.glClearColor(0.05f, 0.06f, 0.08f, 1f); GLES20.glClear(GLES20.GL_COLOR_BUFFER_BIT)
-        val map: Coverage; val pose: FloatArray; var tracking = true
+        val map: Coverage; val pose: FloatArray; var tracking = true; var film = false
         if (demo) {
             if (simT0 == 0L) simT0 = now
             sim.step((now - simT0) / 1000.0); pose = sim.pose
             if (simRec) simMap.addDepth(sim.depthMm, sim.w, sim.h, sim.fx, sim.fy, sim.px, sim.py, pose, stride = 1)
             invertRigid(pose, view); perspective(proj, 2f * sim.fx / sim.w, 2f * sim.fy / sim.h, 0.05f, 60f); map = simMap
+            simMap.levels(sim.depthMm, sim.w, sim.h, sim.fx, sim.fy, sim.px, sim.py, pose, simLevel)
+            gl.film(simLevel, sim.depthMm, sim.w, sim.h); film = true; filmK = simK
         } else {
             val r = rig ?: return; val f = r.frame(gl, vw, vh, rotation()) ?: return
             gl.background(); tracking = r.tracking; map = r.coverage; pose = r.pose
             if (!tracking) { if (now - lastHud > 500) { lastHud = now; runOnUiThread { timer.text = "Finding where the phone is: move it slowly sideways" } }; return }
             System.arraycopy(r.view, 0, view, 0, 16); System.arraycopy(r.proj, 0, proj, 0, 16)
+            if (r.film(f)) { gl.film(r.filmLevel, r.filmDepth, r.filmW, r.filmH); film = true; filmK = r.filmK }
             val turn = r.takeTurn(); turnForSample += turn
             if (recWanted && r.recording) {
                 coach.gyro(now, 0f, Math.toRadians(turn / maxOf(dt, 1e-3)).toFloat(), 0f)?.let { c -> runOnUiThread { show(c) } }
@@ -188,9 +194,13 @@ class ScanActivity : Activity(), GLSurfaceView.Renderer {
                 }
             }
         }
-        if (frames % 6 == 0) gl.upload(map.snapshot())                                 // the map changes slowly: 5 uploads a second
-        Matrix.multiplyMM(vp, 0, proj, 0, view, 0); gl.coverage(vp, proj[0] * vw / 2f)
+        if (film) gl.drawFilm(filmK, pose)                                             // the map as a film wrapped over the picture
+        else {                                                                          // no depth image: a square per voxel
+            if (frames % 6 == 0) gl.upload(map.snapshot())
+            Matrix.multiplyMM(vp, 0, proj, 0, view, 0); gl.coverage(vp, proj[0] * vw / 2f)
+        }
         if (now - lastHud > 500) { lastHud = now; hud(map, pose, now) }
+        fpsFrames++; if (now - fpsAt >= 5000) { if (fpsAt != 0L) android.util.Log.i("NammaAr", "%.1f frames a second".format(fpsFrames * 1000.0 / (now - fpsAt))); fpsAt = now; fpsFrames = 0 }
     }
 
     /** Numbers, the map from above and the "go there" tip, twice a second (built on the GL thread, shown on the UI thread). */
@@ -203,7 +213,7 @@ class ScanActivity : Activity(), GLSurfaceView.Renderer {
             val fx = -pose[8]; val fz = -pose[10]; val dx = it.x - x; val dz = it.z - z                 // camera forward and the way to the spot, on the floor
             val a = Math.toDegrees(atan2((fx * dz - fz * dx).toDouble(), (fx * dx + fz * dz).toDouble())); val d = sqrt(dx * dx + dz * dz)
             val side = when { a > 135 || a < -135 -> "behind you"; a > 25 -> "to your right"; a < -25 -> "to your left"; else -> "ahead" }
-            "Red area %.1f m %s: film it from another side.".format(d, side)
+            "Thin area %.1f m %s: film it from another side.".format(d, side)
         }
         val bmp = map.topDown(0.1f)?.let { m ->
             val b = Bitmap.createBitmap(m.w, m.h, Bitmap.Config.ARGB_8888); val px = IntArray(m.w * m.h) { CoverageGl.COLOUR_INT[m.level[it].toInt()] }

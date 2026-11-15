@@ -129,4 +129,30 @@ class CoverageTest {
         assertTrue(two.percent > one.percent + 10 && two.seen >= one.seen, "the second lap improves coverage: $one -> $two")
         assertNotNull(c.topDown(0.1f)).let { m -> assertTrue(m.w in 39..42 && m.h in 29..32, "a 4 x 3 m room from above: ${m.w} x ${m.h}") }
     }
+
+    @Test fun levelsPictureMarksWhatWasScannedAndNothingElse() {
+        val d = CoverageDemo(); val c = Coverage(0.04f); val out = ByteArray(d.w * d.h)
+        d.step(0.0); c.levels(d.depthMm, d.w, d.h, d.fx, d.fy, d.px, d.py, d.pose, out)
+        assertTrue(out.all { it.toInt() == 0 }, "an empty map paints nothing")
+        repeat(2) { c.addDepth(d.depthMm, d.w, d.h, d.fx, d.fy, d.px, d.py, d.pose, stride = 1) }
+        c.levels(d.depthMm, d.w, d.h, d.fx, d.fy, d.px, d.py, d.pose, out)
+        assertTrue(out.count { it.toInt() >= 1 } > 0.97 * out.size, "the view that was scanned is painted without holes: ${out.count { it.toInt() >= 1 }} of ${out.size}")
+        assertEquals(1, maxOf(c.levelAt(1.99f, 1.4f, 0f), c.levelAt(2.01f, 1.4f, 0f)))             // on the wall it faces (x = 2, either side of the voxel edge)
+        assertEquals(0, c.levelAt(0f, 1.4f, 0f))                                                  // the air in the room
+        d.step(1.0); c.levels(d.depthMm, d.w, d.h, d.fx, d.fy, d.px, d.py, d.pose, out)             // a second later: mostly the same wall, some new
+        val part = out.count { it.toInt() >= 1 }; assertTrue(part > 0.5 * out.size && part < out.size, "partly painted: $part of ${out.size}")
+        d.step(d.lapSeconds / 2); c.levels(d.depthMm, d.w, d.h, d.fx, d.fy, d.px, d.py, d.pose, out) // the opposite wall: never scanned
+        assertTrue(out.count { it.toInt() >= 1 } < 0.03 * out.size, "the unscanned side stays clear: ${out.count { it.toInt() >= 1 }}")
+    }
+
+    @Test fun levelsPictureFillsPinholesButNotRealGaps() {
+        val d = CoverageDemo(); val c = Coverage(0.04f); val out = ByteArray(d.w * d.h)
+        d.step(0.0); repeat(2) { c.addDepth(d.depthMm, d.w, d.h, d.fx, d.fy, d.px, d.py, d.pose, stride = 1) }
+        val depth = d.depthMm.copyOf(); val mid = d.h / 2 * d.w + d.w / 2
+        depth[mid] = (depth[mid] + 400).toShort()                                              // one pixel's depth is 40 cm off: the lookup misses
+        c.levels(depth, d.w, d.h, d.fx, d.fy, d.px, d.py, d.pose, out); assertEquals(1, out[mid].toInt(), "a single miss is filled from its neighbours")
+        for (v in d.h / 2 - 4..d.h / 2 + 4) for (u in d.w / 2 - 4..d.w / 2 + 4) depth[v * d.w + u] = (d.depthMm[v * d.w + u] + 400).toShort()
+        c.levels(depth, d.w, d.h, d.fx, d.fy, d.px, d.py, d.pose, out); assertEquals(0, out[mid].toInt(), "a 9 x 9 pixel patch that was not scanned stays clear")
+        depth[mid] = 0; c.levels(depth, d.w, d.h, d.fx, d.fy, d.px, d.py, d.pose, out); assertEquals(0, out[mid].toInt())   // no depth: never filled
+    }
 }

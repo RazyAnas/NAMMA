@@ -49,6 +49,12 @@ class ArRig(private val act: Activity, private val onInfo: (String) -> Unit) {
     private var session: Session? = null
     private var installAsked = false
     private var depthBuf = ShortArray(0); private var confBuf = ByteArray(0)
+    /** The film for the newest frame ([film]): per depth pixel the coverage level, and the depth image itself. */
+    var filmW = 0; private set
+    var filmH = 0; private set
+    var filmLevel = ByteArray(0); private set
+    var filmDepth = ShortArray(0); private set
+    val filmK = FloatArray(4)                       // that depth image's fx, fy, cx, cy
     private val prevRot = FloatArray(9); private var hasPrev = false
     private var recorder: MediaRecorder? = null
     private var encSurface: EGLSurface? = null
@@ -113,7 +119,10 @@ class ArRig(private val act: Activity, private val onInfo: (String) -> Unit) {
         if (!arActive) return null
         val f = try { s.setDisplayGeometry(rotation, w, h); s.update() } catch (e: Exception) { return null }
         try {
-            if (f.hasDisplayGeometryChanged()) f.transformCoordinates2d(Coordinates2d.OPENGL_NORMALIZED_DEVICE_COORDINATES, gl.quadNdc, Coordinates2d.TEXTURE_NORMALIZED, gl.uv)
+            if (f.hasDisplayGeometryChanged()) {
+                f.transformCoordinates2d(Coordinates2d.OPENGL_NORMALIZED_DEVICE_COORDINATES, gl.quadNdc, Coordinates2d.TEXTURE_NORMALIZED, gl.uv)
+                f.transformCoordinates2d(Coordinates2d.OPENGL_NORMALIZED_DEVICE_COORDINATES, gl.quadNdc, Coordinates2d.IMAGE_NORMALIZED, gl.filmUv)   // the depth image = the camera image
+            }
             wantFile?.let { wantFile = null; startEncoder(it) }
             if (wantStop) { wantStop = false; stopEncoder() }
             if (recording) encode(f, gl, w, h)
@@ -210,6 +219,28 @@ class ArRig(private val act: Activity, private val onInfo: (String) -> Unit) {
                 }
             } catch (e: Exception) {}
         }
+    }
+
+    /**
+     * The coverage as a film over this frame's picture (GL thread): ARCore's dense depth image of the frame says which
+     * surface is behind every pixel; the map says how well that surface is covered. Fills filmLevel, filmDepth (filmW x
+     * filmH) and filmK. False: no depth for this frame (or a phone without the Depth API), draw the voxel squares instead.
+     */
+    fun film(f: Frame): Boolean {
+        if (!depth || !tracking) return false
+        return try {
+            f.acquireDepthImage16Bits().use { img ->
+                val w = img.width; val h = img.height; val p = img.planes[0]; val sb = p.buffer.order(ByteOrder.nativeOrder()).asShortBuffer()
+                if (filmDepth.size != w * h) { filmDepth = ShortArray(w * h); filmLevel = ByteArray(w * h); filmW = w; filmH = h }
+                val stride = p.rowStride / 2
+                for (y in 0 until h) { sb.position(y * stride); sb.get(filmDepth, y * w, w) }
+                val k = f.camera.imageIntrinsics; val dim = k.imageDimensions; val fl = k.focalLength; val pp = k.principalPoint
+                val kx = w / dim[0].toFloat(); val ky = h / dim[1].toFloat()
+                filmK[0] = fl[0] * kx; filmK[1] = fl[1] * ky; filmK[2] = pp[0] * kx; filmK[3] = pp[1] * ky
+                coverage.levels(filmDepth, w, h, filmK[0], filmK[1], filmK[2], filmK[3], pose, filmLevel)
+                true
+            }
+        } catch (e: Exception) { false }
     }
 
     /** The camera picture's brightness plane, shrunk to about a quarter (for the blur / dark checks), or null. */

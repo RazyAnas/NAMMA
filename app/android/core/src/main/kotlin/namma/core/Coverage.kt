@@ -75,6 +75,44 @@ class Coverage(voxel: Float = 0.04f, private val maxVoxels: Int = 120_000, priva
         return n
     }
 
+    /** The level (0..3) of the voxel at a world point; 0 if nothing is there. Reads only. */
+    fun levelAt(x: Float, y: Float, z: Float): Int { val i = find(key(x, y, z)); return if (i < 0) 0 else level(i) }
+
+    /**
+     * The map as a picture, for a smooth layer over the camera image (16 Nov, owner: "Scaniverse does not have those
+     * low-quality pixels"): for every pixel of a depth image (same arguments as [addDepth]) the level of the surface it
+     * looks at, into [out] (w x h bytes, 0 = not scanned or no depth). The depth shown now and the depth that was fused
+     * differ by a few centimetres, so one voxel nearer and one farther along the ray count as well. Drawn as a texture
+     * stretched over the screen, this gives one continuous surface instead of a square per voxel.
+     */
+    fun levels(depthMm: ShortArray, w: Int, h: Int, fx: Float, fy: Float, px: Float, py: Float, camToWorld: FloatArray, out: ByteArray,
+               minM: Float = 0.2f, maxM: Float = 6f) {
+        val m = camToWorld; val cx = m[12]; val cy = m[13]; val cz = m[14]
+        for (v in 0 until h) for (u in 0 until w) {
+            val d = (depthMm[v * w + u].toInt() and 0xFFFF) * 0.001f; var best = 0
+            if (d in minM..maxM) {
+                val xc = (u - px) * d / fx; val yc = -(v - py) * d / fy; val zc = -d
+                val dx = m[0] * xc + m[4] * yc + m[8] * zc; val dy = m[1] * xc + m[5] * yc + m[9] * zc; val dz = m[2] * xc + m[6] * yc + m[10] * zc
+                val len = sqrt(dx * dx + dy * dy + dz * dz); val s = if (len > 1e-6f) voxel / len else 0f
+                for (k in intArrayOf(0, -1, 1)) {                                         // at the depth, a voxel nearer, a voxel farther
+                    val l = levelAt(cx + dx * (1f + k * s), cy + dy * (1f + k * s), cz + dz * (1f + k * s)); if (l > best) best = l
+                    if (best == 3) break
+                }
+            }
+            out[v * w + u] = best.toByte()
+        }
+        // pinholes: a pixel with nothing under it whose neighbours are mostly scanned is a miss of the lookup (depth noise), not
+        // a hole in the scan: it takes its neighbours' best level (first phone test: the film was dotted with small holes)
+        var fill: IntArray? = null; var nf = 0
+        for (v in 1 until h - 1) for (u in 1 until w - 1) {
+            val i = v * w + u; if (out[i].toInt() != 0 || (depthMm[i].toInt() and 0xFFFF) == 0) continue
+            var n = 0; var top = 0
+            for (dv in -1..1) for (du in -1..1) { val l = out[i + dv * w + du].toInt(); if (l > 0) { n++; if (l > top) top = l } }
+            if (n >= 5) { val f = fill ?: IntArray(w * h).also { fill = it }; f[nf++] = (i shl 2) or top }
+        }
+        fill?.let { for (k in 0 until nf) out[it[k] shr 2] = (it[k] and 3).toByte() }
+    }
+
     /** Share of the confirmed surface (seen at least twice) that is seen from three or more directions. */
     fun stats(): Stats {
         var seen = 0; var good = 0; var weak = 0
@@ -134,6 +172,12 @@ class Coverage(voxel: Float = 0.04f, private val maxVoxels: Int = 120_000, priva
     private fun level(i: Int): Int = if (hits[i] < minHits) 0 else minOf(3, Integer.bitCount(dirs[i]))
 
     private fun key(x: Float, y: Float, z: Float) = pack(floor(x / voxel).toInt(), floor(y / voxel).toInt(), floor(z / voxel).toInt())
+
+    /** The slot of [k], or -1 if it is not in the map. */
+    private fun find(k: Long): Int {
+        var i = hash(k) and (cap - 1)
+        while (true) { if (keys[i] == k) return i; if (keys[i] == EMPTY) return -1; i = (i + 1) and (cap - 1) }
+    }
 
     /** The slot of [k], taking a free one (and growing the table past 60 % full) if it is new. */
     private fun slot(k: Long): Int {
