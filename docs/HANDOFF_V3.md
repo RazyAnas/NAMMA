@@ -499,7 +499,12 @@ when they arrive; an AI finds any named thing in the 3D space and marks it.
 | AI find, in the page | `final/ai_find.py region_index` -> `regions.json` + `regions.f16`; `poi_core.js aiSearch` | every SAM mask of ~40 frames as a CLIP embedding + its place in the room + its score against generic words. The page embeds the typed words with CLIP's text half (transformers.js, ~65 MB once) and marks a place only when the words beat the generic words on regions of two different frames within 40 cm. Row "Find ... with AI" in the search box |
 | AI find, agent | `final/ai_find.py` as a script, run by `final/objects_job.py` when `v3/OBJECTS.json` has `"find": ["fire extinguisher", ...]` | Qwen2.5-VL plans (names to look for) -> CLIP ranks frames -> Grounding DINO boxes -> Qwen confirms each crop -> rendered depth gives the place -> two frames must agree; renamed and retried once; every step in the trace. Output `pois_ai.json` (shown in the tour as places "found by AI") |
 | In every run | `v3/run.py`, `OBJECTS=1` (presets best, home) | after training, with 40 min left: the object layer + the region index (time-limited, never fails the run) |
-Measured: 51 Python tests (`pytest -q --confcutdir=tests/v3 tests/v3`) and 10 JS tests (`node tests/browser/poi_e2e.mjs`), incl. the page's
+Trial publish (16 Nov, GitHub run 43768617135, from this branch): the house tour with all of the above as a NEW link, read from
+`20261031-1528/tour_v2`, kept as `20261031-1528/tour_poi`, link in `20261031-1528/tour_poi_url.txt` (private dataset). The first
+Space was full, so it is on `anasrazy/namma-tour-2`, with its own copy of the collision editor (which now takes `?run`, `?folder`,
+`?dst`; the admin panel's button passes them). Live check: ok, no script errors, all 6 spots match (0.84-0.99). `tour_v2` and the
+stable link were not written. Not checked on the live link: saving places with the Hugging Face sign-in, the collision editor.
+Measured: 51 Python tests (`pytest -q --confcutdir=tests/v3 tests/v3`) and 11 JS tests (`node tests/browser/poi_e2e.mjs`), incl. the page's
 search against the Python reference. Checked in a browser on a local copy of the house tour: pins, route, arrival, admin edits.
 On six real photos of that tour (240 px thumbnails, CLIP ViT-B/32): 5 of 6 present things found at the right spot (sofa,
 kitchen, fridge, dining table, tripod; the television missed); of 4 absent things 3 refused (giraffe, pool, toilet), 1 wrongly

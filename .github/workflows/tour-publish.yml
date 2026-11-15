@@ -1,11 +1,12 @@
 # Republish a run's built tour (results dataset <user>/namma-v3-out/<run>/tour) to the public Space with a new random folder,
 # then screenshot it (software WebGL). Start: set "run" in colab/real_scenes/v3/PUBLISH.json and push ("floorplan": true
-# also redraws the minimap picture from the run's model first).
+# also redraws the minimap picture from the run's model first). "from": "<stored copy>" with "dst" + "url_name": a trial of new
+# page code on a copy under its own link (tour_publish.py TOUR_FROM); "check": true runs the live check (site_look ASSERT) after it.
 # The link goes only to the private <run>/tour_url.txt (these logs are public); screenshots to site_look/<time>/.
 name: tour publish
 on:
   push:
-    branches: [claude/wonderful-cori-i3fn41, claude/smart-budget-poi]   # the second: one trial publish of the places tour (16 Nov), removed again after it
+    branches: [claude/wonderful-cori-i3fn41]
     paths: [colab/real_scenes/v3/PUBLISH.json]
 concurrency:
   group: tour-publish
