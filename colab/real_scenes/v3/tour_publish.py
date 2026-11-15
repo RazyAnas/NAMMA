@@ -90,6 +90,52 @@ def verify(api, say=print, state='publish_state.json', check='out/assert.json'):
     return False
 
 
+def merge_pois(live, built):
+    """Places of a tour being published again. `live` = pois.json in the Space now (the admin's edits in the page), `built` = the
+    one in the tour folder being uploaded (e.g. places the AI find wrote during the run). The live file wins: its entries stay
+    exactly as they are, built entries with a new id are added, and an id the admin deleted (live 'removed') does not come back."""
+    ok = lambda d: isinstance(d, dict) and isinstance(d.get('pois'), list)
+    if not ok(live): return built if ok(built) else None
+    if not ok(built): return live
+    have = {p.get('id') for p in live['pois'] if isinstance(p, dict)} | set(live.get('removed') or [])
+    return dict(live, pois=live['pois'] + [p for p in built['pois'] if isinstance(p, dict) and p.get('id') not in have])
+
+
+def _live_pois(api, sp, path):
+    from huggingface_hub import hf_hub_download
+    return json.load(open(hf_hub_download(sp, path, repo_type='space', token=api.token, force_download=True, local_dir='pois_live')))
+
+
+def keep_pois(api, sp, folder, tour_dir, say=print, fetch=_live_pois, repo_file=None):
+    """Before a tour folder is uploaded over a published one: bring the places that are live there (the admin's pois.json) into
+    the folder, so a republish never wipes them. Order: the live file, then a pois.json kept in the repo for this run
+    (v3/pois/<run>.json, the no-sign-in way to save), then what the build made. Returns how many places the folder now has, or
+    None when the live file exists but could not be read: then pois.json must not be uploaded at all (publish leaves it out)."""
+    local = os.path.join(tour_dir, 'pois.json'); built = None
+    for f in (local, repo_file):                                                           # the build's, then the repo's (it wins over the build's)
+        try: built = merge_pois(json.load(open(f)), built) if f and os.path.exists(f) else built
+        except (OSError, ValueError) as e: say('places file unreadable, skipped:', f, str(e)[:100])
+    live = None
+    try:
+        if api.file_exists(sp, f'{folder}/pois.json', repo_type='space'): live = fetch(api, sp, f'{folder}/pois.json')
+    except Exception as e:
+        say('the live places could not be read: pois.json is left untouched in the Space:', str(e)[:150]); return None
+    m = merge_pois(live, built)
+    if m is None: return 0
+    json.dump(m, open(local, 'w'), indent=1); say('places:', len(m['pois']), '(live', len(live['pois']) if isinstance(live, dict) and isinstance(live.get('pois'), list) else 0, 'kept)')
+    return len(m['pois'])
+
+
+def previous(api, user, results_repo, url_path):
+    """(space, folder) the run's link points to now, or None: a publish to a new random folder takes its places from there."""
+    try:
+        from huggingface_hub import hf_hub_download
+        u = open(hf_hub_download(results_repo, url_path, repo_type='dataset', token=api.token, force_download=True, local_dir='url_prev')).read().strip()
+        host, folder = u.split('/')[2].split('.')[0], u.split('/')[-2]
+        return (f'{user}/{host[len(user) + 1:]}', folder) if host.lower().startswith(user.lower() + '-') else None
+    except Exception: return None
+
+
 def publish(api, user, results_repo, run, tour_dir, say=print, url_path=None):
     sp = f'{user}/namma-tour'; api.create_repo(sp, repo_type='space', space_sdk='static', private=False, exist_ok=True)
     if os.environ.get('TOUR_PRUNE') == '1':                                               # deletes old tours: only with the owner's OK
@@ -97,10 +143,16 @@ def publish(api, user, results_repo, run, tour_dir, say=print, url_path=None):
     for f in {x.split('/')[0] for x in api.list_repo_files(sp, repo_type='space') if '/' in x}:      # old guessable folders out
         if not re.fullmatch(r'\d{8}-\d{4}(-[a-z0-9]+)?-[0-9a-f]{20}', f): api.delete_folder(f, repo_id=sp, repo_type='space')   # (digits: 'world1')
     folder = os.environ.get('TOUR_FOLDER') or f'{run}-{secrets.token_hex(10)}'          # TOUR_FOLDER: update a published tour in place (same link)
+    # places the admin saved in the published page live only in the Space: take them along (same folder, or the folder the
+    # run's link pointed to until now), never upload over them blind
+    was = (sp, folder) if os.environ.get('TOUR_FOLDER') else previous(api, user, results_repo, url_path or f'{run}/tour_url.txt')
+    repo_pois = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'pois', run.replace('/', '_') + '.json')
+    kept = keep_pois(api, was[0], was[1], tour_dir, say, repo_file=repo_pois) if was else keep_pois(api, sp, folder, tour_dir, say, repo_file=repo_pois)
+    skip = ['plan.json'] + (['pois.json'] if kept is None else [])
     for k in range(1, 10):                         # a full free Space (1 GB) spills over to namma-tour-2, -3, ... (old links stay)
         try:
             lfs_rules(api, sp); remember(api, sp, folder, results_repo, url_path or f'{run}/tour_url.txt')     # for --verify / roll back
-            api.upload_folder(folder_path=tour_dir, path_in_repo=folder, repo_id=sp, repo_type='space', ignore_patterns=['plan.json'], delete_patterns=['walkpath.json']); break
+            api.upload_folder(folder_path=tour_dir, path_in_repo=folder, repo_id=sp, repo_type='space', ignore_patterns=skip, delete_patterns=['walkpath.json']); break
         except Exception as e:
             if 'Storage limit' not in str(e) or k == 9: raise
             sp = f'{user}/namma-tour-{k + 1}'; say('Space full, publishing to', sp)
@@ -163,6 +215,8 @@ if __name__ == '__main__':
     if co:
         make_tour.collision(os.path.join(d, run), tour)
         api.upload_file(path_or_fileobj=f'{tour}/collision.glb', path_in_repo=f'{run}/{src}/collision.glb', repo_id=repo, repo_type='dataset')   # the tour being updated (was always tour/)
+    if (co or hd) and not rb and (co or not os.path.exists(f'{tour}/nav.json')):         # routes to places: the walkable grid of this collision
+        if make_tour.navgrid(tour): api.upload_file(path_or_fileobj=f'{tour}/nav.json', path_in_repo=f'{run}/{src}/nav.json', repo_id=repo, repo_type='dataset')
     if rb:                                                                                # scene file again from the model (current settings)
         import subprocess; W = os.path.abspath('st')
         subprocess.run(f'mkdir -p {W} && cd {W} && npm init -y >/dev/null && npm i -s --no-audit --no-fund playcanvas@2.23.3 '
