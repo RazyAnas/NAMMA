@@ -138,6 +138,10 @@ def previous(api, user, results_repo, url_path):
 
 def publish(api, user, results_repo, run, tour_dir, say=print, url_path=None):
     sp = f'{user}/namma-tour'; api.create_repo(sp, repo_type='space', space_sdk='static', private=False, exist_ok=True)
+    if os.environ.get('TOUR_SAME') and not os.environ.get('TOUR_FOLDER'):                 # PUBLISH.json "same": update the tour the link
+        cur = previous(api, user, results_repo, url_path or f'{run}/tour_url.txt')        # (url_name) points to now, where it is (a tour
+        assert cur, 'same: this link does not exist yet'                                  # that spilled over lives in namma-tour-2, -3, ...)
+        sp, os.environ['TOUR_FOLDER'] = cur
     if os.environ.get('TOUR_PRUNE') == '1':                                               # deletes old tours: only with the owner's OK
         prune(api, sp, results_repo, url_path or f'{run}/tour_url.txt', say)
     for f in {x.split('/')[0] for x in api.list_repo_files(sp, repo_type='space') if '/' in x}:      # old guessable folders out

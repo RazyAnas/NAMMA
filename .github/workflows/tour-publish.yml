@@ -1,13 +1,14 @@
 # Republish a run's built tour (results dataset <user>/namma-v3-out/<run>/tour) to the public Space with a new random folder,
 # then screenshot it (software WebGL). Start: set "run" in colab/real_scenes/v3/PUBLISH.json and push ("floorplan": true
 # also redraws the minimap picture from the run's model first). "from": "<stored copy>" with "dst" + "url_name": a trial of new
-# page code on a copy under its own link (tour_publish.py TOUR_FROM); "check": true runs the live check (site_look ASSERT) after it.
+# page code on a copy under its own link (tour_publish.py TOUR_FROM); "same": true updates the tour that url_name points to, in place; "check": true runs the live check (site_look ASSERT) after it.
 # The link goes only to the private <run>/tour_url.txt (these logs are public); screenshots to site_look/<time>/.
 name: tour publish
 on:
   push:
     branches: [claude/wonderful-cori-i3fn41]
     paths: [colab/real_scenes/v3/PUBLISH.json]
+  workflow_dispatch:           # by hand, from any branch (its PUBLISH.json): gh workflow run tour-publish.yml --ref <branch>
 concurrency:
   group: tour-publish
   cancel-in-progress: false
@@ -30,7 +31,7 @@ jobs:
         env:
           HF_TOKEN: ${{ secrets.HF_TOKEN || secrets.HUGGINGFACE_WRITE_TOKEN }}
         run: |
-          eval "$(python -c "import json;c=json.load(open('colab/real_scenes/v3/PUBLISH.json'));print(f'export TOUR_MODEL={c[\"model\"]}' if c.get('model') else '');print(f'export TOUR_SH={c[\"sh\"]}' if 'sh' in c else '');print(f'export INBOX_JOB={c[\"inbox_job\"]}' if c.get('inbox_job') else '');print('export TOUR_PRUNE=1' if c.get('prune') else '');print('export TOUR_KEEP=' + ','.join(c.get('keep', [])));[print(f'export {k}={c[j]}') for j, k in (('format', 'TOUR_FORMAT'), ('dst', 'TOUR_DST'), ('url_name', 'TOUR_URL_NAME'), ('lod_levels', 'TOUR_LOD_LEVELS'), ('folder', 'TOUR_FOLDER'), ('from', 'TOUR_FROM')) if c.get(j)]")"
+          eval "$(python -c "import json;c=json.load(open('colab/real_scenes/v3/PUBLISH.json'));print(f'export TOUR_MODEL={c[\"model\"]}' if c.get('model') else '');print(f'export TOUR_SH={c[\"sh\"]}' if 'sh' in c else '');print(f'export INBOX_JOB={c[\"inbox_job\"]}' if c.get('inbox_job') else '');print('export TOUR_PRUNE=1' if c.get('prune') else '');print('export TOUR_KEEP=' + ','.join(c.get('keep', [])));[print(f'export {k}={c[j]}') for j, k in (('format', 'TOUR_FORMAT'), ('dst', 'TOUR_DST'), ('url_name', 'TOUR_URL_NAME'), ('lod_levels', 'TOUR_LOD_LEVELS'), ('folder', 'TOUR_FOLDER'), ('from', 'TOUR_FROM'), ('same', 'TOUR_SAME')) if c.get(j)]")"
           python colab/real_scenes/v3/tour_publish.py $(python -c "import json;c=json.load(open('colab/real_scenes/v3/PUBLISH.json'));print(c['run'], *[k for k in ('floorplan', 'collision', 'rebuild', 'head', 'respot') if c.get(k)])")
       - name: Screenshots
         env:

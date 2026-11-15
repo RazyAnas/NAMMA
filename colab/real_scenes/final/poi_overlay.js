@@ -153,10 +153,13 @@ function routeToPoint(name, pos, view) { let approach = null; if (nav) { const s
 
 // ---- search: places first, then the object layer; choosing one starts the route (objects: fly there when there is no grid) ----
 const hitOf = new Map(), catName = (p) => p.category.charAt(0).toUpperCase() + p.category.slice(1);
+// the tour's filmed spots can be searched and walked to as well, so the search box has something in it on a tour where the
+// admin has not placed anything yet (the first published places tour: no search box at all, 16 Nov)
+const spotHits = (o.spots || []).map((sp, i) => ({ spot: i, label: esc(sp.title), size: 'Filmed spot', words: (sp.title + ' spot view').toLowerCase(), thumb: sp.thumb }));
 extra = () => pois.map((p) => { let h = hitOf.get(p); const size = catName(p) + (p.note ? ' · ' + esc(p.note).slice(0, 60) : '') + (p.source === 'ai' ? ' · found by AI' : '');
-  if (!h || h.label !== esc(p.name) || h.size !== size) { h = { poi: p, label: esc(p.name), size, words: poiWords(p), thumb: p.thumb }; hitOf.set(p, h); } return h; });
-pick = (x) => { if (x.ai) aiFind(x.ai); else if (x.poi) routeTo(x.poi.id); else if (nav && x.lo && x.hi) routeToPoint(x.label, [(x.lo[0] + x.hi[0]) / 2, (x.lo[1] + x.hi[1]) / 2, (x.lo[2] + x.hi[2]) / 2], x.i); else go(x.i); };
-const searchOn = () => { find.style.display = 'block'; q.placeholder = aiMeta ? 'Search, or ask for anything ...' : obs.length ? 'Search places and things ...' : 'Search places ...'; };
+  if (!h || h.label !== esc(p.name) || h.size !== size) { h = { poi: p, label: esc(p.name), size, words: poiWords(p), thumb: p.thumb }; hitOf.set(p, h); } return h; }).concat(spotHits);
+pick = (x) => { if (x.ai) aiFind(x.ai); else if (x.poi) routeTo(x.poi.id); else if (x.spot != null) { const sp = o.spots[x.spot]; if (nav) routeToPoint(sp.title, [sp.x, 1, sp.z], x.spot); else go(x.spot); } else if (nav && x.lo && x.hi) routeToPoint(x.label, [(x.lo[0] + x.hi[0]) / 2, (x.lo[1] + x.hi[1]) / 2, (x.lo[2] + x.hi[2]) / 2], x.i); else go(x.i); };
+const searchOn = () => { find.style.display = 'block'; q.placeholder = aiMeta ? 'Search, or ask for anything ...' : obs.length ? 'Search places and things ...' : 'Search places and spots ...'; };
 
 // ---- AI find: type anything; the tour's own frames are searched for it (regions.json / regions.f16 from ai_find.py), and it
 // is marked only when two filmed frames agree on where it is. The words are embedded in the browser with CLIP's text half
@@ -185,7 +188,7 @@ if (aiMeta && aiMeta.count) more = (s) => (s.length >= 3 ? [{ ai: s, label: 'Fin
     { const poi = makePoi({ id: p.id, name: p.name, pos: p.pos, source: 'ai', category: 'other', thumb: p.thumb, confidence: p.confidence === 'high' ? 0.9 : p.confidence === 'medium' ? 0.7 : 0.4,
         note: p.review ? 'found by AI in one view: check it' : 'found by AI' }, nav); pois.push(poi); index.insert({ id: poi.id, pos: poi.pos, poi }); } }); }
 function byIdEarly(id) { return pois.find((p) => p.id === id); }
-if (pois.length || admin || aiMeta) searchOn();
+if (pois.length || admin || aiMeta || nav || spotHits.length) searchOn();
 
 // ---- hooks (AI find, tests, the console) ----
 function addPoi(p, quiet) { const poi = makePoi(p, nav); const old = byId(poi.id); if (old) { index.remove(old.id); pois[pois.indexOf(old)] = poi; } else pois.push(poi);
