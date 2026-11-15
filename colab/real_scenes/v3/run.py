@@ -104,8 +104,8 @@ def source():
         hf_setup(tok); scene, folder = dl3dv.fetch(SOURCE[6:], f'{W}/dl3dv', tok)
         json.dump(dict(source=f'{dl3dv.REPO}/{scene}', frames='nerfstudio/images_4 (960 x 540)'), open(f'{O}/source.json', 'w'))
         return folder
-    if SOURCE.startswith('kaggle:'): return attached(SOURCE[7:])
-    hf_setup(hf_token())
+    hf_setup(hf_token())                         # also for kaggle: sources (every run started from GitHub): without it nothing was
+    if SOURCE.startswith('kaggle:'): return attached(SOURCE[7:])   # sent to HF while the job ran, the snapshots included (test 1, 16 Nov)
     if SOURCE == 'kaggle':
         v = sorted(glob.glob('/kaggle/input/**/*.mp4', recursive=True) + glob.glob('/kaggle/input/**/*.mov', recursive=True)
                    + glob.glob('/kaggle/input/**/*.MOV', recursive=True))
@@ -453,7 +453,7 @@ if os.path.isdir(f'{W}/{geo[0]}/ckpts') and TL['mesh']:
     CLK.mark('mesh', t_mesh, ok='mesh' in S)
 elif MESH: say('mesh skipped: not enough time left (the tour uses the room box for walking)'); CLK.note(mesh_skipped=True)
 # the object layer + the search index for the tour's "find anything" (final/objects3d.py, ai_find.region_index; 14.5 min on a
-# T4, 27 Oct), only with OBJECTS=1 and 40 min still left, with a time limit, and never failing the run: the tour works without
+# T4, 27 Oct), only with OBJECTS=1 and 33 min still left, with a time limit, and never failing the run: the tour works without
 if os.environ.get('OBJECTS') == '1' and os.path.exists(f'{O}/full/model.ply') and os.path.exists(f'{O}/full/level.json'):
     if budget.tail(CLK.left_h() * 60, mesh=False, objects=True)['objects']:
         t_ob = time.time(); lim = int((min(budget.TAIL_MIN['objects'] + 15, CLK.left_h() * 60 - budget.TAIL_MIN['base'])) * 60); OB = f'{W}/objects'
@@ -466,7 +466,7 @@ if os.environ.get('OBJECTS') == '1' and os.path.exists(f'{O}/full/model.ply') an
                 if os.path.exists(f'{OB}/{x}'): shutil.copy(f'{OB}/{x}', f'{O}/{x}'); push(f'{O}/{x}', x)
             shutil.copytree(f'{OB}/crops', f'{O}/crops', dirs_exist_ok=True); S['objects'] = len(json.load(open(f'{O}/objects.json'))['objects'])
         CLK.mark('objects', t_ob, ok=os.path.exists(f'{O}/objects.json'), objects=S.get('objects'), regions=os.path.exists(f'{O}/regions.f16'))
-    else: say('object layer skipped: under 40 min left'); CLK.note(objects_skipped=True)
+    else: say('object layer skipped: under 33 min left'); CLK.note(objects_skipped=True)
 shutil.copytree(f'{D}/sparse', f'{O}/sparse', dirs_exist_ok=True)                        # cameras, so QA can be redone later
 shutil.copytree(f'{D}/images', f'{O}/images', dirs_exist_ok=True)                        # frames, for the tour (cameras need them)
 json.dump(dict(source=SOURCE, sfm=rep, models=S, minutes=round((time.time() - T0) / 60)), open(f'{O}/v3_summary.json', 'w'), indent=1)

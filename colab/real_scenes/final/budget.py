@@ -19,7 +19,8 @@ MARGIN = 1.1                                   # predicted training time x this 
 MEM_GB = 13.0                                  # of a T4's 15 GB
 R4 = dict(steps_per_view=83.6, splats=1_500_000, area_m2=37.0, long=1440, s_per_step=0.1815, per_second=411 / 123.3)
 PREVIEW = dict(steps=7000, long=960, cap=1_000_000)       # run 2's preview: 10 min on a T4, 26.8 dB
-TAIL_MIN = dict(base=15, mesh=20, objects=25)             # QA + copies + uploads; mesh_tsdf's limit; objects3d (14.5 min, 27 Oct)
+TAIL_MIN = dict(base=15, mesh=20, objects=25, after=8)    # QA + copies + uploads; mesh_tsdf's limit; objects3d (14.5 min, 27 Oct);
+                                                          # after = copies + uploads alone, once QA is done
 SFM_MAX = 1000                                 # frames: runs 4 / 6 / house solved 411 / 900 / 982 in one piece
 
 
@@ -135,10 +136,11 @@ class Clock:
 
 
 def tail(left_min, mesh=True, objects=False):
-    """What still runs after training with left_min minutes to the deadline. QA and the copies always run (the model is
-    useless without them); the mesh and the object layer only if they fit behind them."""
-    m = bool(mesh) and left_min >= TAIL_MIN['base'] + TAIL_MIN['mesh']
-    o = bool(objects) and left_min >= TAIL_MIN['base'] + (TAIL_MIN['mesh'] if m else 0) + TAIL_MIN['objects']
+    """What still runs after training and QA with left_min minutes to the deadline: the mesh and the object layer, each only if
+    it fits with the copies and uploads behind it. (QA is done by now: asking for its minutes again skipped the mesh of a run
+    whose trainer had stopped exactly on its deadline, 34 min left of the 35 reserved; Kaggle test 1, 16 Nov.)"""
+    m = bool(mesh) and left_min >= TAIL_MIN['after'] + TAIL_MIN['mesh']
+    o = bool(objects) and left_min >= TAIL_MIN['after'] + (TAIL_MIN['mesh'] if m else 0) + TAIL_MIN['objects']
     return dict(mesh=m, objects=o, mesh_timeout_min=TAIL_MIN['mesh'] if m else 0)
 
 

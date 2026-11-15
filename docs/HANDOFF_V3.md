@@ -482,8 +482,16 @@ Kaggle stops a session at 12 h. `final/budget.py` gives every stage of `v3/run.p
 | Splat refresh | `run.py start()` | `--strategy.refine-stop-iter` = 25/30 of the steps on runs over 30k steps (removed by the 1 Nov revert; back) |
 | Second T4 | `run.py` | trains the 7k preview beside `full`. `CHALLENGER=<kind>` (off by default) trains one alternative after it; it replaces `full` only if it is 0.2 dB better (exposure-fair) with LPIPS not worse |
 | Test runs | `run.py` | `NAMMA_REF=<branch>` makes the Kaggle job clone that branch instead of the production one |
-Not yet measured on Kaggle: the motion-aware frame choice against the time windows on a real room (quality), the 960 / 1080 / 1280 px rungs
-(speed is scaled from one pair of runs, then re-measured by the second dry run), and the deadline stop on a real trainer.
+Kaggle test 1 (16 Nov, GitHub run 43771334616, kernel `namma-budget-test`, code from this branch): the hotel-room video (7,398
+frames, 60 fps) -> 150 frames by motion in 4.2 min (616 candidates; blurry stretches reported at 24, 28, 63-66 and 69-70 s) ->
+cameras 150/150 in one model, 0.97 px, 4.6 min (predicted 4.8) -> a 30k-step model against a 1.15 h deadline: snapshots at steps
+6,000 and 12,000, `NM_DEADLINE reached at step 15960 of 30000: saving and stopping`, trainer exit 0, QA ran (27.35 dB exposure-
+fair, 1M splats), tour built and published; job done at 0.58 h. Two faults it showed, both fixed: the mesh was skipped for one
+minute (34 left of 35 asked, though QA was already done), and nothing was sent to HF while the job ran because `kaggle:` sources
+never set the upload up (so the snapshots stayed in the job's output). Sending to HF from Kaggle still needs the Kaggle secret
+HF_TOKEN on that kernel.
+Not yet measured on Kaggle: the motion-aware frame choice against the time windows on the same room (quality), the 960 / 1080 /
+1280 px rungs (speed is scaled from one pair of runs, then re-measured by the second dry run).
 
 ## Places, routes and AI find in the tour (16 Nov, branch `claude/smart-budget-poi`)
 Requirement: an admin adds places (POIs) in 3D with spatial indexing; visitors search them, get a walkable route and are told

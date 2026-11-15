@@ -103,7 +103,9 @@ def test_clock_and_tail(tmp_path):
     j = json.load(open(tmp_path / 'budget.json'))
     assert j['stages'][0]['stage'] == 'frames' and j['stages'][0]['minutes'] == 2.0 and j['mesh_skipped'] is True
     assert budget.tail(60, mesh=True) == dict(mesh=True, objects=False, mesh_timeout_min=20)
-    assert budget.tail(30, mesh=True)['mesh'] is False and budget.tail(60, mesh=True, objects=True)['objects'] is True
+    assert budget.tail(27, mesh=True)['mesh'] is False and budget.tail(60, mesh=True, objects=True)['objects'] is True
+    assert budget.tail(34, mesh=True)['mesh'] is True                                       # Kaggle test 1: 34 min left after QA is enough
+    assert budget.tail(34, mesh=False, objects=True)['objects'] is True and budget.tail(32, mesh=False, objects=True)['objects'] is False
     assert budget.tail(50, mesh=True, objects=True) == dict(mesh=True, objects=False, mesh_timeout_min=20)
 
 

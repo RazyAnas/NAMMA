@@ -1,18 +1,17 @@
 {
- "n": 20,
+ "n": 21,
  "collect": false,
- "source": "dl3dv-video:389a460ca1995e0658e85fe8e6b520b4e88b370cd6710dfe728b1564bba31aee",
+ "source": "dl3dv:389a460ca1995e0658e85fe8e6b520b4e88b370cd6710dfe728b1564bba31aee",
+ "dl3dv_res": "images_2",
  "kernel": "namma-budget-test",
  "env": {
   "NAMMA_REF": "claude/smart-budget-poi",
-  "NFRAMES": "auto",
-  "SFM_MAX": "150",
-  "LONG": "960",
-  "VARIANTS": "[[\"full\", 30000, 1000000]]",
-  "DEADLINE_H": "1.15",
+  "AUTO_STEPS": "1",
+  "NFRAMES": "420",
+  "LONG": "1440",
   "OBJECTS": "1"
  },
- "scene": "DL3DV hotel room (run 4's scene), its original phone video",
+ "scene": "DL3DV hotel room (run 4's scene), its 420 extracted frames at 1440 px: run 4's inputs",
  "how": "change n (and source) and push to start a run: .github/workflows/namma-v3.yml -> gh_run.py",
- "note": "budget test 1 of 2 (16 Nov, started by hand from claude/smart-budget-poi, own kernel): frames by motion from the video, at most 150; a 30k-step model that cannot finish before the 1.15 h deadline -> the trainer must stop itself, keep the model, send a snapshot; mesh and object layer skipped for lack of time"
+ "note": "budget test 2 of 2 (16 Nov, started by hand from claude/smart-budget-poi, own kernel): run 4's inputs through the sized path (dry run, plan, preview on the second T4, checkpoints), then mesh, the object layer and the search index. To match: run 4's 29.22 dB exposure-fair"
 }

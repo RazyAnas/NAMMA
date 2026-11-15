@@ -155,7 +155,7 @@ def test_crashed_trainer_is_salvaged_from_its_checkpoint(tmp_path, monkeypatch):
 
 def test_no_time_left_skips_the_mesh_and_a_late_queue(tmp_path):
     # 0.5 h deadline already 20 min old in spirit: left < 35 min -> no mesh; the second model is not started 15 min before the deadline
-    r = run_tail(str(tmp_path), [['full', 60, 1500000], ['extra', 60, 1500000]], train_s=0.5, deadline_h=0.5, ngpu=1)
+    r = run_tail(str(tmp_path), [['full', 60, 1500000], ['extra', 60, 1500000]], train_s=0.5, deadline_h=0.4, ngpu=1)
     assert r['err'] is None and set(r['summary']['models']) == {'full'} and r['budget']['mesh_skipped'] is True
     assert not os.path.exists(f"{r['O']}/mesh") and not os.path.exists(f"{r['O']}/extra")
 
@@ -188,7 +188,7 @@ def test_object_layer_runs_in_its_time_and_never_touches_the_model(tmp_path):
 def test_object_layer_failure_or_no_time_does_not_fail_the_run(tmp_path):
     r = run_tail(str(tmp_path / 'a'), [['full', 60, 1500000]], train_s=600, ngpu=1, env=dict(OBJECTS='1', FAKE_OBJ_FAIL='1'))
     assert r['err'] is None and 'objects' not in r['summary']['models'] and stage(r, 'objects')['ok'] is False and 'full' in r['summary']['models']
-    r = run_tail(str(tmp_path / 'b'), [['full', 60, 1500000]], train_s=1.0, deadline_h=0.6, ngpu=1, env=dict(OBJECTS='1'))   # 36 min: mesh yes, objects no
+    r = run_tail(str(tmp_path / 'b'), [['full', 60, 1500000]], train_s=1.0, deadline_h=0.5, ngpu=1, env=dict(OBJECTS='1'))   # 30 min: mesh yes, objects no
     assert r['err'] is None and r['budget']['objects_skipped'] is True and not os.path.exists(f"{r['O']}/objects.json") and 'mesh' in r['summary']['models']
     r = run_tail(str(tmp_path / 'c'), [['full', 60, 1500000]], train_s=600, ngpu=1)                       # OBJECTS not set: not run at all
     assert not os.path.exists(f"{r['O']}/objects.json") and not any(s['stage'] == 'objects' for s in r['budget']['stages'])

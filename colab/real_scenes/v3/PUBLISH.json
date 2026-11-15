@@ -1,10 +1,10 @@
 {
  "run": "20261031-1528",
- "head": true,
- "dst": "tour_poi",
- "url_name": "tour_poi_url.txt",
- "same": true,
- "check": true,
+ "rebuild": false,
+ "model": "solid/clean.ply",
+ "sh": 3,
+ "dst": "tour_v2",
+ "url_name": "tour_v2_url.txt",
  "prune": false,
  "keep": [
   "20261025-2336-78b302e60a23f66548af",
@@ -20,6 +20,10 @@
   "20261031-1528-c83619ed2c647e9986fe",
   "20261031-1528-eae460bf984645cbebc8"
  ],
- "n": 49,
- "note": "trial places tour, page update in place (same link, tour_poi_url.txt): the search box is there on a tour without places, spots can be searched. Run by hand from claude/smart-budget-poi"
+ "folder": "20261031-1528-c83619ed2c647e9986fe",
+ "head": true,
+ "floorplan": false,
+ "collision": true,
+ "n": 47,
+ "note": "same stable tour URL: redeploy fixed editor that fetches live HTML on every Apply, persists edited mesh + collision + viewer HTML in dataset; do not roll viewer back"
 }
