@@ -155,3 +155,39 @@ export function readPois(j) { const l = j && Array.isArray(j.pois) ? j.pois : []
 export const poisFile = (pois, now = Date.now(), removed = []) => ({ version: 1, frame: 'room-metres', updated: new Date(now).toISOString(), pois, removed });
 // search words of a place, as the object layer's `words`
 export const poiWords = (p) => [p.name, p.category, p.note].filter(Boolean).join(' ').toLowerCase();
+
+// ---- AI find: the region index (ai_find.py region_index: every SAM mask of every frame as a CLIP embedding + its place in the
+// room) and the instant search over it. ai_find.search is the reference; tests/browser/poi_e2e.mjs checks both give the same.
+export function halfToFloat(h) { const s = h & 0x8000 ? -1 : 1, e = (h >> 10) & 31, f = h & 1023;
+  return e === 0 ? s * 2 ** -14 * (f / 1024) : e === 31 ? (f ? NaN : s * Infinity) : s * 2 ** (e - 15) * (1 + f / 1024); }
+// regions.json + regions.f16 (float16 [count, dim], little-endian) -> { items [{f frame, p [x, y, z] metres}], E Float32Array, dim, n, prompt }
+export function decodeRegions(meta, buf) { const u = new Uint16Array(buf), n = Math.min(meta.count, Math.floor(u.length / meta.dim)), E = new Float32Array(n * meta.dim);
+  for (let i = 0; i < E.length; i++) E[i] = halfToFloat(u[i]);
+  return { items: meta.items.slice(0, n), E, dim: meta.dim, n, prompt: meta.prompt || 'a photo of a {}' }; }
+// Candidates {pos, frame, score} grouped by place, strongest first; a group counts (ok) when two different frames are in it:
+// one view can be a reflection, a picture of the thing or a wrong match, two views landing on the same 40 cm are the thing.
+export function agree(cands, radius = 0.4, minFrames = 2) { const out = [];
+  cands.slice().sort((a, b) => b.score - a.score).forEach((c) => { let best = null, bd = Infinity;
+    out.forEach((g) => { const d = Math.hypot(c.pos[0] - g.pos[0], c.pos[1] - g.pos[1], c.pos[2] - g.pos[2]); if (d <= radius && d < bd) { bd = d; best = g; } });
+    if (best) { best.members.push(c); let w = 0; const p = [0, 0, 0];
+      best.members.forEach((m) => { w += m.score; for (let k = 0; k < 3; k++) p[k] += m.pos[k] * m.score; }); best.pos = p.map((v) => v / w); }
+    else out.push({ pos: c.pos.slice(), members: [c] }); });
+  out.forEach((g) => { const per = new Map(); g.members.forEach((m) => per.set(m.frame, Math.max(per.has(m.frame) ? per.get(m.frame) : -Infinity, m.score)));
+    const top = [...per.values()].sort((a, b) => b - a).slice(0, 2); g.frames = [...per.keys()].sort((a, b) => a - b);
+    g.score = top.reduce((a, b) => a + b, 0) / top.length; g.ok = per.size >= minFrames; });
+  return out.sort((a, b) => (a.ok === b.ok ? b.score - a.score : a.ok ? -1 : 1)); }
+// q = the text embedding (unit length, R.dim numbers). A region counts when the words beat generic words on it by `margin`
+// (its score minus items[i].c, the region's best score against "an object / things / stuff / a texture", stored by ai_find.py)
+// and the score is above `floor`; raw CLIP scores alone say little. An index without c: what stands out in the room (mean +
+// 2.5 x std). found = the best place seen from two frames; else near = the single best region ("not found, the closest-looking
+// thing is there").
+export function aiSearch(q, R, { top = 24, radius = 0.4, minFrames = 2, floor = 0.2, margin = 0.03 } = {}) {
+  const n = R.n, d = R.dim, s = new Float64Array(n); if (!n) return { found: null, near: null, threshold: null };
+  let mean = 0; for (let i = 0; i < n; i++) { let v = 0; for (let k = 0; k < d; k++) v += R.E[i * d + k] * q[k]; s[i] = v; mean += v; } mean /= n;
+  let sd = 0; for (let i = 0; i < n; i++) sd += (s[i] - mean) ** 2; sd = Math.sqrt(sd / n);
+  const has = R.items.every((it) => typeof it.c === 'number'), m = Float64Array.from(s, (v, i) => v - (has ? R.items[i].c : mean + 2.5 * sd - margin));
+  const order = [...m.keys()].sort((a, b) => m[b] - m[a]).slice(0, top), r3 = (v) => Math.round(v * 1000) / 1000;
+  const c = order.filter((i) => m[i] >= margin && s[i] >= floor).map((i) => ({ pos: R.items[i].p, frame: R.items[i].f, score: m[i], region: i }));
+  const g = agree(c, radius, minFrames).filter((x) => x.ok), i0 = order[0];
+  return { found: g.length ? { pos: g[0].pos.map(r3), score: g[0].score, frames: g[0].frames, regions: g[0].members.map((x) => x.region) } : null,
+    near: { pos: R.items[i0].p, score: m[i0], frame: R.items[i0].f, region: i0 }, threshold: margin }; }

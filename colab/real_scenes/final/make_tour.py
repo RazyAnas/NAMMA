@@ -263,12 +263,13 @@ OVERLAY = """<style>
   const row = (x) => `${x.thumb ? `<img src="./${x.thumb}" alt="">` : ''}<span><b>${x.label}</b><br><small>${x.size}</small></span>`;
   // places (poi_overlay.js, below) join the list through `extra` and are listed first; `pick` is what choosing a hit does (an
   // object: fly to its best filmed view, as before; with places on: start a route to it); `extra3d` draws them on the 3D plan
-  let extra = () => [], pick = (x) => go(x.i), extra3d = null;
+  // `more` adds rows that are not word matches (poi_overlay.js: 'Find "..." with AI')
+  let extra = () => [], pick = (x) => go(x.i), extra3d = null, more = () => [];
   const match = (s) => { const w = s.toLowerCase().split(' ').filter(Boolean); return extra().concat(obs).filter(x => w.every(t => x.words.includes(t) || x.words.split(' ').some(v => v.startsWith(t.slice(0, Math.max(3, t.length - 1)))))); };
-  const show = () => { hits.innerHTML = ''; (q.value.trim() ? match(q.value) : extra().concat(obs)).slice(0, 8).forEach(x => {
+  const show = () => { hits.innerHTML = ''; (q.value.trim() ? match(q.value).slice(0, 7).concat(more(q.value.trim())) : extra().concat(obs)).slice(0, 8).forEach(x => {
     const b = document.createElement('button'); b.innerHTML = row(x); b.onclick = () => { pick(x); hits.innerHTML = ''; q.blur(); }; hits.appendChild(b); }); };
   q.oninput = show; q.onfocus = show; q.onblur = () => setTimeout(() => { if (document.activeElement !== q) hits.innerHTML = ''; }, 200);
-  ['keydown', 'keyup', 'keypress'].forEach(t => q.addEventListener(t, e => { e.stopPropagation(); if (t === 'keydown' && e.key === 'Enter') { const m = match(q.value); if (m.length) { pick(m[0]); hits.innerHTML = ''; q.blur(); } } }));
+  ['keydown', 'keyup', 'keypress'].forEach(t => q.addEventListener(t, e => { e.stopPropagation(); if (t === 'keydown' && e.key === 'Enter') { const m = match(q.value).concat(more(q.value.trim())); if (m.length) { pick(m[0]); hits.innerHTML = ''; q.blur(); } } }));
   if (obs.length) {
     find.style.display = 'block';
     let down = null;
@@ -540,6 +541,9 @@ def objects_layer(run, tour, cam, fov, first):
     """The object layer (objects3d.py: <run>/objects.json + crops/) in the tour: a labelled hotspot on top of each object; clicking
     it, its search hit or the object itself flies to the real filmed frame that showed it best, looking at it (cameras = video order,
     room coordinates; objects3d writes boxes in the same coordinates: level matrix x metres per unit). No objects.json: nothing."""
+    for x in ('regions.json', 'regions.f16', 'pois_ai.json'):                                # ai_find.py: the search index for "find anything"
+        if os.path.exists(f'{run}/{x}'): shutil.copy(f'{run}/{x}', f'{tour}/{x}')              # in the page, and the places its agent found
+    if os.path.isdir(f'{run}/find'): shutil.copytree(f'{run}/find', f'{tour}/find', dirs_exist_ok=True)
     f = f'{run}/objects.json'
     if not os.path.exists(f): return [], []
     from PIL import Image

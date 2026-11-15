@@ -2,8 +2,9 @@
 Two tiers, both free and open models only:
   index   (objects3d.py calls region_index) every SAM mask of every frame becomes a region: CLIP image embedding of its crop +
           its place in the room (median of the splats under it, tour metres) + the frame. regions.json + regions.f16 go into the
-          tour; the page embeds the typed words with CLIP's text encoder and runs `search` below (poi_overlay.js has the same
-          rule): a hit counts only when regions from two different frames agree on the place within 40 cm.
+          tour; the page embeds the typed words with CLIP's text encoder and runs `search` below (poi_core.js has the same
+          rule): a region counts when the words beat generic words on it, a hit only when regions from two different frames
+          agree on the place within 40 cm.
   agent   (this file as a script, on Kaggle after objects3d) for what the index missed. A loop of tools with Qwen2.5-VL as
           the planner: words -> names of visible things (phrases) -> the frames most likely to show them (rank, CLIP) -> boxes
           (detect, Grounding DINO) -> is it really that? (verify, Qwen on the crop) -> its place (lift, the model's rendered
@@ -61,20 +62,27 @@ def agree(cands, radius=0.4, min_frames=2):
     return sorted(out, key=lambda g: (not g['ok'], -g['score']))
 
 
-def search(q, E, items, top=24, radius=0.4, min_frames=2, floor=0.2, z=2.5):
-    """The page's instant find, here as the reference (poi_overlay.js `aiSearch` must return the same): q = text embedding
-    (unit), E = region embeddings [N, D] (unit), items[i] = dict(p=[x, y, z] metres, f=frame). A region counts when its cosine is
-    above `floor` AND stands out in this room (>= mean + z x std of all regions: CLIP's scores sit in a narrow band that moves
-    from room to room). The `top` best are grouped by place (agree). found = the best group seen from >= min_frames frames;
-    else `near` = the best single region, for "not found, the closest thing is here"."""
+CANON = ('an object', 'things', 'stuff', 'a texture')   # generic words every region is compared with (the rule LERF uses)
+
+
+def search(q, E, items, top=24, radius=0.4, min_frames=2, floor=0.2, margin=0.03):
+    """The page's instant find, here as the reference (poi_core.js `aiSearch` must return the same): q = text embedding (unit),
+    E = region embeddings [N, D] (unit), items[i] = dict(p=[x, y, z] metres, f=frame, c=that region's best score against the
+    generic words CANON). A region counts when the words beat the generic ones on it by `margin` (score - c) and the score is
+    above `floor`. Raw CLIP scores sit in a narrow band (0.20-0.30) that says little on its own: on a real house's photos
+    (16 Nov) the raw best was the right place for 4 of 10 things, the best margin for 9 of 10. An index without `c` falls back to
+    "stands out in this room" (mean + 2.5 x std). The `top` best by margin are grouped by place (agree). found = the best group
+    seen from >= min_frames frames; else `near` = the best single region, for "not found, the closest thing is there".
+    Not yet measured on a real region index (SAM crops): `margin` is a first setting."""
     E = np.asarray(E, np.float32); s = E @ np.asarray(q, np.float32)
     if len(s) == 0: return dict(found=None, near=None, threshold=None)
-    thr = max(floor, float(s.mean() + z * s.std())); order = np.argsort(-s)[:top]
-    c = [dict(pos=items[i]['p'], frame=items[i]['f'], score=float(s[i]), region=int(i)) for i in order if s[i] >= thr]
-    g = [x for x in agree(c, radius, min_frames) if x['ok']]; i0 = int(order[0])
-    hit = lambda x: dict(pos=[round(float(v), 3) for v in x['pos']], score=round(x['score'], 4), frames=x['frames'], regions=[m['region'] for m in x['members']])
-    return dict(found=hit(g[0]) if g else None, near=dict(pos=items[i0]['p'], score=round(float(s[i0]), 4), frame=items[i0]['f'], region=i0),
-                threshold=round(thr, 4))
+    c = np.array([it['c'] for it in items], np.float32) if all('c' in it for it in items) else np.full(len(s), float(s.mean() + 2.5 * s.std()) - margin, np.float32)
+    m = s - c; order = np.argsort(-m, kind='stable')[:top]
+    cand = [dict(pos=items[i]['p'], frame=items[i]['f'], score=float(m[i]), region=int(i)) for i in order if m[i] >= margin and s[i] >= floor]
+    g = [x for x in agree(cand, radius, min_frames) if x['ok']]; i0 = int(order[0])
+    hit = lambda x: dict(pos=[round(float(v), 3) for v in x['pos']], score=round(x['score'], 4), frames=x['frames'], regions=[k['region'] for k in x['members']])
+    return dict(found=hit(g[0]) if g else None, near=dict(pos=items[i0]['p'], score=round(float(m[i0]), 4), frame=items[i0]['f'], region=i0),
+                threshold=margin)
 
 
 # ---- the agent loop (tools are passed in: real models on Kaggle, stand-ins in the tests)
@@ -127,7 +135,8 @@ def slug(s): return re.sub(r'[^a-z0-9]+', '-', s.lower()).strip('-')[:40] or 'th
 # ---- the region index (called by objects3d.main; needs torch + transformers)
 def region_index(regions, frames, Xn, sid, L, mpu, out, dev='cuda', batch=64, max_spread_m=1.2):
     """regions: [(frame number in `frames`, mask box [x, y, w, h] px, indices of the opaque splats seen under the mask)].
-    Writes regions.json (items: f = dataset frame, p = place in tour metres, o = object id or 0, n = splats) and regions.f16
+    Writes regions.json (items: f = dataset frame, p = place in tour metres, o = object id or 0, n = splats, c = its best CLIP
+    score against the generic words CANON, which `search` subtracts) and regions.f16
     (float16 [N, 512], unit length). A mask whose splats spread over more than max_spread_m (it spans near and far) is left out."""
     import torch
     from PIL import Image
@@ -147,6 +156,11 @@ def region_index(regions, frames, Xn, sid, L, mpu, out, dev='cuda', batch=64, ma
             e = cm.visual_projection(cm.vision_model(pixel_values=cp(images=crops[i:i + batch], return_tensors='pt')['pixel_values'].to(dev)).pooler_output)
             E.append((e / e.norm(dim=-1, keepdim=True)).float().cpu().numpy())
     E = np.concatenate(E) if E else np.zeros((0, 512), np.float32); E.astype('<f2').tofile(f'{out}/regions.f16')
+    with torch.no_grad():                                                                   # each region's best score against the generic words
+        tk = cp.tokenizer([f'a photo of {c}' for c in CANON], padding=True, return_tensors='pt').to(dev)
+        tf = cm.text_projection(cm.text_model(**tk).pooler_output); tf = (tf / tf.norm(dim=-1, keepdim=True)).float().cpu().numpy()
+    if len(items):
+        for it, c in zip(items, (E @ tf.T).max(1)): it['c'] = round(float(c), 4)
     json.dump(dict(model=CLIP, dim=int(E.shape[1]), count=len(items), prompt='a photo of a {}', items=items), open(f'{out}/regions.json', 'w'))
     del cm; torch.cuda.empty_cache(); say('region index:', len(items), 'regions of', len(regions), 'masks'); return len(items)
 

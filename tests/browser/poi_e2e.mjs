@@ -165,3 +165,27 @@ test('places: pois.json entries', () => {
   assert.deepEqual(C.readPois({ pois: [{ id: 'a', name: 'ok', pos: [1, 2, 3] }, { id: 'b', name: 'bad', pos: [1, 2] }, { id: 3, name: 'bad', pos: [1, 2, 3] }, null, { id: 'c', name: 'nan', pos: [1, NaN, 3] }] }).map((x) => x.id), ['a']);
   assert.equal(C.poiWords(p), 'table furniture');
 });
+
+// ---- AI find: the page's search gives the same answers as ai_find.search (the cases were written by tests/v3/test_ai_find.py:
+// WRITE_AI_CASES=tests/browser/ai_search_cases.json pytest tests/v3/test_ai_find.py)
+test('AI find: the instant search matches the Python reference, and the float16 index decodes', async () => {
+  const core = await import(new URL('../../colab/real_scenes/final/poi_core.js', import.meta.url));
+  const j = JSON.parse(fs.readFileSync(new URL('./ai_search_cases.json', import.meta.url)));
+  const R = { items: j.items, E: Float32Array.from(j.E.flat()), dim: j.dim, n: j.items.length };
+  assert.deepEqual(j.cases.map((c) => !!c.want.found), [true, false, true, false, true, false]);
+  for (const c of j.cases) { const got = core.aiSearch(c.q, R), want = c.want;
+    assert.equal(!!got.found, !!want.found); assert.ok(Math.abs(got.threshold - want.threshold) < 2e-4);
+    assert.equal(got.near.region, want.near.region); assert.equal(got.near.frame, want.near.frame);
+    if (want.found) { assert.deepEqual(got.found.frames, want.found.frames); assert.deepEqual([...got.found.regions].sort(), [...want.found.regions].sort());
+      for (let k = 0; k < 3; k++) assert.ok(Math.abs(got.found.pos[k] - want.found.pos[k]) < 2e-3); assert.ok(Math.abs(got.found.score - want.found.score) < 2e-4); } }
+  // one view only is never "found"
+  const g = core.agree([{ pos: [1, 0, 1], frame: 3, score: 0.6 }, { pos: [1.1, 0, 1], frame: 3, score: 0.5 }, { pos: [4, 0, 0], frame: 5, score: 0.9 }]);
+  assert.equal(g.length, 2); assert.ok(!g[0].ok && !g[1].ok && g[0].score === 0.9);
+  assert.deepEqual(core.aiSearch([1, 0], { items: [], E: new Float32Array(0), dim: 2, n: 0 }), { found: null, near: null, threshold: null });
+  // float16: the bytes numpy writes for these values
+  const f16 = new Uint16Array([0x3c00, 0xbc00, 0x3800, 0x0000, 0x3555, 0x0001, 0x7c00]);
+  assert.deepEqual([...f16].map(core.halfToFloat).map((v) => +v.toPrecision(6)), [1, -1, 0.5, 0, 0.333252, 5.96046e-8, Infinity]);
+  const D = core.decodeRegions({ count: 2, dim: 2, items: [{ f: 1, p: [0, 0, 0] }, { f: 2, p: [1, 1, 1] }] }, new Uint16Array([0x3c00, 0, 0, 0x3c00]).buffer);
+  assert.deepEqual([...D.E], [1, 0, 0, 1]); assert.equal(D.prompt, 'a photo of a {}');
+});
+

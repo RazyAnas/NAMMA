@@ -140,9 +140,37 @@ function routeToPoint(name, pos, view) { let approach = null; if (nav) { const s
 const hitOf = new Map(), catName = (p) => p.category.charAt(0).toUpperCase() + p.category.slice(1);
 extra = () => pois.map((p) => { let h = hitOf.get(p); const size = catName(p) + (p.note ? ' · ' + esc(p.note).slice(0, 60) : '') + (p.source === 'ai' ? ' · found by AI' : '');
   if (!h || h.label !== esc(p.name) || h.size !== size) { h = { poi: p, label: esc(p.name), size, words: poiWords(p), thumb: p.thumb }; hitOf.set(p, h); } return h; });
-pick = (x) => { if (x.poi) routeTo(x.poi.id); else if (nav && x.lo && x.hi) routeToPoint(x.label, [(x.lo[0] + x.hi[0]) / 2, (x.lo[1] + x.hi[1]) / 2, (x.lo[2] + x.hi[2]) / 2], x.i); else go(x.i); };
-const searchOn = () => { find.style.display = 'block'; q.placeholder = obs.length ? 'Search places and things ...' : 'Search places ...'; };
-if (pois.length || admin) searchOn();
+pick = (x) => { if (x.ai) aiFind(x.ai); else if (x.poi) routeTo(x.poi.id); else if (nav && x.lo && x.hi) routeToPoint(x.label, [(x.lo[0] + x.hi[0]) / 2, (x.lo[1] + x.hi[1]) / 2, (x.lo[2] + x.hi[2]) / 2], x.i); else go(x.i); };
+const searchOn = () => { find.style.display = 'block'; q.placeholder = aiMeta ? 'Search, or ask for anything ...' : obs.length ? 'Search places and things ...' : 'Search places ...'; };
+
+// ---- AI find: type anything; the tour's own frames are searched for it (regions.json / regions.f16 from ai_find.py), and it
+// is marked only when two filmed frames agree on where it is. The words are embedded in the browser with CLIP's text half
+// (transformers.js, ~65 MB once, then cached); nothing is sent anywhere.
+const aiMeta = await getJson('./regions.json'); let aiR = null, aiEmbed = null, aiBusy = false;
+const TJS = 'https://cdn.jsdelivr.net/npm/@huggingface/transformers@3.8.1';
+const slug = (s) => s.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 40) || 'thing';
+async function aiLoad() {
+  if (!aiR) { const r = await fetch('./regions.f16'); if (!r.ok) throw new Error('no search index in this tour'); aiR = decodeRegions(aiMeta, await r.arrayBuffer()); }
+  if (!aiEmbed) { const T = await import(TJS), id = 'Xenova/' + String(aiMeta.model || 'openai/clip-vit-base-patch32').split('/').pop();
+    const tok = await T.AutoTokenizer.from_pretrained(id), model = await T.CLIPTextModelWithProjection.from_pretrained(id, { dtype: 'q8' });
+    aiEmbed = async (text) => { const out = await model(tok([text], { padding: true, truncation: true })), e = Array.from(out.text_embeds.data).slice(0, aiR.dim);
+      const n = Math.hypot(...e) || 1; return e.map((v) => v / n); }; }
+}
+async function aiFind(text) { text = String(text || '').trim(); if (!text || !aiMeta) return null; if (aiBusy) { toast('Still looking ...'); return null; }
+  aiBusy = true; toast(aiEmbed ? 'Looking for “' + text + '” ...' : 'Getting the AI model (about 65 MB, the first time only) ...', false, 60000);
+  try { await aiLoad(); const r = aiSearch(await aiEmbed(aiR.prompt.replace('{}', text)), aiR); api.lastAi = Object.assign({ query: text }, r);
+    if (!r.found) { toast('“' + text + '” was not found in this tour (nothing was seen from two sides).'); return r; }
+    const p = addPoi({ id: 'ai-' + slug(text), name: text.charAt(0).toUpperCase() + text.slice(1), pos: r.found.pos, source: 'ai', category: 'other',
+      confidence: r.found.frames.length >= 3 ? 0.8 : 0.6, note: 'found by AI in ' + r.found.frames.length + ' filmed views' });
+    toast('Found: ' + p.name, true); routeTo(p.id); return r;
+  } catch (e) { console.warn('AI find', e); toast('AI find could not run here: ' + (e && e.message ? e.message : e)); return null; } finally { aiBusy = false; } }
+if (aiMeta && aiMeta.count) more = (s) => (s.length >= 3 ? [{ ai: s, label: 'Find “' + esc(s) + '” with AI', size: 'looks through the filmed frames', words: '' }] : []);
+// places the find agent marked on Kaggle (pois_ai.json): part of the tour unless the admin removed or re-placed them
+{ const a = await getJson('./pois_ai.json'); ((a && a.pois) || []).forEach((p) => { if (p && p.id && Array.isArray(p.pos) && !byIdEarly(p.id) && !removed.includes(p.id))
+    { const poi = makePoi({ id: p.id, name: p.name, pos: p.pos, source: 'ai', category: 'other', thumb: p.thumb, confidence: p.confidence === 'high' ? 0.9 : p.confidence === 'medium' ? 0.7 : 0.4,
+        note: p.review ? 'found by AI in one view: check it' : 'found by AI' }, nav); pois.push(poi); index.insert({ id: poi.id, pos: poi.pos, poi }); } }); }
+function byIdEarly(id) { return pois.find((p) => p.id === id); }
+if (pois.length || admin || aiMeta) searchOn();
 
 // ---- hooks (AI find, tests, the console) ----
 function addPoi(p, quiet) { const poi = makePoi(p, nav); const old = byId(poi.id); if (old) { index.remove(old.id); pois[pois.indexOf(old)] = poi; } else pois.push(poi);
@@ -150,7 +178,7 @@ function addPoi(p, quiet) { const poi = makePoi(p, nav); const old = byId(poi.id
 function removePoi(id) { const p = byId(id); if (!p) return false; index.remove(id); pois.splice(pois.indexOf(p), 1); if (!removed.includes(id)) removed.push(id); if (goal && goal.id === id) stopRoute(); if (admin) { dirty = true; keep(); } changed(); return true; }
 const api = window.nammaPoi = { version: 1, admin, onArrive: [],
   list: () => pois.slice(), get: byId, nav: () => nav, index,
-  add: (p) => addPoi(p),                                                                    // {name, pos [x, y, z], category?, note?, thumb?}
+  aiFind, lastAi: null, add: (p) => addPoi(p),                                                                    // {name, pos [x, y, z], category?, note?, thumb?}
   addAi: (p) => addPoi(Object.assign({}, p, { source: 'ai' })),                               // + confidence 0..1; shown blue, "found by AI"
   remove: removePoi, routeTo, routeToPoint, clearRoute: () => stopRoute(), takeMeThere: (on) => (on === false ? stopAuto() : startAuto()), walking: () => auto,
   nearest: (pos, max) => index.nearest(pos, max == null ? Infinity : max), within: (pos, r) => index.within(pos, r),

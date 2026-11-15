@@ -484,3 +484,41 @@ Kaggle stops a session at 12 h. `final/budget.py` gives every stage of `v3/run.p
 | Test runs | `run.py` | `NAMMA_REF=<branch>` makes the Kaggle job clone that branch instead of the production one |
 Not yet measured on Kaggle: the motion-aware frame choice against the time windows on a real room (quality), the 960 / 1080 / 1280 px rungs
 (speed is scaled from one pair of runs, then re-measured by the second dry run), and the deadline stop on a real trainer.
+
+## Places, routes and AI find in the tour (16 Nov, branch `claude/smart-budget-poi`)
+Requirement: an admin adds places (POIs) in 3D with spatial indexing; visitors search them, get a walkable route and are told
+when they arrive; an AI finds any named thing in the 3D space and marks it.
+| What | Where | How |
+|---|---|---|
+| Walkable grid | `final/navgrid.py` -> `nav.json` (built by `make_tour.build`, rebuilt by `tour_publish` on `collision` / `head`) | the tour's `collision.glb` on 10 cm cells: clearance measured from the local floor, 25 cm body radius, the filmed path always walkable, only the part joined to it. One level per cell (overlapping floors are not handled) |
+| Places | `pois.json` in the tour folder; code `final/poi_core.js` + `final/poi_overlay.js` (inlined into the page by `make_tour._places_js`) | each place: name, category, note, position in room metres, the walkable spot beside it, Morton cell key, source (admin / ai). In the page a Morton-keyed 3D hash grid answers nearest / within radius / tap-pick for places and object boxes |
+| Admin | the tour link + `?admin=1` | tap to place (on the collision mesh), rename, move, delete; unsaved edits stay in the browser. Save: Hugging Face sign-in or a pasted write token commits `pois.json` to the Space (not yet verified against the real Space), or download the file. `tour_publish` keeps a live `pois.json` across republishes and merges `v3/pois/<run>.json` |
+| Search, route, arrival | search box in the tour | places and objects by words; choosing one runs A* on the grid (8-connected, no corner cutting, keeps off walls, smoothed), draws the route in 3D and on the floor plan with the distance left; within 1 m: "You have reached your destination". "Take me there" walks it |
+| AI find, in the page | `final/ai_find.py region_index` -> `regions.json` + `regions.f16`; `poi_core.js aiSearch` | every SAM mask of ~40 frames as a CLIP embedding + its place in the room + its score against generic words. The page embeds the typed words with CLIP's text half (transformers.js, ~65 MB once) and marks a place only when the words beat the generic words on regions of two different frames within 40 cm. Row "Find ... with AI" in the search box |
+| AI find, agent | `final/ai_find.py` as a script, run by `final/objects_job.py` when `v3/OBJECTS.json` has `"find": ["fire extinguisher", ...]` | Qwen2.5-VL plans (names to look for) -> CLIP ranks frames -> Grounding DINO boxes -> Qwen confirms each crop -> rendered depth gives the place -> two frames must agree; renamed and retried once; every step in the trace. Output `pois_ai.json` (shown in the tour as places "found by AI") |
+| In every run | `v3/run.py`, `OBJECTS=1` (presets best, home) | after training, with 40 min left: the object layer + the region index (time-limited, never fails the run) |
+Measured: 51 Python tests (`pytest -q --confcutdir=tests/v3 tests/v3`) and 10 JS tests (`node tests/browser/poi_e2e.mjs`), incl. the page's
+search against the Python reference. Checked in a browser on a local copy of the house tour: pins, route, arrival, admin edits.
+On six real photos of that tour (240 px thumbnails, CLIP ViT-B/32): 5 of 6 present things found at the right spot (sofa,
+kitchen, fridge, dining table, tripod; the television missed); of 4 absent things 3 refused (giraffe, pool, toilet), 1 wrongly
+found (bed, on a sofa). Not run yet: SAM / Qwen / Grounding DINO (Kaggle only), so the 0.03 margin is a first setting.
+
+## App: live coverage while recording (16 Nov, same branch; `app/android`)
+"Record with live coverage (beta)" (`ScanActivity`): ARCore tracks the phone and measures depth; scanned surfaces are shown under a
+blue plastic-like film that follows the real objects (violet = seen from one direction, deep blue = three or more), with a bright
+edge where the scan ends; a top-down map, a coverage figure and a hint to the nearest thin area. After STOP: the usual video
+check + the coverage line, then name and upload; `meta.json` gets `camera.mode: "ar"`, the coverage numbers and the camera track.
+- `core/Coverage.kt`: sparse voxel map (one open-addressing table), 24 viewing-direction bits per voxel, voxel size doubles when
+  full; `levels()` = per pixel of a depth image the coverage of the surface behind it. 11 unit tests (`CoverageTest`).
+- `capture/ArRig.kt`: ARCore owns the camera; the video is encoded from ARCore's camera texture (1080p HEVC). Shared-camera
+  mode with a MediaRecorder stream was refused by the test phone ("Error configuring streams (-38)").
+- `capture/CoverageGl.kt`: the film shader (surface from the depth image, lit, 10 cm grid in room coordinates).
+- Costs against the normal recorder: main lens (not the ultra-wide), 1080p (not 4K), automatic exposure.
+- Test builds: `gradle -p app/android :capture:assembleDebug` installs as `namma.capture.dev` beside the released app;
+  `adb shell am start -n namma.capture.dev/namma.capture.ScanActivity [--ez demo true]`.
+- Checked on a Nothing A059 (Android 16): demo room; AR session with depth; REC -> film -> STOP -> video check; the recorded file
+  (1920x1080 HEVC, 30 fps, upright, no overlay in it); 27-28 fps with the film. Not checked: a whole-room walk, upload from this
+  screen, a phone without the Depth API, other phones.
+- Also fixed: the recorder's text and `meta.json` now say what stabilisation really is (it has been ON since commit 3d95ed9 while
+  both said off: decide which you want, the capture guide says off); Android 15+ insets; `quality_samples.columns` matches the rows.
+

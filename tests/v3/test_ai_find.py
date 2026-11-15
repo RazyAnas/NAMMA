@@ -46,26 +46,38 @@ def test_agree_needs_two_different_frames_on_the_same_place():
 
 # ---- instant search over the region index
 def room(rng, n=300, d=64):
-    """A room of n regions with unrelated embeddings in a narrow band, like CLIP's (all share a common direction)."""
+    """A room of n regions with unrelated embeddings in a narrow band, like CLIP's (all share a common direction, which is also
+    what the generic words look like: every region's `c` is its score against it)."""
     base = unit(rng.normal(size=d)); E = unit(base + 0.6 * unit(rng.normal(size=(n, d))))
-    items = [dict(p=[float(x) for x in rng.uniform(0, 6, 3)], f=int(rng.integers(0, 40))) for _ in range(n)]
+    items = [dict(p=[float(x) for x in rng.uniform(0, 6, 3)], f=int(rng.integers(0, 40)), c=float(E[i] @ base)) for i in range(n)]
     return base, E, items
+
+
+def put(E, items, i, e, p, f, base): E[i] = e; items[i] = dict(p=p, f=f, c=float(e @ base))
 
 
 def test_search_finds_a_thing_seen_from_two_frames_and_refuses_what_is_not_there():
     rng = np.random.default_rng(0); base, E, items = room(rng); thing = unit(base + 0.8 * unit(rng.normal(size=64)))
     for i, (f, off) in enumerate(((4, 0.0), (11, 0.15), (27, 0.25))):                         # the lamp: 3 frames, within 25 cm
-        E[i] = unit(thing + 0.25 * unit(rng.normal(size=64))); items[i] = dict(p=[2.0 + off, 1.1, 3.0], f=f)
+        put(E, items, i, unit(thing + 0.25 * unit(rng.normal(size=64))), [2.0 + off, 1.1, 3.0], f, base)
     r = ai_find.search(thing, E, items)
     assert r['found'] and set(r['found']['frames']) == {4, 11, 27} and set(r['found']['regions']) == {0, 1, 2}
-    assert np.linalg.norm(np.array(r['found']['pos']) - [2.13, 1.1, 3.0]) < 0.15 and r['found']['score'] > r['threshold']
+    assert np.linalg.norm(np.array(r['found']['pos']) - [2.13, 1.1, 3.0]) < 0.15 and r['found']['score'] > r['threshold'] == 0.03
     other = unit(base + 0.8 * unit(rng.normal(size=64)))                                       # a thing that is not in the room
     r2 = ai_find.search(other, E, items)
     assert r2['found'] is None and r2['near'] is not None and len(r2['near']['pos']) == 3      # "closest match", never a pin
     # one view only (a photo of a lamp on the wall, a reflection): not enough
-    E[1] = E[100]; E[2] = E[101]; r3 = ai_find.search(thing, E, items)
+    put(E, items, 1, E[100].copy(), items[100]['p'], items[100]['f'], base); put(E, items, 2, E[101].copy(), items[101]['p'], items[101]['f'], base)
+    r3 = ai_find.search(thing, E, items)
     assert r3['found'] is None and r3['near']['region'] == 0
     assert ai_find.search(thing, np.zeros((0, 64), np.float32), [])['found'] is None
+    # a region the words fit no better than generic words is not a hit, however high its raw score
+    loud = unit(base + 0.05 * unit(rng.normal(size=64))); E2 = np.stack([loud, loud]); it2 = [dict(p=[1, 1, 1], f=1, c=float(loud @ base)), dict(p=[1, 1, 1.1], f=2, c=float(loud @ base))]
+    assert float(loud @ thing) > 0.7 and ai_find.search(thing, E2, it2)['found'] is None
+    # an older index without `c`: what stands out in the room
+    old = [{k: v for k, v in it.items() if k != 'c'} for it in items]
+    for i, (f, off) in enumerate(((4, 0.0), (11, 0.15), (27, 0.25))): E[i] = unit(thing + 0.25 * unit(rng.normal(size=64))); old[i] = dict(p=[2.0 + off, 1.1, 3.0], f=f)
+    assert set(ai_find.search(thing, E, old)['found']['frames']) == {4, 11, 27} and ai_find.search(other, E, old)['found'] is None
 
 
 def test_search_reference_cases_for_the_page(tmp_path):
@@ -74,7 +86,7 @@ def test_search_reference_cases_for_the_page(tmp_path):
     for k in range(6):
         q = unit(base + 0.8 * unit(rng.normal(size=32)))
         if k % 2 == 0:
-            for i in range(2 + k // 2): E[10 * k + i] = unit(q + 0.2 * unit(rng.normal(size=32))); items[10 * k + i] = dict(p=[1.0 + k, 1.0, 2.0 + 0.1 * i], f=k * 5 + i)
+            for i in range(2 + k // 2): put(E, items, 10 * k + i, unit(q + 0.2 * unit(rng.normal(size=32))), [1.0 + k, 1.0, 2.0 + 0.1 * i], k * 5 + i, base)
         cases.append(q)
     out = [dict(q=[float(x) for x in q], want=ai_find.search(q, E, items)) for q in cases]
     assert [bool(c['want']['found']) for c in out] == [True, False, True, False, True, False]
