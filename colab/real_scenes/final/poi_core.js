@@ -191,3 +191,36 @@ export function aiSearch(q, R, { top = 24, radius = 0.4, minFrames = 2, floor = 
   const g = agree(c, radius, minFrames).filter((x) => x.ok), i0 = order[0];
   return { found: g.length ? { pos: g[0].pos.map(r3), score: g[0].score, frames: g[0].frames, regions: g[0].members.map((x) => x.region) } : null,
     near: { pos: R.items[i0].p, score: m[i0], frame: R.items[i0].f, region: i0 }, threshold: margin }; }
+
+// ---- the route as a ribbon on the floor (owner, 16 Nov: a wide band with arrows, like AR navigation, not a thin line) ----
+// fine = the route's points every ~0.25 m ([x, y, z], y = the floor). Returns the band's two edges and the distance along it.
+export function ribbon(fine, width = 0.55) { const n = fine.length, L = [], R = [], s = [0], h = width / 2;
+  for (let i = 0; i < n; i++) { const a = fine[Math.max(0, i - 1)], b = fine[Math.min(n - 1, i + 1)]; let tx = b[0] - a[0], tz = b[2] - a[2]; const l = Math.hypot(tx, tz) || 1; tx /= l; tz /= l;
+    const p = fine[i]; L.push([p[0] + tz * h, p[1], p[2] - tx * h]); R.push([p[0] - tz * h, p[1], p[2] + tx * h]);
+    if (i) s.push(s[i - 1] + Math.hypot(p[0] - fine[i - 1][0], p[2] - fine[i - 1][2])); }
+  return { L, R, s, length: s[n - 1] || 0 }; }
+// The point at distance d along the route, its direction, and the index of the route point before it.
+export function along(fine, s, d) { const n = fine.length; if (n < 2) return null; d = Math.max(0, Math.min(s[n - 1], d)); let i = 1; while (i < n - 1 && s[i] < d) i++;
+  const a = fine[i - 1], b = fine[i], seg = s[i] - s[i - 1] || 1, k = (d - s[i - 1]) / seg; let tx = b[0] - a[0], tz = b[2] - a[2]; const l = Math.hypot(tx, tz) || 1;
+  return { p: [a[0] + (b[0] - a[0]) * k, a[1] + (b[1] - a[1]) * k, a[2] + (b[2] - a[2]) * k], t: [tx / l, tz / l], i: i - 1 }; }
+// Arrow heads on the band, one every `gap` metres, pointing the way to go; `phase` (0..gap) slides them forward (animation).
+// Each is a chevron as 6 floor points (outer V then inner V back), so it is drawn in perspective like the band itself.
+export function chevrons(fine, s, width = 0.55, gap = 1.0, phase = 0, from = 0.5) { const out = [], w = width * 0.34, len = width * 0.42, thick = width * 0.2, end = s[s.length - 1] || 0;
+  for (let d = from + ((phase % gap) + gap) % gap; d < end - 0.3; d += gap) { const q = along(fine, s, d); if (!q) break; const [tx, tz] = q.t, [x, y, z] = q.p;
+    const pt = (f, side) => [x + tx * f + tz * side, y + 0.005, z + tz * f - tx * side];   // f metres ahead, `side` metres to the left
+    out.push({ at: d, i: q.i, pts: [pt(-len / 2, w), pt(len / 2, 0), pt(-len / 2, -w), pt(-len / 2 - thick, -w), pt(len / 2 - thick, 0), pt(-len / 2 - thick, w)] }); }
+  return out; }
+// Is the floor point b hidden from a (the camera, [x, z]) by a wall? walls = [[x1, z1, x2, z2], ...] (walls.json). A route part
+// behind a wall is drawn as a dashed ghost, not as if it lay on this side of the wall.
+export function behindWall(a, b, walls) { const dx = b[0] - a[0], dz = b[1] - a[1];
+  for (const w of walls) { const ex = w[2] - w[0], ez = w[3] - w[1], den = dx * ez - dz * ex; if (Math.abs(den) < 1e-9) continue;
+    const t = ((w[0] - a[0]) * ez - (w[1] - a[1]) * ex) / den, u = ((w[0] - a[0]) * dz - (w[1] - a[1]) * dx) / den;
+    if (t > 0.02 && t < 0.98 && u >= 0 && u <= 1) return true; }
+  return false; }
+// Which route points the camera at `cam` [x, z] cannot see: behind a wall (walls.json), or, without walls, with no free line
+// over the walkable grid. Points within `near` metres always count as seen (the band under the visitor's feet).
+export function hiddenParts(fine, cam, walls, nav, near = 0.8) { return fine.map((p) => { if (Math.hypot(p[0] - cam[0], p[2] - cam[1]) < near) return false;
+    if (walls && walls.length) return behindWall(cam, [p[0], p[2]], walls); return nav ? !sight(nav, cam, [p[0], p[2]]) : false; }); }
+// Walking time for a distance, in words ("20 s", "2 min"): 1.2 m/s, the usual indoor pace.
+export const walkTime = (m) => { const t = m / 1.2; return t < 55 ? Math.max(5, Math.round(t / 5) * 5) + ' s' : Math.round(t / 60) + ' min'; };
+

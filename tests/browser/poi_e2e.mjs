@@ -189,3 +189,32 @@ test('AI find: the instant search matches the Python reference, and the float16 
   assert.deepEqual([...D.E], [1, 0, 0, 1]); assert.equal(D.prompt, 'a photo of a {}');
 });
 
+// ---- the route band: geometry of the ribbon and its arrow heads, and what is behind a wall
+test('route band: edges either side of the path, arrow heads pointing the way, parts behind a wall marked', async () => {
+  const core = await import(new URL('../../colab/real_scenes/final/poi_core.js', import.meta.url));
+  const fine = []; for (let k = 0; k <= 16; k++) fine.push([0, 0.04, -0.25 * k]);            // 4 m straight ahead (towards -z) ...
+  for (let k = 1; k <= 12; k++) fine.push([0.25 * k, 0.04, -4]);                               // ... then 3 m to the right (+x)
+  const rb = core.ribbon(fine, 0.6);
+  assert.equal(rb.L.length, fine.length); assert.ok(Math.abs(rb.length - 7) < 1e-9);
+  assert.deepEqual(rb.L[4].map((v) => +v.toFixed(3)), [-0.3, 0.04, -1]); assert.deepEqual(rb.R[4].map((v) => +v.toFixed(3)), [0.3, 0.04, -1]);   // facing -z: left is -x
+  assert.deepEqual(rb.L[24].map((v) => +v.toFixed(3)), [2, 0.04, -4.3]);                        // facing +x: left is -z
+  for (let i = 0; i < fine.length; i++) assert.ok(Math.abs(Math.hypot(rb.L[i][0] - rb.R[i][0], rb.L[i][2] - rb.R[i][2]) - 0.6) < 1e-9);   // the same width everywhere
+  const ch = core.chevrons(fine, rb.s, 0.6, 1.0, 0);
+  assert.deepEqual(ch.map((c) => c.at), [0.5, 1.5, 2.5, 3.5, 4.5, 5.5, 6.5]);                    // one a metre, none in the last 30 cm
+  const tipOf = (c) => c.pts[1], wings = (c) => [c.pts[0], c.pts[2]];
+  assert.ok(tipOf(ch[0])[2] < wings(ch[0])[0][2] && Math.abs(tipOf(ch[0])[0]) < 1e-9);          // first leg: the tip is ahead (-z) of the wings
+  assert.ok(tipOf(ch[5])[0] > wings(ch[5])[0][0] && Math.abs(tipOf(ch[5])[2] + 4) < 1e-9);       // second leg: the tip points to +x
+  assert.ok(ch.every((c) => c.pts.length === 6 && c.pts.every((q) => Math.abs(q[0]) <= 3.4 && q[2] >= -4.4 && q[2] <= 0.2)));   // on the band
+  assert.deepEqual(core.chevrons(fine, rb.s, 0.6, 1.0, 0.25).map((c) => c.at), [0.75, 1.75, 2.75, 3.75, 4.75, 5.75]);         // the animation slides them forward
+  // a wall along x = 1 from z = -5 to z = -1: from the start, the end of the route (x > 1) is behind it, the first leg is not
+  const walls = [[1, -5, 1, -1]], cam = [0, 0];
+  assert.equal(core.behindWall(cam, [3, -4], walls), true); assert.equal(core.behindWall(cam, [0, -4], walls), false);
+  assert.equal(core.behindWall(cam, [3, -0.5], walls), false);                                   // the wall ends before that line
+  const hid = core.hiddenParts(fine, cam, walls, null);
+  assert.equal(hid.slice(0, 17).some(Boolean), false); assert.equal(hid[fine.length - 1], true);
+  assert.ok(hid.indexOf(true) >= 21 && hid.indexOf(true) <= 22);                                 // it goes out of sight where it passes x = 1
+  assert.equal(core.hiddenParts(fine, [3, -4], walls, null)[fine.length - 1], false);            // standing at the end: the band under the feet is seen
+  assert.equal(core.hiddenParts(fine, cam, [], null).some(Boolean), false);                       // no walls known, no grid: nothing is called hidden
+  assert.equal(core.walkTime(12), '10 s'); assert.equal(core.walkTime(3), '5 s'); assert.equal(core.walkTime(150), '2 min');
+});
+

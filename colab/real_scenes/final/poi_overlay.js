@@ -71,10 +71,11 @@ extra3d = (g, pr) => { if (R && R.pts && R.pts.length > 1) { g.beginPath(); R.pt
 
 // ---- route: A* on the walkable grid from where the camera is, redone as the visitor moves; distance left; arrival ----
 // goal: {id, name, pos, approach?, view?: annotation index of an object}. R: {pts, fine, len} of the current route.
-const bar = $('nm-route'), rname = $('nm-rname'), rdist = $('nm-rdist'), rarr = $('nm-rarr'), rview = $('nm-rview'), rgo = $('nm-rgo'), pathEl = $('nm-path'), pathO = pathEl.children[0], pathL = pathEl.children[1];
+const bar = $('nm-route'), rname = $('nm-rname'), rdist = $('nm-rdist'), rarr = $('nm-rarr'), rview = $('nm-rview'), rgo = $('nm-rgo'), pathEl = $('nm-path'), ribH = pathEl.children[0], chH = pathEl.children[1], ribV = pathEl.children[2], chV = pathEl.children[3], behind = $('nm-behind');
 let R = null, arrived = null, lastPlan = 0, lastAt = null;
-const ARRIVE = 1.0;                                                                         // metres from the end point
-function stopRoute(silent) { stopAuto(); goal = null; R = null; bar.style.display = 'none'; pathO.setAttribute('d', ''); pathL.setAttribute('d', ''); plans.forEach((pl) => pl.line.setAttribute('points', '')); drawDots(); if (!silent && fp.style.display === 'flex' && mode === '3d') draw3d(); }
+const ARRIVE = 1.0, BAND = 0.55;                                                           // metres: arrival distance, the band's width
+//                                                                         // metres from the end point
+function stopRoute(silent) { stopAuto(); goal = null; R = null; bar.style.display = 'none'; [ribH, chH, ribV, chV].forEach((x) => x.setAttribute('d', '')); behind.style.display = 'none'; plans.forEach((pl) => pl.line.setAttribute('points', '')); drawDots(); if (!silent && fp.style.display === 'flex' && mode === '3d') draw3d(); }
 function startRoute(t) { arrived = null; goal = t; R = null; lastPlan = 0; lastAt = null; rname.textContent = t.name; rdist.textContent = ''; rview.style.display = t.view != null ? '' : 'none';
   bar.style.display = 'flex'; drawDots(); if (!tick(true)) return false;
   const v = window.viewer, st = v && v.state;
@@ -87,12 +88,13 @@ function fineOf(pts) { const out = []; for (let i = 1; i < pts.length; i++) { co
 function tick(force) { if (!goal) return false; const c = camState(); if (!c) return true; const e = ends(goal), now = Date.now();
   const moved = !lastAt || Math.hypot(c.x - lastAt[0], c.z - lastAt[1]) > 0.25;
   if (nav && (force || (moved && now - lastPlan > 400))) { lastPlan = now; lastAt = [c.x, c.z]; const r = route(nav, [c.x, c.z], e);
-    if (r.ok) { R = { pts: r.points, fine: fineOf(r.points), len: r.length + r.from }; rgo.style.display = canAuto() ? '' : 'none'; plans.forEach((pl) => pl.line.setAttribute('points', r.points.map((p) => P(p[0], p[2]).map((v) => v.toFixed(1)).join(',')).join(' '))); }
+    if (r.ok) { const fine = fineOf(r.points); R = { pts: r.points, fine, len: r.length + r.from, rb: ribbon(fine, BAND), hid: null }; rgo.style.display = canAuto() ? '' : 'none'; plans.forEach((pl) => pl.line.setAttribute('points', r.points.map((p) => P(p[0], p[2]).map((v) => v.toFixed(1)).join(',')).join(' '))); }
     else if (!R) { const nm = goal.name; stopRoute();
       toast(r.reason === 'unreachable' ? `No walkable way to ${nm} from here.` : r.reason === 'target-off-floor' ? `${nm} is not next to any floor that was filmed: no route.` : 'No walkable floor in this tour: no route.', false, 6000); return false; } }
   else if (!nav) R = { pts: null, fine: null, len: Math.hypot(c.x - e[0], c.z - e[1]) };          // no grid: straight-line distance only
   const d = Math.hypot(c.x - e[0], c.z - e[1]), len = R ? R.len : d;
-  rdist.textContent = (len < 10 ? len.toFixed(1) : Math.round(len)) + ' m' + (nav ? '' : ' (straight line)');
+  rdist.textContent = (len < 10 ? len.toFixed(1) : Math.round(len)) + ' m' + (nav ? ' · ' + walkTime(len) : ' (straight line)');
+  if (R && R.fine) R.hid = hiddenParts(R.fine, [c.x, c.z], walls, nav);                     // which of it is behind a wall from here
   const nx = R && R.pts ? (R.pts.find((p) => Math.hypot(p[0] - c.x, p[2] - c.z) > 0.6) || R.pts[R.pts.length - 1]) : [e[0], 0, e[1]];      // the next turn: where the arrow points
   rarr.style.transform = `rotate(${(Math.atan2(nx[2] - c.z, nx[0] - c.x) - Math.atan2(c.fz, c.fx)) * 180 / Math.PI}deg)`;
   let level = true; if (nav && nav.floor && R && R.pts && window.viewer && window.viewer.state.cameraMode === 'walk') { const w = window.nammaWalk, eh = w ? (w.eyeHeight || 1.3) + (w.hoverHeight || 0.2) : 1.5;
@@ -123,13 +125,26 @@ rgo.onclick = (e) => { e.stopPropagation(); auto ? stopAuto() : startAuto(); };
 addEventListener('keydown', (e) => { if (auto && /^(Key[WASD]|Arrow|Space|Escape)/.test(e.code || '')) stopAuto(); }, true);
 addEventListener('pointerdown', (e) => { if (auto && e.target && e.target.tagName === 'CANVAS') stopAuto(); }, true);
 $('nm-rx').onclick = (e) => { e.stopPropagation(); stopRoute(); }; rview.onclick = (e) => { e.stopPropagation(); if (goal && goal.view != null) go(goal.view); };
-// the 3D view, every frame: the route as a dashed line on the floor (projected; shown through walls on purpose, it is a guide
-// line, not an object in the room) and the pins
-function frame() { try { placePins(); if (auto) autoStep();
-    if (R && R.fine) { let d = '', pen = false; const W = innerWidth, H = innerHeight;
-      for (const p of R.fine) { const s = project(p[0], p[1], p[2]); if (!s || s[2] > 40 || s[0] < -W || s[0] > 2 * W || s[1] < -H || s[1] > 2 * H) { pen = false; continue; } d += (pen ? 'L' : 'M') + s[0].toFixed(1) + ' ' + s[1].toFixed(1); pen = true; }
-      pathO.setAttribute('d', d); pathL.setAttribute('d', d); }
-  } catch (e) {} requestAnimationFrame(frame); }
+// the 3D view, every frame: the route as a band on the floor with arrow heads sliding the way to go, drawn in perspective (each
+// edge point through the camera's own projection); the pins. What the visitor cannot see from where they stand (a wall in
+// between) is still drawn, since it is a guide, but as a dashed outline with hollow arrows and a tag where it goes out of sight.
+function drawBand() { const { L, R: Rr, s: dist } = R.rb, n = R.fine.length, hid = R.hid || [], W = innerWidth, H = innerHeight;
+  const ok = (q) => q && q[2] < 45 && q[0] > -W && q[0] < 2 * W && q[1] > -H && q[1] < 2 * H, xy = (q) => q[0].toFixed(1) + ' ' + q[1].toFixed(1);
+  const pl = new Array(n), pr = new Array(n);
+  for (let i = 0; i < n; i++) { const a = project(L[i][0], L[i][1], L[i][2]), b = project(Rr[i][0], Rr[i][1], Rr[i][2]); pl[i] = ok(a) ? a : null; pr[i] = ok(b) ? b : null; }
+  let dv = '', dh = '', tag = null, i = 0;
+  while (i < n) { if (!pl[i] || !pr[i]) { i++; continue; } const h = !!hid[i]; let j = i; while (j + 1 < n && pl[j + 1] && pr[j + 1] && !!hid[j + 1] === h) j++;
+    const e = j + 1 < n && pl[j + 1] && pr[j + 1] ? j + 1 : j;                                    // up to the first point of the next part: no gap between them
+    if (e > i) { let d = 'M' + xy(pl[i]); for (let k = i + 1; k <= e; k++) d += 'L' + xy(pl[k]); for (let k = e; k >= i; k--) d += 'L' + xy(pr[k]); d += 'Z'; if (h) dh += d; else dv += d; }
+    if (h && !tag && i > 0 && !hid[i - 1]) tag = [(pl[i][0] + pr[i][0]) / 2, (pl[i][1] + pr[i][1]) / 2];
+    i = j + 1; }
+  ribV.setAttribute('d', dv); ribH.setAttribute('d', dh);
+  let cv = '', ch = '';
+  for (const c of chevrons(R.fine, dist, BAND, 1.0, (performance.now() / 1000 * 0.5) % 1.0)) { const q = c.pts.map((p) => project(p[0], p[1], p[2])); if (!q.every(ok)) continue;
+    const d = 'M' + q.map(xy).join('L') + 'Z'; if (hid[c.i]) ch += d; else cv += d; }
+  chV.setAttribute('d', cv); chH.setAttribute('d', ch);
+  if (tag) { behind.style.display = 'block'; behind.style.transform = `translate(${tag[0].toFixed(0)}px,${tag[1].toFixed(0)}px) translate(-50%,-160%)`; } else behind.style.display = 'none'; }
+function frame() { try { placePins(); if (auto) autoStep(); if (R && R.fine && R.rb) drawBand(); } catch (e) {} requestAnimationFrame(frame); }
 requestAnimationFrame(frame);
 
 function routeTo(id) { const p = byId(id); if (!p) return false; return startRoute(p); }
@@ -187,6 +202,8 @@ const api = window.nammaPoi = { version: 1, admin, onArrive: [],
 
 // ---- admin (?admin=1): drop / edit / move / delete, save to the live tour ----
 let panel = null;
+{ const b = $('nm-adminbtn'); if (b) { b.style.color = admin ? 'var(--nm-acc)' : ''; b.title = admin ? 'Leave admin mode' : 'Admin: places and collision';
+    b.onclick = (e) => { e.stopPropagation(); const u = new URL(location.href); if (admin) u.searchParams.delete('admin'); else u.searchParams.set('admin', '1'); location.href = u.toString(); }; } }
 if (admin) {
   const HUB = 'https://cdn.jsdelivr.net/npm/@huggingface/hub@2.11.2/+esm';                    // as v3/collision_editor.html
   const d = document.createElement('div'); d.id = 'nm-admin'; d.className = 'nm-panel';
@@ -197,6 +214,10 @@ if (admin) {
       <label>Kind<select id="nm-acat">${CATEGORIES.map((c) => `<option value="${c}">${c.charAt(0).toUpperCase() + c.slice(1)}</option>`).join('')}</select></label>
       <label>Note<textarea id="nm-anote" maxlength="400"></textarea></label>
       <div class="r"><button class="nm-pill" id="nm-amove">Move</button><button class="nm-pill" id="nm-atest">Route</button><button class="nm-pill" id="nm-adel">Delete</button></div></div>
+    <div class="sec"><b style="color:var(--nm-light)">Collision</b>
+      <label style="flex-direction:row;align-items:center;gap:8px;cursor:pointer"><input type="checkbox" id="nm-acol" style="width:auto;flex:none">Show what walk mode bumps into (objects and walls)</label>
+      <div class="r"><button class="nm-pill" id="nm-aedit">Collision editor ↗</button></div>
+      <div class="st">The editor works on the published tour (it signs in with Hugging Face and saves to the same link). Republish with "collision" afterwards so routes follow the new shape.</div></div>
     <div class="sec"><div class="r"><button class="nm-pill on" id="nm-apub">Save to the live tour</button><button class="nm-pill" id="nm-adl">Download</button></div>
       <div class="r" id="nm-aauth"><button class="nm-pill" id="nm-ain">Sign in with Hugging Face</button></div>
       <label id="nm-atokl" style="display:none">Or a write token (kept in this browser only)<input id="nm-atok" type="password" autocomplete="off" placeholder="hf_..."></label>
@@ -244,6 +265,12 @@ if (admin) {
   $('nm-atest').onclick = () => { if (sel) routeTo(sel); };
   $('nm-adel').onclick = () => { const p = byId(sel); if (p && confirm(`Delete "${p.name}"?`)) { removePoi(p.id); sel = null; form.style.display = 'none'; mark(); say('Deleted.'); } };
   $('nm-ax').onclick = () => { const u = new URL(location.href); u.searchParams.delete('admin'); location.href = u.toString(); };
+  // collision: the view of what walk mode bumps into (off for visitors since 1 Nov; on for the admin, who edits against it) and the
+  // editor for it (v3/collision_editor.html, published beside the tours as ../editor/)
+  const colI = $('nm-acol'), setCol = (on) => { const vs = window.viewer && window.viewer.state; if (!vs || !vs.hasCollisionOverlay) return false; try { vs.collisionOverlayEnabled = on; } catch (e) { return false; } return true; };
+  colI.onchange = () => { if (!setCol(colI.checked)) { colI.checked = false; say('This tour has no collision view.'); } };
+  { const t0 = Date.now(), k = setInterval(() => { const vs = window.viewer && window.viewer.state; if (vs && vs.loaded && vs.hasCollisionOverlay) { clearInterval(k); colI.checked = setCol(true); } else if (Date.now() - t0 > 90000) clearInterval(k); }, 500); }
+  $('nm-aedit').onclick = () => { window.open(new URL('../editor/index.html', location.href).toString(), '_blank', 'noopener'); };
   panel = { list() { const L = $('nm-alist'); L.textContent = ''; pois.forEach((p) => { const b = document.createElement('button'); b.className = p.id === sel ? 'on' : '';
         b.innerHTML = `<span>${esc(p.name)}</span><small>${esc(p.category)}${p.source === 'ai' ? ' · AI' : ''}${nav && !p.approach ? ' · no route' : ''}</small>`; b.onclick = () => panel.edit(p.id); L.appendChild(b); });
       if (!pois.length) L.innerHTML = '<div class="st">No places yet. Tap to place the first one.</div>'; mark(); },

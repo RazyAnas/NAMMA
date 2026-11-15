@@ -77,8 +77,12 @@ OVERLAY = """<style>
   .nm-pin.far span{display:none} .nm-pin.goal i{animation:nmpulse 1s ease-in-out infinite}
   @keyframes nmpulse{0%{box-shadow:0 0 0 0 rgba(232,169,107,.9)}100%{box-shadow:0 0 0 16px rgba(232,169,107,0)}}
   #nm-path{position:fixed;inset:0;width:100%;height:100%;z-index:8;pointer-events:none}
-  #nm-path path{fill:none;stroke-linecap:round;stroke-linejoin:round}
-  #nm-path .o{stroke:rgba(0,0,0,.45);stroke-width:9} #nm-path .l{stroke:var(--nm-acc);stroke-width:5;stroke-dasharray:14 10;animation:nmdash 1s linear infinite}
+  /* the route: a semi-transparent white band on the floor with arrow heads (rv, cv); the part behind a wall is a dashed
+     ghost (rh, ch) with a tag where it goes out of sight */
+  #nm-path path{stroke-linejoin:round}
+  #nm-path .rv{fill:rgba(255,255,255,.42);stroke:rgba(255,255,255,.9);stroke-width:1.5;filter:drop-shadow(0 1px 5px rgba(0,0,0,.4))} #nm-path .cv{fill:rgba(255,255,255,.97);stroke:none}
+  #nm-path .rh{fill:rgba(255,255,255,.07);stroke:rgba(255,255,255,.8);stroke-width:2;stroke-dasharray:9 8} #nm-path .ch{fill:none;stroke:rgba(255,255,255,.65);stroke-width:1.5;stroke-dasharray:4 5}
+  #nm-behind{position:fixed;left:0;top:0;z-index:9;pointer-events:none;display:none;padding:3px 9px;border-radius:10px;font:600 11px Arial,sans-serif;color:#fff;background:rgba(20,24,30,.74);border:1px dashed rgba(255,255,255,.75);white-space:nowrap}
   @keyframes nmdash{to{stroke-dashoffset:-24}}
   .nm-svg .route{fill:none;stroke:var(--nm-acc);stroke-linecap:round;stroke-linejoin:round;pointer-events:none}
   .nm-svg .poi{fill:#fff;stroke:var(--nm-acc);cursor:pointer} .nm-svg .poi.ai{stroke:#7fc8ff} .nm-svg .poi.goal{fill:var(--nm-acc);stroke:#fff}
@@ -93,6 +97,7 @@ OVERLAY = """<style>
   #nm-admin .r{display:flex;gap:6px;flex-wrap:wrap} #nm-admin .nm-pill{height:30px;padding:0 10px;font-size:12px;flex:1 1 auto} #nm-admin .nm-pill:disabled{opacity:.4;cursor:default}
   #nm-admin input,#nm-admin select,#nm-admin textarea{width:100%;padding:7px 8px;border-radius:8px;border:1px solid rgba(255,255,255,.14);background:rgba(0,0,0,.35);color:#fff;font:12px Arial,sans-serif;outline:none;-webkit-user-select:text;user-select:text}
   #nm-admin textarea{resize:vertical;min-height:44px} #nm-admin label{display:flex;flex-direction:column;gap:3px;color:var(--nm-dark)}
+  #nm-admin>*{flex:none} /* a short window: the panel scrolls, its parts keep their height (the list had shrunk to nothing) */
   #nm-admin .list{display:flex;flex-direction:column;gap:3px;max-height:150px;overflow-y:auto}
   #nm-admin .list button{display:flex;justify-content:space-between;gap:8px;text-align:left;padding:6px 8px;border-radius:8px;border:1px solid rgba(255,255,255,.08);background:rgba(255,255,255,.04);color:var(--nm-text);font:12px Arial,sans-serif;cursor:pointer}
   #nm-admin .list button.on{border-color:var(--nm-acc);color:#fff} #nm-admin .list small{color:var(--nm-dark)}
@@ -112,7 +117,7 @@ OVERLAY = """<style>
   <symbol id="nmCloseIcon" viewBox="0 0 24 24"><path d="M19 6.41 17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/></symbol>
   <symbol id="nmJumpIcon" viewBox="0 0 24 24"><path d="M12 3l6.5 6.5h-4.25V15h-4.5V9.5H5.5L12 3zM5 18h14v2.5H5z"/></symbol>
 </svg>
-<svg id="nm-path" aria-hidden="true"><path class="o"/><path class="l"/></svg>
+<svg id="nm-path" aria-hidden="true"><path class="rh"/><path class="ch"/><path class="rv"/><path class="cv"/></svg><div id="nm-behind">behind this wall</div>
 <div class="nm-ui">
 <div id="nm-pins"></div>
 <div id="nm-route" class="nm-panel"><span class="arr" id="nm-rarr"><svg viewBox="0 0 24 24"><path d="M12 3l7 9h-4.5v9h-5v-9H5z"/></svg></span><span><b id="nm-rname"></b><small id="nm-rdist"></small></span>
@@ -121,6 +126,7 @@ OVERLAY = """<style>
 <div id="nm-find"><div id="nm-hits"></div><input id="nm-q" type="search" placeholder="Search the room: sofa, lamp, bag ..." autocomplete="off"></div>
 <div id="nm-card" class="nm-panel"></div>
 <div id="nm-plan" class="nm-panel"><div class="wrap" id="nm-mini"></div><div class="bar"><span>Floor plan</span><span class="nm-group">
+  <button class="nm-btn" id="nm-adminbtn" title="Admin: places and collision"><svg width="20" height="20" viewBox="0 0 24 24"><path fill="currentColor" d="M3 17.2V21h3.8L17.8 9.9l-3.7-3.7L3 17.2zM20.7 7a1 1 0 000-1.4l-2.3-2.3a1 1 0 00-1.4 0l-1.8 1.8 3.7 3.7L20.7 7z"/></svg></button>
   <button class="nm-btn" id="nm-helpbtn" title="Controls (?)"><svg width="24" height="24"><g class="s"><use href="#nmKeysIcon"/></g><g class="f"><use href="#nmKeysIcon"/></g></svg></button>
   <button class="nm-btn" id="nm-exp" title="Open floor plan"><svg width="20" height="20" viewBox="0 0 24 24"><g class="s"><use href="#nmExpandIcon"/></g><g class="f"><use href="#nmExpandIcon"/></g></svg></button></span></div></div>
 <div id="nm-strip" class="nm-panel"></div>
