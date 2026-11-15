@@ -12,6 +12,7 @@ import android.opengl.EGLExt
 import android.opengl.EGLSurface
 import android.opengl.GLES20
 import android.os.Build
+import android.util.Log
 import android.util.Size
 import com.google.ar.core.ArCoreApk
 import com.google.ar.core.CameraConfig
@@ -54,7 +55,7 @@ class ArRig(private val act: Activity, private val onInfo: (String) -> Unit) {
     @Volatile private var wantFile: File? = null; @Volatile private var wantStop = false
     private val imageQuad: FloatBuffer = CoverageGl.buf(floatArrayOf(0f, 1f, 1f, 1f, 0f, 0f, 1f, 0f))   // the whole camera image, in the screen quad's order
     private val encUv: FloatBuffer = CoverageGl.buf(FloatArray(8))
-    private var firstStamp = 0L
+    private var clockOffset = Long.MIN_VALUE; private var encoded = 0
 
     var cameraId = ""; private set
     var size = Size(1920, 1080); private set
@@ -139,9 +140,10 @@ class ArRig(private val act: Activity, private val onInfo: (String) -> Unit) {
             EGL14.eglChooseConfig(dpy, intArrayOf(EGL14.EGL_CONFIG_ID, id[0], EGL14.EGL_NONE), 0, cfgs, 0, 1, n, 0)
             val es = EGL14.eglCreateWindowSurface(dpy, cfgs[0], m.surface, intArrayOf(EGL14.EGL_NONE), 0)
             check(es != null && es != EGL14.EGL_NO_SURFACE) { "no encoder surface (EGL error 0x${Integer.toHexString(EGL14.eglGetError())})" }
-            m.start(); recorder = m; encSurface = es; firstStamp = 0L
+            m.start(); recorder = m; encSurface = es; clockOffset = Long.MIN_VALUE; encoded = 0
             coverage.clear(); hasPrev = false; turned = 0.0; recording = true
-        } catch (e: Exception) { recorder?.release(); recorder = null; encSurface = null; recording = false; onInfo("Could not start recording: ${e.message}") }
+            Log.i(TAG, "recording ${size.width}x${size.height} ${if (hevc) "hevc" else "h264"} ${bitrate / 1_000_000} Mbps -> ${file.name}")
+        } catch (e: Exception) { Log.e(TAG, "encoder start failed", e); recorder?.release(); recorder = null; encSurface = null; recording = false; onInfo("Could not start recording: ${e.message}") }
     }
 
     private fun encode(f: Frame, gl: CoverageGl, w: Int, h: Int) {
@@ -149,17 +151,21 @@ class ArRig(private val act: Activity, private val onInfo: (String) -> Unit) {
         val dpy = EGL14.eglGetCurrentDisplay(); val ctx = EGL14.eglGetCurrentContext()
         val draw = EGL14.eglGetCurrentSurface(EGL14.EGL_DRAW); val read = EGL14.eglGetCurrentSurface(EGL14.EGL_READ)
         f.transformCoordinates2d(Coordinates2d.IMAGE_NORMALIZED, imageQuad, Coordinates2d.TEXTURE_NORMALIZED, encUv)   // the whole picture, not the screen's crop
-        if (!EGL14.eglMakeCurrent(dpy, es, es, ctx)) return
+        if (!EGL14.eglMakeCurrent(dpy, es, es, ctx)) { if (encoded == 0) Log.e(TAG, "encoder surface not current: 0x${Integer.toHexString(EGL14.eglGetError())}"); return }
         GLES20.glViewport(0, 0, size.width, size.height); gl.background(encUv)
-        if (firstStamp == 0L) firstStamp = f.timestamp
-        EGLExt.eglPresentationTimeANDROID(dpy, es, f.timestamp - firstStamp); EGL14.eglSwapBuffers(dpy, es)
+        // the camera's own frame times, moved onto the clock the recorder started on (System.nanoTime): MediaRecorder drops every
+        // frame stamped before its start, and the camera's clock is a different one (first phone test: 'The recording is empty')
+        if (clockOffset == Long.MIN_VALUE) clockOffset = System.nanoTime() - f.timestamp
+        EGLExt.eglPresentationTimeANDROID(dpy, es, f.timestamp + clockOffset)
+        if (!EGL14.eglSwapBuffers(dpy, es) && encoded == 0) Log.e(TAG, "encoder swap failed: 0x${Integer.toHexString(EGL14.eglGetError())}")
+        encoded++
         EGL14.eglMakeCurrent(dpy, draw, read, ctx); GLES20.glViewport(0, 0, w, h)
     }
 
     private fun stopEncoder() {
         if (!recording) return
         recording = false
-        try { recorder?.stop() } catch (e: RuntimeException) { onInfo("The recording was too short") }
+        try { recorder?.stop(); Log.i(TAG, "recording closed: $encoded frames") } catch (e: RuntimeException) { Log.e(TAG, "recorder stop failed after $encoded frames", e); onInfo("The recording was too short") }
         recorder?.release(); recorder = null
         encSurface?.let { EGL14.eglDestroySurface(EGL14.eglGetCurrentDisplay(), it) }; encSurface = null
         stopped?.invoke()
@@ -232,4 +238,6 @@ class ArRig(private val act: Activity, private val onInfo: (String) -> Unit) {
     }
 
     fun quit() { close(); try { session?.close() } catch (e: Exception) {}; session = null }
+
+    private companion object { const val TAG = "NammaAr" }
 }
