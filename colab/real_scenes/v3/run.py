@@ -452,6 +452,21 @@ if os.path.isdir(f'{W}/{geo[0]}/ckpts') and TL['mesh']:
     if os.path.exists(f'{O}/mesh/mesh.json'): S['mesh'] = json.load(open(f'{O}/mesh/mesh.json'))
     CLK.mark('mesh', t_mesh, ok='mesh' in S)
 elif MESH: say('mesh skipped: not enough time left (the tour uses the room box for walking)'); CLK.note(mesh_skipped=True)
+# the object layer + the search index for the tour's "find anything" (final/objects3d.py, ai_find.region_index; 14.5 min on a
+# T4, 27 Oct), only with OBJECTS=1 and 40 min still left, with a time limit, and never failing the run: the tour works without
+if os.environ.get('OBJECTS') == '1' and os.path.exists(f'{O}/full/model.ply') and os.path.exists(f'{O}/full/level.json'):
+    if budget.tail(CLK.left_h() * 60, mesh=False, objects=True)['objects']:
+        t_ob = time.time(); lim = int((min(budget.TAIL_MIN['objects'] + 15, CLK.left_h() * 60 - budget.TAIL_MIN['base'])) * 60); OB = f'{W}/objects'
+        sh(f'pip install -q -c {W}/pin.txt plyfile open3d scipy accelerate 2>&1 | tail -2; '
+           f'SAM2_BUILD_CUDA=0 pip install -q -c {W}/pin.txt "git+https://github.com/facebookresearch/sam2.git" 2>&1 | tail -2')
+        r_ob = sh(f"cd {EX} && PYTHONPATH={EX}:{F}:$PYTHONPATH timeout -k 30 {lim} python {F}/objects3d.py {D} {O}/full/model.ply {O}/full/level.json 0 {OB} "
+                  f"{int(os.environ.get('OBJECT_FRAMES', 40))} 2>&1 | grep -v 'it/s' | tail -60")
+        if os.path.exists(f'{OB}/objects.json'):                                            # not its tinted full/model.ply
+            for x in ('objects.json', 'objects_sheet.jpg', 'regions.json', 'regions.f16'):
+                if os.path.exists(f'{OB}/{x}'): shutil.copy(f'{OB}/{x}', f'{O}/{x}'); push(f'{O}/{x}', x)
+            shutil.copytree(f'{OB}/crops', f'{O}/crops', dirs_exist_ok=True); S['objects'] = len(json.load(open(f'{O}/objects.json'))['objects'])
+        CLK.mark('objects', t_ob, ok=os.path.exists(f'{O}/objects.json'), objects=S.get('objects'), regions=os.path.exists(f'{O}/regions.f16'))
+    else: say('object layer skipped: under 40 min left'); CLK.note(objects_skipped=True)
 shutil.copytree(f'{D}/sparse', f'{O}/sparse', dirs_exist_ok=True)                        # cameras, so QA can be redone later
 shutil.copytree(f'{D}/images', f'{O}/images', dirs_exist_ok=True)                        # frames, for the tour (cameras need them)
 json.dump(dict(source=SOURCE, sfm=rep, models=S, minutes=round((time.time() - T0) / 60)), open(f'{O}/v3_summary.json', 'w'), indent=1)

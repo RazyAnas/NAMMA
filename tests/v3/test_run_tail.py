@@ -2,7 +2,7 @@
 QA and mesh script instead of the GPU ones: what happens when a trainer finishes, reaches its deadline, hangs or crashes.
 The code under test is run.py's own text from `def start(` to the end; only its waits are shortened (30 s -> 0.2 s etc.).
 Needs torch (checkpoints are real torch files): pytest -q --confcutdir=tests/v3 tests/v3/test_run_tail.py"""
-import glob, json, os, shutil, stat, subprocess, sys, textwrap, time
+import glob, json, os, shutil, subprocess, sys, time
 import pytest
 
 torch = pytest.importorskip('torch'); pytest.importorskip('plyfile')
@@ -52,6 +52,15 @@ json.dump(dict(matrix=[[1, 0, 0, 0], [0, 1, 0, 0], [0, 0, 1, 0], [0, 0, 0, 1]]),
 ply = sorted(glob.glob(f'{res}/ply/point_cloud_*.ply'), key=lambda f: int(f.split('_')[-1][:-4]))
 if ply: shutil.copy(ply[-1], f'{out}/model.ply')
 '''
+# objects3d.py's part: objects.json + crops + the region index, and (like the real one) a tinted full/model.ply in ITS out dir
+OBJECTS = '''
+import json, os, sys, time
+data, ply, level, mpu, out = sys.argv[1:6]; assert float(mpu) == 0 and os.path.exists(ply) and os.path.exists(level)
+time.sleep(float(os.environ.get('FAKE_OBJ_S', 0))); os.makedirs(out + '/crops', exist_ok=True); os.makedirs(out + '/full', exist_ok=True)
+if os.environ.get('FAKE_OBJ_FAIL'): sys.exit(1)
+json.dump(dict(objects=[dict(id=1, label='sofa')]), open(out + '/objects.json', 'w')); open(out + '/crops/1.jpg', 'w').write('c')
+json.dump(dict(count=3), open(out + '/regions.json', 'w')); open(out + '/regions.f16', 'wb').write(b'0' * 6); open(out + '/full/model.ply', 'w').write('TINTED')
+'''
 MESH = '''
 import json, os, sys, time
 time.sleep(float(os.environ.get('FAKE_MESH_S', 0))); os.makedirs(sys.argv[4], exist_ok=True); json.dump(dict(faces=10), open(sys.argv[4] + '/mesh.json', 'w'))
@@ -70,10 +79,10 @@ def run_tail(tmp, variants, train_s, mode='ok', dt=0.01, deadline_h=None, mesh_s
     """run.py's training part in tmp. train_s = seconds from now until the trainers' deadline (TRAIN_END)."""
     W, O, fake, ex, bins = (f'{tmp}/{x}' for x in ('w', 'o', 'fake', 'ex', 'bin'))
     for d in (W, O, fake, ex, bins, f'{W}/data/images', f'{W}/data/sparse/0'): os.makedirs(d, exist_ok=True)
-    open(f'{ex}/simple_trainer.py', 'w').write(TRAINER); open(f'{fake}/v3_qa.py', 'w').write(QA); open(f'{fake}/mesh_tsdf.py', 'w').write(MESH)
+    open(f'{ex}/simple_trainer.py', 'w').write(TRAINER); open(f'{fake}/v3_qa.py', 'w').write(QA); open(f'{fake}/mesh_tsdf.py', 'w').write(MESH); open(f'{fake}/objects3d.py', 'w').write(OBJECTS)
     open(f'{W}/data/images/00000.jpg', 'w').write('x'); open(f'{W}/data/sparse/0/images.bin', 'w').write('x')
     sh_ = lambda name, body: (open(f'{bins}/{name}', 'w').write('#!/bin/sh\n' + body + '\n'), os.chmod(f'{bins}/{name}', 0o755))
-    sh_('python', f'exec "{sys.executable}" "$@"')
+    sh_('python', f'exec "{sys.executable}" "$@"'); sh_('pip', 'exit 0')                      # no installs in a test
     if not shutil.which('timeout'):                                                       # macOS: `timeout -k 30 <s> cmd ...`
         open(f'{bins}/timeout', 'w').write(f'#!{sys.executable}\nimport subprocess, sys\na = sys.argv[1:]\nif a[0] == "-k": a = a[2:]\n'
                                            'try: sys.exit(subprocess.run(a[1:], timeout=float(a[0])).returncode)\nexcept subprocess.TimeoutExpired: sys.exit(124)\n')
@@ -167,3 +176,19 @@ def test_no_model_at_all_fails_loudly(tmp_path, monkeypatch):
     monkeypatch.setitem(globals(), 'TRAINER', 'import sys; sys.exit(3)\n')                    # dies before any checkpoint
     r = run_tail(str(tmp_path), [['full', 300, 1500000]], train_s=600, ngpu=1)
     assert r['err'] and 'V3 FAILED' in r['err'] and stage(r, 'train full')['exit'] == 3
+
+
+def test_object_layer_runs_in_its_time_and_never_touches_the_model(tmp_path):
+    r = run_tail(str(tmp_path), [['full', 60, 1500000]], train_s=600, ngpu=1, env=dict(OBJECTS='1'))
+    O = r['O']; assert r['err'] is None and r['summary']['models']['objects'] == 1 and stage(r, 'objects')['ok'] is True
+    for f in ('objects.json', 'regions.json', 'regions.f16', 'crops/1.jpg'): assert os.path.exists(f'{O}/{f}'), f
+    assert open(f'{O}/full/model.ply', 'rb').read()[:3] == b'ply' and 'regions.f16' in r['pushed']      # not the tinted copy
+
+
+def test_object_layer_failure_or_no_time_does_not_fail_the_run(tmp_path):
+    r = run_tail(str(tmp_path / 'a'), [['full', 60, 1500000]], train_s=600, ngpu=1, env=dict(OBJECTS='1', FAKE_OBJ_FAIL='1'))
+    assert r['err'] is None and 'objects' not in r['summary']['models'] and stage(r, 'objects')['ok'] is False and 'full' in r['summary']['models']
+    r = run_tail(str(tmp_path / 'b'), [['full', 60, 1500000]], train_s=1.0, deadline_h=0.6, ngpu=1, env=dict(OBJECTS='1'))   # 36 min: mesh yes, objects no
+    assert r['err'] is None and r['budget']['objects_skipped'] is True and not os.path.exists(f"{r['O']}/objects.json") and 'mesh' in r['summary']['models']
+    r = run_tail(str(tmp_path / 'c'), [['full', 60, 1500000]], train_s=600, ngpu=1)                       # OBJECTS not set: not run at all
+    assert not os.path.exists(f"{r['O']}/objects.json") and not any(s['stage'] == 'objects' for s in r['budget']['stages'])
