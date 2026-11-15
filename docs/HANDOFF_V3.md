@@ -435,7 +435,7 @@ Rules:
 - **R1:** SfM gets at most ~1,000 frames (`SFM_MAX`), picked by walking time.
 - **R2:** SfM work is saved to `/kaggle/working/sfm_work`.
 - **R3:** train only with proven code paths.
-- **R4:** a full-size dry run plus a time gate (`AUTO_STEPS=1`, ≤ 9 h, else thin more or refuse) before any long training.
+- **R4:** a full-size dry run before any long training (`AUTO_STEPS=1`). Since 16 Nov it no longer refuses: the run is sized to the time left in the session (see "Session time budget" below).
 - **R5:** no mesh for a house (`NO_MESH=1`): collision comes from the floor-plan walls.
 - **R6:** gh_run uploads the model to HF before building the tour.
 
@@ -459,9 +459,28 @@ frame (`final/thin_model.py`, tested byte-identical round trip). The job must us
 Every problem found by hand on the hotel and house tours is now checked (and fixed where possible) by the pipeline itself:
 | What | Where | Rule |
 |---|---|---|
-| Walk collision | `run.py` | every run trains run 4's 2DGS `geo` model beside `full` (55.7 steps/view, timed by the go/no-go); if it cannot fit, the mesh comes from the full model's depth. `MESH_ONLY=1` adds geometry to an existing run (same frames + its level) and `gh_run` starts tour-publish itself |
+| Walk collision | `run.py` | the mesh comes from the full model's depth (`mesh_tsdf.py`), with a 20-minute limit and only if that still fits the session; else the tour walks on the room box. (The 2DGS `geo` model beside `full` and `MESH_ONLY=1` were reverted on 1 Nov, commit b40e616, and are not in the code.) |
 | Clean-up | `gh_run.py` tour step | `final/model_compare.py` cleaned vs trained (12 held-out + 9 off-path views): the cleaned model ships only if >= 40 dB and < 0.1 % pixels changed everywhere |
 | Spots | `make_tour.plan` / `respot` | exact filmed poses; each spot is the frame near its place that sees farthest and is sharp (`pick_spots`); horizontal field of view (the viewer's fov is horizontal on landscape screens; vertical gave a 1.5x zoom). Every page update runs `respot` (refuses if cameras do not match) |
 | Publish safety | `tour_publish.py` | index.js size guard + restore; before uploading, the live state is remembered (`publish_state.json`) |
 | Live check | `scripts/site_look/look.py` ASSERT=1 (tour-publish and every new run) | loads, no script errors, index.js > 1 MB, collision.glb > 100 kB, every spot's view matches its real photo (correlation over the shared field of view >= 0.6; calibrated: good 0.78-0.99, broken -0.02-0.39), walk mode at every spot not blurred (>= 0.5 of the spot view's sharpness; broken 0.32-0.38, good >= 0.71) |
 | Roll back | `tour_publish.py --verify` | live check failed -> the previous version of that link goes back up (or a new link is taken down) and the job fails with the reasons |
+
+
+## Session time budget (16 Nov, branch `claude/smart-budget-poi`; not on the production branch until tested on Kaggle)
+Kaggle stops a session at 12 h. `final/budget.py` gives every stage of `v3/run.py` a share of that and writes what it chose to
+`budget.json` (also on HF). Checked without a GPU by `pytest -q --confcutdir=tests/v3 tests/v3` (replays runs 4, 6 and the house).
+| What | Where | Rule |
+|---|---|---|
+| Deadline | `budget.Clock` | everything done by `DEADLINE_H` (11.25 h); training must end 35 min before that (QA, copies, 20 min of mesh) |
+| Frames | `frames.from_video_smart` | one decode pass keeps 4x the wanted frames as candidates with their sharpness and picture motion; half of the frames follow the motion, half the time (turns get more, pauses fewer); paused seconds do not count as walking; a frame far blurrier than its neighbours is left out. `FRAME_PICK=time` = the old equal time windows; any failure falls back to them |
+| Frame cap | `budget.sfm_max_frames` | `SFM_MAX` (1,000) or what the camera solve is predicted to finish in a quarter of the time left: `4 + 3.7e-5 n^2` minutes (200 -> 5, 600 -> 15, 3,470 -> 456 measured) |
+| Camera solve | `run.py solve()` | time limit (2.2x the prediction + 15 min). No model in time -> 60 % of the frames, once. Broke apart (< 85 % registered or > 1 model) and time allows -> unused candidates around the lost frames are added and it is solved again; kept only if more frames register |
+| Inputs | `run.py` | frames + cameras go to `/kaggle/working/images` + `sparse/0` right after the solve (the layout `REUSE` reads), not after training |
+| Recipe | `budget.fit` | run 4's recipe if the dry run says it fits; else the first rung that does: 70 then 60 steps per view, then 1280 / 1080 / 960 px, then every 2nd / 3rd / 4th frame, last the 7k preview recipe. A changed size is dry-run again. Never NO-GO, never more than run 4 (run 6 and the 3M-splat test showed no gain) |
+| Trainer | `budget_patch.py` | `NM_DEADLINE`: once past it the trainer saves, writes the .ply, evaluates and stops. A checkpoint about every 20 min; each becomes `snapshot/<model>.splat` on HF (older checkpoints deleted). A trainer still running 10 min past the deadline is stopped and its model built from the last checkpoint (`budget.ckpt_to_ply`) |
+| Splat refresh | `run.py start()` | `--strategy.refine-stop-iter` = 25/30 of the steps on runs over 30k steps (removed by the 1 Nov revert; back) |
+| Second T4 | `run.py` | trains the 7k preview beside `full`. `CHALLENGER=<kind>` (off by default) trains one alternative after it; it replaces `full` only if it is 0.2 dB better (exposure-fair) with LPIPS not worse |
+| Test runs | `run.py` | `NAMMA_REF=<branch>` makes the Kaggle job clone that branch instead of the production one |
+Not yet measured on Kaggle: the motion-aware frame choice against the time windows on a real room (quality), the 960 / 1080 / 1280 px rungs
+(speed is scaled from one pair of runs, then re-measured by the second dry run), and the deadline stop on a real trainer.
