@@ -534,6 +534,22 @@ On six real photos of that tour (240 px thumbnails, CLIP ViT-B/32): 5 of 6 prese
 kitchen, fridge, dining table, tripod; the television missed); of 4 absent things 3 refused (giraffe, pool, toilet), 1 wrongly
 found (bed, on a sofa). SAM / Qwen ran in Kaggle test 2 (above): 13 of 15 things found and 3 of 3 absent ones refused at the 0.03 margin. Not run yet: Grounding DINO (the Kaggle agent).
 
+## Smeared edges in a video (16 Nov)
+The owner's first scan uploaded from the live-coverage recorder (inbox job `20261116-132659-2f21`, 349 MB) had the top and
+bottom eighth of every frame smeared. Cause: `ArRig.encode` drew ARCore's CPU image corners (a 4:3 image) onto the 16:9 video,
+so the picture was squeezed to 3/4 of its height and the texture's edge rows repeated above and below. Fixed in the app
+(`core/TexQuad.whole`: the whole camera texture, same orientation; not yet tried on the phone, it was not attached).
+For videos already recorded: `frames.find_bands(video)` (called by `run.py` before any frame is read, `FIX_BANDS=0` turns it
+off) looks at 16 frames for rows that only repeat the edge row (row-to-row change under 0.3 x the change along the row; real
+picture rows are 0.4 or more, measured), needs most frames to agree on the same width (at least 3 % of the picture), then
+every reader cuts the bands off and shrinks the other axis by the squeeze factor (3/4 here), so shapes are right again:
+1920x1080 with bands -> 1440x804. Checked: the bug simulated on run 4's frames through HEVC is found (134 px, 0.75) and the
+restored frames match the originals at 40-42 dB; 5 real videos and 40 sets of clean frames give no bands. Not yet run on the
+owner's own video (no access to it from here): the first job with it shows `smeared edges in the video: ...` in its log and
+`bands` in `budget.json`.
+That inbox job itself: the right video was used (349 MB = 332 MiB), but its Kaggle job `namma-job` was cancelled while still
+queued (`cancel_acknowledged` one minute after `queued`; GitHub run 43877951428), so the job is `failed` and nothing trained.
+
 ## App: live coverage while recording (16 Nov, same branch; `app/android`)
 "Record with live coverage (beta)" (`ScanActivity`): ARCore tracks the phone and measures depth; scanned surfaces are shown under a
 blue plastic-like film that follows the real objects (violet = seen from one direction, deep blue = three or more), with a bright

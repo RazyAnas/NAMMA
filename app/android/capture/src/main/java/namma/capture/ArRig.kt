@@ -25,6 +25,7 @@ import com.google.ar.core.TrackingState
 import com.google.ar.core.exceptions.NotYetAvailableException
 import com.google.ar.core.exceptions.UnavailableException
 import namma.core.Coverage
+import namma.core.TexQuad
 import java.io.File
 import java.nio.ByteOrder
 import java.nio.FloatBuffer
@@ -61,6 +62,7 @@ class ArRig(private val act: Activity, private val onInfo: (String) -> Unit) {
     @Volatile private var wantFile: File? = null; @Volatile private var wantStop = false
     private val imageQuad: FloatBuffer = CoverageGl.buf(floatArrayOf(0f, 1f, 1f, 1f, 0f, 0f, 1f, 0f))   // the whole camera image, in the screen quad's order
     private val encUv: FloatBuffer = CoverageGl.buf(FloatArray(8))
+    private val encArr = FloatArray(8)
     private var clockOffset = Long.MIN_VALUE; private var encoded = 0
 
     var cameraId = ""; private set
@@ -159,7 +161,10 @@ class ArRig(private val act: Activity, private val onInfo: (String) -> Unit) {
         val es = encSurface ?: return
         val dpy = EGL14.eglGetCurrentDisplay(); val ctx = EGL14.eglGetCurrentContext()
         val draw = EGL14.eglGetCurrentSurface(EGL14.EGL_DRAW); val read = EGL14.eglGetCurrentSurface(EGL14.EGL_READ)
-        f.transformCoordinates2d(Coordinates2d.IMAGE_NORMALIZED, imageQuad, Coordinates2d.TEXTURE_NORMALIZED, encUv)   // the whole picture, not the screen's crop
+        // the whole camera texture, turned the way the camera image is (not the screen's crop). The image's corners themselves lie
+        // outside the texture (4:3 image, 16:9 texture): drawn as they are, the video was squeezed with smeared edges (TexQuad)
+        f.transformCoordinates2d(Coordinates2d.IMAGE_NORMALIZED, imageQuad, Coordinates2d.TEXTURE_NORMALIZED, encUv)
+        encUv.position(0); encUv.get(encArr); TexQuad.whole(encArr); encUv.position(0); encUv.put(encArr); encUv.position(0)
         if (!EGL14.eglMakeCurrent(dpy, es, es, ctx)) { if (encoded == 0) Log.e(TAG, "encoder surface not current: 0x${Integer.toHexString(EGL14.eglGetError())}"); return }
         GLES20.glViewport(0, 0, size.width, size.height); gl.background(encUv)
         // the camera's own frame times, moved onto the clock the recorder started on (System.nanoTime): MediaRecorder drops every

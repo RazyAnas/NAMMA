@@ -168,6 +168,10 @@ else:
     t_fr = time.time(); FPS = 30.0; CAP_N = NFRAMES; PICK = None; CAND = f'{W}/cand'
     SMART = NF.startswith('auto') and os.environ.get('FRAME_PICK', 'smart') == 'smart'
     if not os.path.isdir(src): plan_frames(src)
+    if not os.path.isdir(src) and os.environ.get('FIX_BANDS') != '0':                          # a squeezed picture with smeared edges
+        try:                                                                                   # (frames.find_bands): repaired in every reader
+            if frames.find_bands(src): say('smeared edges in the video:', frames.BANDS['bands'], '-> each frame cut to', frames.BANDS['crop'], 'and resized to', frames.BANDS['out'])
+        except Exception as e: say('edge check failed:', str(e)[:160])
     if os.path.isdir(src): n = frames.from_images(src, f'{D}/images', NFRAMES, LONG)
     else:                                                                                      # ffmpeg on all cores; OpenCV if that fails
         n = 0
@@ -186,7 +190,7 @@ else:
         plan_frames(f'{W}/video.mp4'); shutil.rmtree(f'{D}/images', ignore_errors=True); n = frames.from_video(f'{W}/video.mp4', f'{D}/images', NFRAMES, LONG)
     say(n, 'frames ->', f'{D}/images'); assert n >= 20, f'only {n} frames from {src}'
     t_sfm = time.time(); frames_min = round((t_sfm - t_fr) / 60, 1)
-    CLK.mark('frames', t_fr, frames=n, video_frames=VTOT, pick={k: v for k, v in (PICK or dict(mode='time')).items() if k != 'kept'})
+    CLK.mark('frames', t_fr, frames=n, video_frames=VTOT, pick={k: v for k, v in (PICK or dict(mode='time')).items() if k != 'kept'}, bands=frames.BANDS)
 
     # 2 cameras (same hloc venv that solved 574/578 frames of the 22 Oct video)
     E = f'{W}/sfmenv/bin/python'; P = f'--python {E}'
