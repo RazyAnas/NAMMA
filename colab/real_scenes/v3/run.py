@@ -154,6 +154,10 @@ else:
 
     t_fr = time.time()
     if not os.path.isdir(src): plan_frames(src)
+    if not os.path.isdir(src) and os.environ.get('FIX_BANDS') != '0':                          # a squeezed picture with smeared edges
+        try:                                                                                   # (frames.find_bands): repaired in every reader
+            if frames.find_bands(src): say('smeared edges in the video:', frames.BANDS['bands'], '-> each frame cut to', frames.BANDS['crop'], 'and resized to', frames.BANDS['out'])
+        except Exception as e: say('edge check failed:', str(e)[:160])
     if os.path.isdir(src): n = frames.from_images(src, f'{D}/images', NFRAMES, LONG)
     else:                                                                                      # ffmpeg on all cores; OpenCV if that fails
         try: n = frames.from_video_fast(src, f'{D}/images', NFRAMES, LONG, VTOT)

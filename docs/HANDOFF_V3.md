@@ -465,3 +465,15 @@ Every problem found by hand on the hotel and house tours is now checked (and fix
 | Publish safety | `tour_publish.py` | index.js size guard + restore; before uploading, the live state is remembered (`publish_state.json`) |
 | Live check | `scripts/site_look/look.py` ASSERT=1 (tour-publish and every new run) | loads, no script errors, index.js > 1 MB, collision.glb > 100 kB, every spot's view matches its real photo (correlation over the shared field of view >= 0.6; calibrated: good 0.78-0.99, broken -0.02-0.39), walk mode at every spot not blurred (>= 0.5 of the spot view's sharpness; broken 0.32-0.38, good >= 0.71) |
 | Roll back | `tour_publish.py --verify` | live check failed -> the previous version of that link goes back up (or a new link is taken down) and the job fails with the reasons |
+
+## Smeared edges in a video (16 Nov)
+A scan uploaded from the live-coverage recorder (DEV app, branch `claude/smart-budget-poi`; inbox job `20261116-132659-2f21`)
+had the top and bottom eighth of every frame smeared: that recorder drew ARCore's 4:3 image corners onto the 16:9 video, so the
+picture was squeezed to 3/4 of its height and the edge rows repeated above and below (fixed in the app on that branch).
+`frames.find_bands(video)` (called by `run.py` before any frame is read; `FIX_BANDS=0` turns it off) looks at 16 frames for rows
+that only repeat the edge row, needs most frames to agree on the same width (at least 3 % of the picture), and every frame
+reader then cuts the bands off and shrinks the other axis by the squeeze factor: 1920x1080 with bands -> 1440x806, shapes right.
+Checked: the bug simulated on run 4's frames through HEVC is found and the restored frames match the originals at 40-42 dB; 5
+real videos and 40 sets of clean frames give no bands. A job that repairs a video prints `smeared edges in the video: ...`.
+That inbox job used the right video (349 MB = 332 MiB) but its Kaggle job was cancelled while still queued (GitHub run
+43877951428), so it is `failed`; a trigger file with `"retry": true` sends it round again.
