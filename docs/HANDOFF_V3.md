@@ -543,7 +543,7 @@ For videos already recorded: `frames.find_bands(video)` (called by `run.py` befo
 off) looks at 16 frames for rows that only repeat the edge row (row-to-row change under 0.3 x the change along the row; real
 picture rows are 0.4 or more, measured), needs most frames to agree on the same width (at least 3 % of the picture), then
 every reader cuts the bands off and shrinks the other axis by the squeeze factor (3/4 here), so shapes are right again:
-1920x1080 with bands -> 1440x804. Checked: the bug simulated on run 4's frames through HEVC is found (134 px, 0.75) and the
+1920x1080 with bands -> 1440x806. Checked: the bug simulated on run 4's frames through HEVC is found (134 px, 0.75) and the
 restored frames match the originals at 40-42 dB; 5 real videos and 40 sets of clean frames give no bands. Not yet run on the
 owner's own video (no access to it from here): the first job with it shows `smeared edges in the video: ...` in its log and
 `bands` in `budget.json`.
