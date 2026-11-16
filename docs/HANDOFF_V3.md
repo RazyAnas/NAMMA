@@ -549,6 +549,13 @@ owner's own video (no access to it from here): the first job with it shows `smea
 `bands` in `budget.json`.
 That inbox job itself: the right video was used (349 MB = 332 MiB), but its Kaggle job `namma-job` was cancelled while still
 queued (`cancel_acknowledged` one minute after `queued`; GitHub run 43877951428), so the job is `failed` and nothing trained.
+**Retried on 16 Nov with the owner's go-ahead (GitHub run 43905920363, trigger file with `"retry": true`): done.** The repair
+fired on the real video: bands top 134 / bottom 133 px, each frame cut to `[0, 137, 1920, 807]` and resized to 1440x808.
+924 of 934 frames registered in one model at 1.01 px reprojection error with a single focal length (a still-squeezed picture
+would not fit one), 67,549 steps, 1.5M splats, 30.59 dB exposure-fair PSNR, SSIM 0.951, QA pass, mesh built (61 min), 5.8 h
+on Kaggle, tour published to `namma-tour-2`. Looked at in the tour: no bands, round knobs are round, panel labels readable.
+One of the six photo spots ("Spot 2") faces a bare wall. The trainer's exit code was 1 (gsplat's end-of-run camera-path video
+crashed in `traj.py` `splprep`, after the model and metrics were saved); harmless here, same as the run still finishing.
 
 ## App: live coverage while recording (16 Nov, same branch; `app/android`)
 "Record with live coverage (beta)" (`ScanActivity`): ARCore tracks the phone and measures depth; scanned surfaces are shown under a
