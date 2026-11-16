@@ -102,11 +102,21 @@ def test_clock_and_tail(tmp_path):
     c.mark('frames', time.time() - 120, frames=411); c.note(mesh_skipped=True)
     j = json.load(open(tmp_path / 'budget.json'))
     assert j['stages'][0]['stage'] == 'frames' and j['stages'][0]['minutes'] == 2.0 and j['mesh_skipped'] is True
-    assert budget.tail(60, mesh=True) == dict(mesh=True, objects=False, mesh_timeout_min=20)
-    assert budget.tail(27, mesh=True)['mesh'] is False and budget.tail(60, mesh=True, objects=True)['objects'] is True
-    assert budget.tail(34, mesh=True)['mesh'] is True                                       # Kaggle test 1: 34 min left after QA is enough
+    # the mesh: its real time (runs 4 and 5: 35 and 70 min at 411 frames, 512 voxels), the finest grid that fits, a limit to match
+    assert 65 < budget.mesh_minutes(411) < 75 and budget.mesh_minutes(411, 256) < 12
+    t = budget.tail(563, mesh=True, objects=True, frames=411)                              # Kaggle test 2: 9.4 h left, killed at 20 min
+    assert t['mesh_voxels'] == 512 and t['objects'] is True and 170 < t['mesh_timeout_min'] < 180
+    assert budget.tail(120, frames=411)['mesh_voxels'] == 512 and budget.tail(90, frames=411)['mesh_voxels'] == 384
+    assert budget.tail(60, frames=411)['mesh_voxels'] == 384 and budget.tail(30, frames=411)['mesh_voxels'] == 256
+    t = budget.tail(30, frames=411); assert t['mesh'] is True and t['mesh_timeout_min'] == 22  # never past what is left
+    assert budget.tail(20, frames=411) == dict(mesh=False, mesh_voxels=0, mesh_timeout_min=0, objects=False)
+    assert budget.tail(34, frames=150)['mesh_voxels'] == 384                                # Kaggle test 1: 34 min left after QA is enough
+    assert budget.tail(600, frames=411, voxels=300)['mesh_voxels'] == 300                   # MESH_VOXELS is the most, not a must
+    assert budget.tail(600, mesh=False)['mesh'] is False
+    # the object layer is held back first: with 50 min a coarse mesh and the objects, with 40 only the objects
     assert budget.tail(34, mesh=False, objects=True)['objects'] is True and budget.tail(32, mesh=False, objects=True)['objects'] is False
-    assert budget.tail(50, mesh=True, objects=True) == dict(mesh=True, objects=False, mesh_timeout_min=20)
+    t = budget.tail(50, objects=True, frames=411); assert t['objects'] is True and t['mesh_voxels'] == 256 and t['mesh_timeout_min'] == 17
+    t = budget.tail(40, objects=True, frames=411); assert t['objects'] is True and t['mesh'] is False
 
 
 # ---- frames by motion

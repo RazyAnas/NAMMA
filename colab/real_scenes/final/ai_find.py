@@ -73,7 +73,8 @@ def search(q, E, items, top=24, radius=0.4, min_frames=2, floor=0.2, margin=0.03
     (16 Nov) the raw best was the right place for 4 of 10 things, the best margin for 9 of 10. An index without `c` falls back to
     "stands out in this room" (mean + 2.5 x std). The `top` best by margin are grouped by place (agree). found = the best group
     seen from >= min_frames frames; else `near` = the best single region, for "not found, the closest thing is there".
-    Not yet measured on a real region index (SAM crops): `margin` is a first setting."""
+    On a real region index (SAM crops, Kaggle test 2, 16 Nov, 577 regions of a hotel room): 13 of 15 things found, 3 of 3
+    absent ones refused; the two misses (television, coat) had the right region first but only one frame."""
     E = np.asarray(E, np.float32); s = E @ np.asarray(q, np.float32)
     if len(s) == 0: return dict(found=None, near=None, threshold=None)
     c = np.array([it['c'] for it in items], np.float32) if all('c' in it for it in items) else np.full(len(s), float(s.mean() + 2.5 * s.std()) - margin, np.float32)

@@ -441,16 +441,18 @@ if 'challenger' in S and 'full' in S:            # held-out frames (exposure-fai
     if win:
         os.rename(f'{O}/full', f'{O}/full_base'); os.rename(f'{O}/challenger', f'{O}/full'); BEST = 'challenger'
         S['full_base'], S['full'] = S['full'], S.pop('challenger')
-# what still fits before the deadline: QA is done; the mesh only with its 20 min + the copies behind it (else the tour walks on
-# the room box, make_tour.room_collision)
-TL = budget.tail(CLK.left_h() * 60, mesh=MESH); say(f'{CLK.left_h() * 60:.0f} min left ->', TL)
+# what still fits before the deadline: QA is done; the mesh on the finest grid its predicted time allows (budget.mesh_minutes),
+# after the object layer's share if that was asked for (else the tour walks on the room box, make_tour.room_collision)
+NIMG = len(os.listdir(f'{D}/images'))
+TL = budget.tail(CLK.left_h() * 60, mesh=MESH, objects=os.environ.get('OBJECTS') == '1', frames=NIMG, voxels=int(os.environ.get('MESH_VOXELS', 512)))
+say(f'{CLK.left_h() * 60:.0f} min left, {NIMG} frames ->', TL)
 # the mould: a solid mesh in the same coordinates as full/model.splat, from the 2DGS model if one was trained, else the full model
 geo = next(([v[0], '2dgs'] for v in VARIANTS if len(v) > 3 and v[3] == '2dgs'), [BEST, '3dgs'])
 if os.path.isdir(f'{W}/{geo[0]}/ckpts') and TL['mesh']:
     t_mesh = time.time()
-    sh(f"cd {EX} && timeout -k 30 {TL['mesh_timeout_min'] * 60} python {F}/mesh_tsdf.py {EX} {D} {W}/{geo[0]} {O}/mesh {O}/full/level.json {geo[1]} {os.environ.get('MESH_VOXELS', 512)}")
+    sh(f"cd {EX} && timeout -k 30 {int(TL['mesh_timeout_min'] * 60)} python {F}/mesh_tsdf.py {EX} {D} {W}/{geo[0]} {O}/mesh {O}/full/level.json {geo[1]} {TL['mesh_voxels']}")
     if os.path.exists(f'{O}/mesh/mesh.json'): S['mesh'] = json.load(open(f'{O}/mesh/mesh.json'))
-    CLK.mark('mesh', t_mesh, ok='mesh' in S)
+    CLK.mark('mesh', t_mesh, ok='mesh' in S, voxels=TL['mesh_voxels'], limit_min=TL['mesh_timeout_min'], predicted_min=round(budget.mesh_minutes(NIMG, TL['mesh_voxels']), 1))
 elif MESH: say('mesh skipped: not enough time left (the tour uses the room box for walking)'); CLK.note(mesh_skipped=True)
 # the object layer + the search index for the tour's "find anything" (final/objects3d.py, ai_find.region_index; 14.5 min on a
 # T4, 27 Oct), only with OBJECTS=1 and 33 min still left, with a time limit, and never failing the run: the tour works without

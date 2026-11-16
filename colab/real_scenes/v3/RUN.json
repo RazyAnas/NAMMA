@@ -1,17 +1,14 @@
 {
- "n": 21,
+ "n": 19,
  "collect": false,
- "source": "dl3dv:389a460ca1995e0658e85fe8e6b520b4e88b370cd6710dfe728b1564bba31aee",
- "dl3dv_res": "images_2",
- "kernel": "namma-budget-test",
+ "source": "reuse:namma-house-train",
+ "kernel": "namma-house-train2",
  "env": {
-  "NAMMA_REF": "claude/smart-budget-poi",
+  "THIN": "1",
   "AUTO_STEPS": "1",
-  "NFRAMES": "420",
-  "LONG": "1440",
-  "OBJECTS": "1"
+  "LONG": "1440"
  },
- "scene": "DL3DV hotel room (run 4's scene), its 420 extracted frames at 1440 px: run 4's inputs",
+ "scene": "DL3DV-ALL-video 10K/d961728d...: whole house, 17 min, 8 GB (test video, non-commercial data, testing only)",
  "how": "change n (and source) and push to start a run: .github/workflows/namma-v3.yml -> gh_run.py",
- "note": "budget test 2 of 2 (16 Nov, started by hand from claude/smart-budget-poi, own kernel): run 4's inputs through the sized path (dry run, plan, preview on the second T4, checkpoints), then mesh, the object layer and the search index. To match: run 4's 29.22 dB exposure-fair"
+ "note": "whole house retrained (owner, 1 Nov): same 982 frames + cameras + run 4 recipe, with the MCMC refine stop scaled to the steps (the first house model refreshed splats only until 25k of 71.8k steps: 69 % dead, blobby); 2DGS geometry beside it for collision; tour + live check at the end"
 }

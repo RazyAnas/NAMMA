@@ -459,7 +459,7 @@ frame (`final/thin_model.py`, tested byte-identical round trip). The job must us
 Every problem found by hand on the hotel and house tours is now checked (and fixed where possible) by the pipeline itself:
 | What | Where | Rule |
 |---|---|---|
-| Walk collision | `run.py` | the mesh comes from the full model's depth (`mesh_tsdf.py`), with a 20-minute limit and only if that still fits the session; else the tour walks on the room box. (The 2DGS `geo` model beside `full` and `MESH_ONLY=1` were reverted on 1 Nov, commit b40e616, and are not in the code.) |
+| Walk collision | `run.py` | the mesh comes from the full model's depth (`mesh_tsdf.py`), on the finest grid (512, 384 or 256 voxels) whose predicted time fits what is left (`budget.mesh_minutes`: 35-70 min at 411 frames and 512 voxels, runs 4 and 5), with a time limit of 2.5 x that; if `OBJECTS=1`, the object layer's 25 min are held back first; with no room for a mesh the tour walks on the room box. (The 2DGS `geo` model beside `full` and `MESH_ONLY=1` were reverted on 1 Nov, commit b40e616, and are not in the code.) |
 | Clean-up | `gh_run.py` tour step | `final/model_compare.py` cleaned vs trained (12 held-out + 9 off-path views): the cleaned model ships only if >= 40 dB and < 0.1 % pixels changed everywhere |
 | Spots | `make_tour.plan` / `respot` | exact filmed poses; each spot is the frame near its place that sees farthest and is sharp (`pick_spots`); horizontal field of view (the viewer's fov is horizontal on landscape screens; vertical gave a 1.5x zoom). Every page update runs `respot` (refuses if cameras do not match) |
 | Publish safety | `tour_publish.py` | index.js size guard + restore; before uploading, the live state is remembered (`publish_state.json`) |
@@ -490,6 +490,22 @@ fair, 1M splats), tour built and published; job done at 0.58 h. Two faults it sh
 minute (34 left of 35 asked, though QA was already done), and nothing was sent to HF while the job ran because `kaggle:` sources
 never set the upload up (so the snapshots stayed in the job's output). Sending to HF from Kaggle still needs the Kaggle secret
 HF_TOKEN on that kernel.
+
+Kaggle test 2 (16 Nov, GitHub run 43776362477, results `20261115-2345`, same kernel): run 4's inputs (dl3dv 389a460c, images_2,
+420 frames, 1440 px) through the sized path with `OBJECTS=1`. Cameras 411/411, 10.5 min (predicted 10.3). Dry run 0.1663 s/step
+-> PLAN `run 4 recipe`, 30,012 steps, predicted 1.53 h; trained in 92.1 min (1.535 h). Preview (7k, second T4) done at 0.56 h.
+Snapshots at steps 7,216 / 14,432 / 21,648. **Held-out 29.24 dB exposure-fair / SSIM 0.930 / LPIPS 0.211 (run 4: 29.22 / 0.934 /
+0.202)**, 1.5M splats, needles 13.7 % (run 4: 12.7 %; `pass` is false for both, it asks for under 10 %). Object layer: 15
+objects, region index 577 regions of 646 masks in 40 frames, 7.8 min with installs. Job done at 2.33 h; tour built with the
+index and published (first Space full -> `namma-tour-2`; link in the private dataset, `tour_url.txt`).
+One fault, fixed, not yet re-run on Kaggle: the mesh was killed by its fixed 20-minute limit with 9.4 h left (the same mesh took
+35 min in run 4 and 70 min in run 5), so this tour walks on the room box. The limit now follows the measured time (table above).
+Still open: `Kaggle secret HF_TOKEN not available` on this kernel, so nothing was sent to HF while the job ran.
+The region index measured for the first time (`ai_find.search`, full-precision CLIP text, this run's index): found suitcase,
+lamp, bed, couch, picture frame, air conditioner, pillow, curtain, door, window, table, fridge, toilet (the photos behind
+toilet, fridge, bed, lamp, couch and door were looked at: all there); missed television and coat (the nearest region was the
+right one both times, but only one frame agreed); refused giraffe, swimming pool, bicycle. Not measured: the page's quantized
+text model on this index. The object layer itself named two floor lamps "couch" (Qwen); the search still finds them as lamps.
 Not yet measured on Kaggle: the motion-aware frame choice against the time windows on the same room (quality), the 960 / 1080 /
 1280 px rungs (speed is scaled from one pair of runs, then re-measured by the second dry run).
 
@@ -516,7 +532,7 @@ Measured: 51 Python tests (`pytest -q --confcutdir=tests/v3 tests/v3`) and 11 JS
 search against the Python reference. Checked in a browser on a local copy of the house tour: pins, route, arrival, admin edits.
 On six real photos of that tour (240 px thumbnails, CLIP ViT-B/32): 5 of 6 present things found at the right spot (sofa,
 kitchen, fridge, dining table, tripod; the television missed); of 4 absent things 3 refused (giraffe, pool, toilet), 1 wrongly
-found (bed, on a sofa). Not run yet: SAM / Qwen / Grounding DINO (Kaggle only), so the 0.03 margin is a first setting.
+found (bed, on a sofa). SAM / Qwen ran in Kaggle test 2 (above): 13 of 15 things found and 3 of 3 absent ones refused at the 0.03 margin. Not run yet: Grounding DINO (the Kaggle agent).
 
 ## App: live coverage while recording (16 Nov, same branch; `app/android`)
 "Record with live coverage (beta)" (`ScanActivity`): ARCore tracks the phone and measures depth; scanned surfaces are shown under a

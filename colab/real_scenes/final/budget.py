@@ -19,8 +19,11 @@ MARGIN = 1.1                                   # predicted training time x this 
 MEM_GB = 13.0                                  # of a T4's 15 GB
 R4 = dict(steps_per_view=83.6, splats=1_500_000, area_m2=37.0, long=1440, s_per_step=0.1815, per_second=411 / 123.3)
 PREVIEW = dict(steps=7000, long=960, cap=1_000_000)       # run 2's preview: 10 min on a T4, 26.8 dB
-TAIL_MIN = dict(base=15, mesh=20, objects=25, after=8)    # QA + copies + uploads; mesh_tsdf's limit; objects3d (14.5 min, 27 Oct);
-                                                          # after = copies + uploads alone, once QA is done
+TAIL_MIN = dict(base=15, mesh=20, objects=25, after=8)    # QA + copies + uploads; the time held back for a mesh (enough for a
+                                                          # coarse one: mesh_minutes; a finer one runs when more is left);
+                                                          # objects3d (14.5 min, 27 Oct); after = copies + uploads alone
+MESH_VOX = (512, 384, 256)                     # voxels on the mesh grid's long side, best first
+MESH_FLOOR_MIN = 30                            # a mesh's time limit is never shorter than this (if that much is left)
 SFM_MAX = 1000                                 # frames: runs 4 / 6 / house solved 411 / 900 / 982 in one piece
 
 
@@ -135,13 +138,26 @@ class Clock:
         except Exception as e: print('budget.json not written:', str(e)[:120], flush=True)
 
 
-def tail(left_min, mesh=True, objects=False):
-    """What still runs after training and QA with left_min minutes to the deadline: the mesh and the object layer, each only if
-    it fits with the copies and uploads behind it. (QA is done by now: asking for its minutes again skipped the mesh of a run
-    whose trainer had stopped exactly on its deadline, 34 min left of the 35 reserved; Kaggle test 1, 16 Nov.)"""
-    m = bool(mesh) and left_min >= TAIL_MIN['after'] + TAIL_MIN['mesh']
-    o = bool(objects) and left_min >= TAIL_MIN['after'] + (TAIL_MIN['mesh'] if m else 0) + TAIL_MIN['objects']
-    return dict(mesh=m, objects=o, mesh_timeout_min=TAIL_MIN['mesh'] if m else 0)
+def mesh_minutes(frames, voxels=512):
+    """mesh_tsdf.py on a T4, minutes: every voxel is projected into every camera. Measured at 512 voxels and 411 frames:
+    35 min (run 4, from a 2DGS model, 59 % of the voxels seen) and 70 min (run 5, from the 3DGS model, 74 %); the 3DGS figure
+    is used. (A fixed 20 min limit killed the mesh of Kaggle test 2 with 9 h to spare, 16 Nov.)"""
+    return 2.0 + 68.0 * frames / 411 * (voxels / 512) ** 3
+
+
+def tail(left_min, mesh=True, objects=False, frames=411, voxels=512):
+    """What still runs after training and QA with left_min minutes to the deadline. (QA is done by now: asking for its minutes
+    again skipped the mesh of a run whose trainer had stopped exactly on its deadline; Kaggle test 1, 16 Nov.)
+      objects  the object layer + search index, if its 25 min fit before the copies and uploads. Asked for, it is held back
+               first: the tour walks on the room box without a mesh, but has no "find anything" without the index
+      mesh     the finest grid (voxels, then 384, 256) whose predicted time x 1.3 fits in what is left after that; its time
+               limit is 2.5 x the prediction (at least MESH_FLOOR_MIN), never more than what is left"""
+    o = bool(objects) and left_min >= TAIL_MIN['after'] + TAIL_MIN['objects']
+    spare = left_min - TAIL_MIN['after'] - (TAIL_MIN['objects'] if o else 0)
+    ladder = sorted({v for v in (voxels,) + MESH_VOX if v <= voxels}, reverse=True)
+    vox = next((v for v in ladder if mesh_minutes(frames, v) * 1.3 <= spare), 0) if mesh else 0
+    limit = min(spare, max(MESH_FLOOR_MIN, 2.5 * mesh_minutes(frames, vox))) if vox else 0
+    return dict(mesh=bool(vox), mesh_voxels=vox, mesh_timeout_min=round(limit, 2), objects=o)
 
 
 # ---- checkpoints (torch only here; the planner above needs none)

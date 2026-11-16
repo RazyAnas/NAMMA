@@ -153,15 +153,16 @@ def test_crashed_trainer_is_salvaged_from_its_checkpoint(tmp_path, monkeypatch):
     assert stage(r, 'train full')['salvaged_step'] == 80 and os.path.exists(f"{r['O']}/full/model.ply")
 
 
-def test_no_time_left_skips_the_mesh_and_a_late_queue(tmp_path):
-    # 0.5 h deadline already 20 min old in spirit: left < 35 min -> no mesh; the second model is not started 15 min before the deadline
+def test_no_time_left_skips_the_mesh_and_a_late_queue(tmp_path, monkeypatch):
+    # 24 min to the deadline and a scene whose coarsest mesh needs 40: no mesh; the second model is not started 15 min before the deadline
+    monkeypatch.setattr(budget, 'mesh_minutes', lambda frames, voxels=512: 40.0)
     r = run_tail(str(tmp_path), [['full', 60, 1500000], ['extra', 60, 1500000]], train_s=0.5, deadline_h=0.4, ngpu=1)
     assert r['err'] is None and set(r['summary']['models']) == {'full'} and r['budget']['mesh_skipped'] is True
     assert not os.path.exists(f"{r['O']}/mesh") and not os.path.exists(f"{r['O']}/extra")
 
 
 def test_slow_mesh_is_cut_off(tmp_path, monkeypatch):
-    monkeypatch.setitem(budget.TAIL_MIN, 'mesh', 0.02)                                         # 1.2 s limit, the mesh takes 20 s
+    monkeypatch.setattr(budget, 'mesh_minutes', lambda frames, voxels=512: 0.008); monkeypatch.setattr(budget, 'MESH_FLOOR_MIN', 0.02)   # 1.2 s limit, the mesh takes 20 s
     r = run_tail(str(tmp_path), [['full', 60, 1500000]], train_s=600, mesh_s=20, ngpu=1)
     assert r['err'] is None and 'mesh' not in r['summary']['models'] and stage(r, 'mesh')['ok'] is False and r['seconds'] < 15
 
