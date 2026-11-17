@@ -35,6 +35,7 @@ OVERLAY = """<style>
   #nm-plan .bar{display:flex;justify-content:space-between;align-items:center;padding:4px 2px 0 6px;font-size:12px}
   .nm-svg{display:block;width:100%;height:auto;background:#141414}
   .nm-svg .wall{stroke:var(--nm-wall);stroke-linecap:square;fill:none}
+  .nm-svg .wall.open{stroke-linecap:butt;opacity:.55}
   .nm-svg .spot{fill:var(--nm-acc);stroke:#fff;stroke-width:2;cursor:pointer} .nm-svg .spot:hover{fill:#ffc58a}
   .nm-svg .lbl{fill:#fff;font:bold 13px Arial,sans-serif;paint-order:stroke;stroke:rgba(0,0,0,.7);stroke-width:3px}
   .nm-svg .me{fill:var(--nm-acc);stroke:#fff;stroke-width:2} .nm-svg .cone{fill:var(--nm-acc);opacity:.5}
@@ -141,6 +142,10 @@ OVERLAY = """<style>
   const o = await (await fetch('./overlay.json')).json(); const f = o.floor;
   let wj = null; try { wj = await (await fetch('./walls.json')).json(); } catch (e) {}
   const walls = (wj && wj.walls) || [], H = (wj && wj.height) || 2.5;
+  const openW = (wj && wj.open) || [], outline = (wj && wj.outline && wj.outline.length > 2) ? wj.outline : null;   // sides never filmed; the closed outline
+  const inOutline = (x, z) => { if (!outline) return true; let c = false;                    // inside the room's outline (even-odd)
+    for (let i = 0, j = outline.length - 1; i < outline.length; j = i++) { const a = outline[i], b = outline[j];
+      if ((a[1] > z) !== (b[1] > z) && x < (b[0] - a[0]) * (z - a[1]) / (b[1] - a[1]) + a[0]) c = !c; } return c; };
   const box = (wj && wj.box) || [f.x0, 0, f.z0, f.x0 + f.w / f.px, H, f.z0 + f.h / f.px];
   const go = (i) => { try { window.viewer.selectAnnotation(i); } catch (e) {} };
   const P = (x, z) => [(x - f.x0) * f.px, (z - f.z0) * f.px];                              // room metres -> floor-plan pixels
@@ -150,6 +155,8 @@ OVERLAY = """<style>
     const sv = el('svg', { viewBox: `0 0 ${f.w} ${f.h}`, class: 'nm-svg', preserveAspectRatio: 'xMidYMid meet' });
     el('image', { href: './floorplan.png', x: 0, y: 0, width: f.w, height: f.h, opacity: 0.42 }, sv);
     walls.forEach(w => { const [a, b] = P(w[0], w[1]), [c, d] = P(w[2], w[3]); el('line', { x1: a, y1: b, x2: c, y2: d, class: 'wall', 'stroke-width': Math.max(4, 0.13 * f.px) }, sv); });
+    openW.forEach(w => { const [a, b] = P(w[0], w[1]), [c, d] = P(w[2], w[3]), t = Math.max(2, 0.05 * f.px);   // not filmed: a thin dashed side, never a solid wall
+      el('line', { x1: a, y1: b, x2: c, y2: d, class: 'wall open', 'stroke-width': t, 'stroke-dasharray': `${3 * t} ${3 * t}` }, sv); });
     const r = Math.max(7, 0.16 * f.px) * (big ? 1 : 1.25);
     o.spots.forEach((s, i) => { const [x, y] = P(s.x, s.z); const c = el('circle', { cx: x, cy: y, r, class: 'spot' }, sv); c.onclick = (e) => { e.stopPropagation(); go(i); closeFp(); };
       if (big) { const t = el('text', { x, y: y - r - 6, 'text-anchor': 'middle', class: 'lbl' }, sv); t.textContent = s.title; } });
@@ -194,6 +201,8 @@ OVERLAY = """<style>
         const mx = (a[0] + b[0]) / 2 - (w[0] + w[2]) / 2, mz = (a[1] + b[1]) / 2 - (w[1] + w[3]) / 2, lit = 0.72 + 0.28 * Math.abs((mx * cy_ - mz * sy) / (Math.hypot(mx, mz) || 1));
         faces.push({ q, d: q.reduce((s, p) => s + p[2], 0) / 4, col: `rgb(${Math.round(225 * lit)},${Math.round(217 * lit)},${Math.round(200 * lit)})` }); }
       const top = c.map(p => pr(p[0], WH, p[1])); faces.push({ q: top, d: top.reduce((s, p) => s + p[2], 0) / 4 + 0.01, col: '#f4ede0' }); });
+    g.save(); g.setLineDash([7, 7]); g.lineWidth = 2; g.strokeStyle = '#e1d9c8aa';               // sides never filmed: dashed on the floor
+    openW.forEach(w => { const a = pr(w[0], 0, w[1]), b = pr(w[2], 0, w[3]); g.beginPath(); g.moveTo(a[0], a[1]); g.lineTo(b[0], b[1]); g.stroke(); }); g.restore();
     faces.sort((a, b) => a.d - b.d).forEach(F => { g.beginPath(); F.q.forEach((p, i) => i ? g.lineTo(p[0], p[1]) : g.moveTo(p[0], p[1])); g.closePath(); g.fillStyle = F.col; g.fill(); g.strokeStyle = '#00000022'; g.stroke(); });
     dots3d = o.spots.map((s, i) => { const p = pr(s.x, 1.0, s.z); g.beginPath(); g.arc(p[0], p[1], 9, 0, 7); g.fillStyle = '#e8a96b'; g.fill(); g.lineWidth = 2; g.strokeStyle = '#fff'; g.stroke();
       g.font = 'bold 12px Arial, sans-serif'; g.textAlign = 'center'; g.lineWidth = 3; g.strokeStyle = '#000b'; g.strokeText(s.title, p[0], p[1] - 14); g.fillStyle = '#fff'; g.fillText(s.title, p[0], p[1] - 14);
@@ -210,7 +219,7 @@ OVERLAY = """<style>
   addEventListener('keydown', e => { if (e.key === 'Escape') { closeFp(); closeHelp(); } }, true);
   setInterval(() => { putMe(mini); if (fp.style.display === 'flex') putMe(big); }, 150);
   // walk mode stands on the floor inside the room: entered from outside (orbit / fly), it first goes to the nearest spot
-  const inRoom = (c) => c && c.x > box[0] + 0.15 && c.x < box[3] - 0.15 && c.z > box[2] + 0.15 && c.z < box[5] - 0.15 && c.y > 0.4 && c.y < Math.min(box[4] - 0.2, 2.4);
+  const inRoom = (c) => c && c.x > box[0] + 0.15 && c.x < box[3] - 0.15 && c.z > box[2] + 0.15 && c.z < box[5] - 0.15 && c.y > 0.4 && c.y < Math.min(box[4] - 0.2, 2.4) && inOutline(c.x, c.z);
   let fixing = false;
   const hookWalk = () => { const v = window.viewer; if (!v || !v.events) return setTimeout(hookWalk, 300);
     v.events.on('cameraMode:changed', (m) => { if (m !== 'walk' || fixing) return; const c = camState(); if (inRoom(c)) return;
@@ -334,49 +343,178 @@ def euler_xyz(M):
     from scipy.spatial.transform import Rotation
     return Rotation.from_matrix(M).as_euler('xyz', degrees=True)
 
-def walls2d(Q, a, lo, hi, h, res=0.04):
-    """Straight walls for the floor plan (2D lines, 3D solid walls in the tour): where splats stack up above furniture height
-    (0.55-0.92 x room height, so beds, sofas and tables drop out), Hough lines along the room's two main directions, merged per
-    wall. Metres in room coordinates, [[x0, z0, x1, z1], ...]; falls back to the room box when fewer than 3 walls are found."""
-    import cv2
+def _runs(m):
+    """[(start, end)] of the True runs of a 1D bool array (end exclusive)."""
+    d = np.diff(np.r_[0, m.astype(np.int8), 0]); return list(zip(np.flatnonzero(d == 1), np.flatnonzero(d == -1)))
+
+
+def _close(m, n):
+    """1D closing (gaps shorter than n cells filled) that leaves the two ends of the array alone."""
     from scipy import ndimage
-    box = [[lo[0], lo[2], hi[0], lo[2]], [hi[0], lo[2], hi[0], hi[2]], [hi[0], hi[2], lo[0], hi[2]], [lo[0], hi[2], lo[0], lo[2]]]
-    m = (Q[:, 1] > 0.55 * h) & (Q[:, 1] < 0.92 * h) & (a > 0.2) & np.all((Q[:, [0, 2]] >= lo[[0, 2]]) & (Q[:, [0, 2]] <= hi[[0, 2]]), 1)
-    W, H = int((hi[0] - lo[0]) / res) + 1, int((hi[2] - lo[2]) / res) + 1
-    if m.sum() < 1000: return [[round(float(v), 3) for v in w] for w in box], 'box'
-    g, _, _ = np.histogram2d(((Q[m, 2] - lo[2]) / res).astype(int), ((Q[m, 0] - lo[0]) / res).astype(int), bins=(H, W), range=((0, H), (0, W)), weights=a[m])
-    g = ndimage.gaussian_filter(g, 1.0); nz = g[g > 0]; mask = g > max(0.1 * np.percentile(nz, 99), 4 * np.median(nz))   # above floaters
-    mask = ndimage.binary_closing(mask, iterations=2); lab, n = ndimage.label(mask)
-    if n: mask &= np.isin(lab, 1 + np.flatnonzero(ndimage.sum(mask, lab, range(1, n + 1)) >= 0.5 / res))
-    L = cv2.HoughLinesP(mask.astype(np.uint8) * 255, 1, np.pi / 360, int(0.4 / res), minLineLength=int(0.6 / res), maxLineGap=int(0.35 / res))
-    if L is None: return [[round(float(v), 3) for v in w] for w in box], 'box'
-    L = L.reshape(-1, 4).astype(float); d = L[:, 2:] - L[:, :2]; ln = np.hypot(d[:, 0], d[:, 1]); ang = np.arctan2(d[:, 1], d[:, 0]) % (np.pi / 2)
-    th = np.angle(np.sum(ln * np.exp(4j * ang))) / 4                                         # the room's main direction (mod 90 deg)
-    walls = []
-    for k in range(2):
-        u = np.array([np.cos(th + k * np.pi / 2), np.sin(th + k * np.pi / 2)]); v = np.array([-u[1], u[0]])
-        off = (np.arctan2(d[:, 1], d[:, 0]) - (th + k * np.pi / 2) + np.pi / 2) % np.pi - np.pi / 2
-        sel = np.abs(off) < np.radians(6)
-        if not sel.any(): continue
-        c = (L[sel, :2] + L[sel, 2:]) / 2; vv = c @ v; a0, a1 = L[sel, :2] @ u, L[sel, 2:] @ u; lens = ln[sel]
-        order = np.argsort(vv); groups, cur = [], [order[0]]
-        for i in order[1:]:                                                                   # lines within 12 cm across = one wall
-            if vv[i] - vv[cur[-1]] < 0.12 / res: cur.append(i)
-            else: groups.append(cur); cur = [i]
-        groups.append(cur)
-        for gi in groups:
-            off_v = float(np.average(vv[gi], weights=lens[gi])); iv = sorted((min(a0[i], a1[i]), max(a0[i], a1[i])) for i in gi)
-            s0, s1 = iv[0]
-            for x0, x1 in iv[1:] + [(1e18, 1e18)]:                                            # merge pieces with gaps < 40 cm
-                if x0 - s1 < 0.4 / res: s1 = max(s1, x1); continue
-                p0, p1 = s0 * u + off_v * v, s1 * u + off_v * v
-                t = np.linspace(0, 1, max(2, int(s1 - s0))); pr = (p0[None] + t[:, None] * (p1 - p0)[None]).round().astype(int)
-                near = ndimage.binary_dilation(mask, iterations=2)[np.clip(pr[:, 1], 0, H - 1), np.clip(pr[:, 0], 0, W - 1)]
-                if (s1 - s0) * res >= 0.5 and near.mean() >= 0.6:                             # a real wall: mostly on wall pixels
-                    walls.append([round(float(lo[0] + p0[0] * res), 3), round(float(lo[2] + p0[1] * res), 3),
-                                  round(float(lo[0] + p1[0] * res), 3), round(float(lo[2] + p1[1] * res), 3)])
-                s0, s1 = x0, x1
-    return (walls, 'hough') if len(walls) >= 3 else ([[round(float(v), 3) for v in w] for w in box], 'box')
+    return ndimage.binary_closing(np.pad(m, n, mode='edge'), np.ones(n, bool))[n:-n] if n > 1 and len(m) else m
+
+
+def walls_cells(Q, a, lo, hi, h, path=None, res=0.05):
+    """The room's outline and walls for the floor plan, the 3D plan, walk collision and routes. Returns dict(walls, open,
+    outline, yaw, source): `walls` = solid walls [[x0, z0, x1, z1]] in room metres, `open` = sides of the outline where no wall
+    was filmed (drawn dashed, no collision), `outline` = the closed outline [[x, z], ...].
+
+    Why not lines in the band under the ceiling (the 16 Nov switch room: every cable tray became a wall, nothing closed): a
+    wall is the only thing that fills the height from knee to ceiling. Measured on that room's published splat, cells where
+    >= 5 of 8 height slices (0.3 m .. 0.9 x height) hold splats trace a closed 5.6 x 3.5 m rectangle; trays, lamps and the fan
+    fill 1-2 slices. Steps: 1 main direction (the turn at which the mask's cells pile into the fewest rows and columns), work
+    in a frame turned to it; 2 wall mask;
+    3 inside = flood fill from the filmed walk over seen floor, stopped by walls (seen floor bounds it where a side was never
+    filmed); 4 wall lines = peaks of the wall mask along both axes + the inside area's own extent; they cut the plan into
+    rectangles, a rectangle is inside when more than half of it is; the outline is the border of the inside rectangles, so
+    it is closed and right-angled by construction; 5 a border is a solid wall where the wall mask backs it (gaps < 1.2 m
+    bridged), otherwise 'open'; a line between two inside rectangles is a wall where the mask backs >= 1 m of it; the walk
+    cuts a 0.9 m door into any wall it crosses. None when there is too little to go on (the caller draws the room box)."""
+    from scipy import ndimage
+    ok = (a > 0.2) & np.all((Q[:, [0, 2]] >= lo[[0, 2]]) & (Q[:, [0, 2]] <= hi[[0, 2]]), 1); P = Q[ok]
+    if len(P) < 1000: return None
+    path = np.zeros((0, 3)) if path is None else np.asarray(path, float).reshape(-1, 3)
+    if len(path): path = path[np.abs(path[:, 1] - np.median(path[:, 1])) < 0.6]             # this storey only (a house with stairs)
+    ys = np.linspace(0.3, min(0.9 * h, 2.6), 9); c0 = (lo[[0, 2]] + hi[[0, 2]]) / 2
+
+    def masks(uv, u0, shape):
+        ij = ((uv - u0) / res).astype(int); inb = np.all((ij >= 0) & (ij < shape), 1); ij = ij[inb]; y = P[inb, 1]
+        occ = lambda m: np.bincount(ij[m, 0] * shape[1] + ij[m, 1], minlength=shape[0] * shape[1]).reshape(shape) > 0
+        sl = [ndimage.binary_dilation(occ((y > y0) & (y < y1))) for y0, y1 in zip(ys[:-1], ys[1:])]
+        cov = np.sum(sl, 0); return (cov >= 5) & (sl[-1] | sl[-2]), occ(np.abs(y) < 0.2)       # wall (reaches the top), seen floor
+
+    # 1 main direction of the walls, mod 90 degrees
+    shape0 = tuple(((hi[[0, 2]] - lo[[0, 2]]) / res).astype(int) + 2); wall0, _ = masks(P[:, [0, 2]], lo[[0, 2]], shape0)
+    w0 = np.argwhere(wall0).astype(float)
+    if len(w0) < 40: return None
+    # walls line up with the axes when the wall cells pile into the fewest rows and columns: the sharpest histograms win
+    def sharp(t):
+        q = w0 @ np.array([[np.cos(t), -np.sin(t)], [np.sin(t), np.cos(t)]])
+        return sum(float((np.bincount((q[:, k] - q[:, k].min()).astype(int)) ** 2).sum()) for k in range(2))
+    cand = np.radians(np.arange(-45, 45, 1.0)); th = float(cand[int(np.argmax([sharp(t) for t in cand]))])
+    cand = th + np.radians(np.arange(-1, 1.01, 0.25)); th = float(cand[int(np.argmax([sharp(t) for t in cand]))])
+    th = (th + np.pi / 4) % (np.pi / 2) - np.pi / 4                                           # the smallest turn
+    Rm = np.array([[np.cos(th), np.sin(th)], [-np.sin(th), np.cos(th)]]); to = lambda xz: (np.asarray(xz, float) - c0) @ Rm.T
+    back = lambda uv: np.asarray(uv, float) @ Rm + c0
+    uv = to(P[:, [0, 2]]); u0 = uv.min(0) - 0.3; shape = tuple(((uv.max(0) + 0.3 - u0) / res).astype(int) + 1)
+    wall, floor = masks(uv, u0, shape)
+    # 3 inside: from the walk, over seen floor, not through walls
+    pc = np.zeros(shape, bool); pf = (to(path[:, [0, 2]]) - u0) / res if len(path) else np.zeros((0, 2))   # the walk, in cells
+    if len(path):
+        pj = pf.astype(int); pj = pj[np.all((pj >= 0) & (pj < shape), 1)]; pc[pj[:, 0], pj[:, 1]] = True
+    r = lambda m: int(round(m / res))
+    near = ndimage.binary_dilation(pc, iterations=r(0.6)) if pc.any() else np.zeros(shape, bool)
+    seal = wall | ndimage.binary_closing(wall, np.ones((r(0.45), 1), bool)) | ndimage.binary_closing(wall, np.ones((1, r(0.45)), bool))
+    if pc.any(): seal &= ~ndimage.binary_dilation(pc, iterations=r(0.25))                 # where people walked is never a wall
+    free = (ndimage.binary_closing(floor, iterations=r(0.15)) | near) & ~seal
+    lab, n = ndimage.label(free)
+    if pc.any(): keep = np.unique(lab[pc & free]); keep = keep[keep > 0]
+    else: keep = [1 + int(np.argmax(ndimage.sum(free, lab, range(1, n + 1))))] if n else []
+    inside = ndimage.binary_fill_holes(np.isin(lab, keep)) & ~wall
+    if inside.sum() * res * res < 1.5: return None
+
+    # 4 wall lines along both axes, the rectangles between them, which of them are inside
+    def lines(axis):
+        prof = ndimage.uniform_filter1d(wall.sum(1 - axis) * res, 3); out = []
+        for i in np.argsort(-prof):
+            if prof[i] < 0.8: break
+            if all(abs(i - o) * res >= 0.3 for o in out): out.append(int(i))
+        idx = np.flatnonzero(inside.any(1 - axis)); ext = [idx.min(), idx.max() + 1]
+        for e in ext:
+            if all(abs(e - o) * res >= 0.3 for o in out): out.append(int(e))
+        out = sorted(set(o for o in out if ext[0] - r(1.0) <= o <= ext[1] + r(1.0))) or ext   # a wall can be a cupboard's depth behind the seen floor
+        if out[0] > ext[0]: out = [ext[0]] + out[out[0] - ext[0] < r(0.3):]                 # never a sliver next to the extent
+        if out[-1] < ext[1]: out = out[:len(out) - (ext[1] - out[-1] < r(0.3))] + [ext[1]]
+        out = np.array(sorted(set(out))); return out, prof[np.clip(out, 0, len(prof) - 1)]   # the lines and how much wall each has
+    (U, su), (V, sv) = lines(0), lines(1)
+    cell = np.zeros((len(U) - 1, len(V) - 1), bool)
+    for i in range(len(U) - 1):
+        for j in range(len(V) - 1):
+            blk = inside[U[i]:U[i + 1], V[j]:V[j + 1]]; cell[i, j] = blk.size > 0 and blk.mean() > 0.5
+    lab, n = ndimage.label(cell)
+    if n > 1:                                                                              # the part people walked in (or the largest)
+        best = np.array([(pc[U[i]:U[i + 1], V[j]:V[j + 1]].sum(), (U[i + 1] - U[i]) * (V[j + 1] - V[j])) for i, j in zip(*np.nonzero(cell))])
+        score = [best[lab[cell] == k].sum(0) for k in range(1, n + 1)]; cell = lab == 1 + max(range(n), key=lambda k: tuple(score[k]))
+    # the wall is behind the cupboards and panels standing at it, not along their fronts: from each edge of the seen floor the
+    # room goes on to the strongest wall line within 1 m (the switch room: panel fronts 2.1 m of wall evidence, the wall
+    # behind them 5.4 m; a weaker line further out, 1.8 m, is the window's bars and stays outside)
+    wu, wv = np.diff(U) * res, np.diff(V) * res; grown = cell.copy()
+    for axis, w, sup in ((0, wu, su), (1, wv, sv)):
+        was, g = np.moveaxis(cell, axis, 0), np.moveaxis(grown, axis, 0); n_ = len(w)
+        for j in range(was.shape[1]):
+            for i in np.flatnonzero(was[:, j]):
+                for sgn in (1, -1):                                                         # line k is the far side of cell k-1 (going up)
+                    k = i + sgn; cand, depth = [i + (sgn > 0)], 0.0                          # the edge of the seen floor itself
+                    while 0 <= k < n_ and not was[k, j] and depth + w[k] <= 1.0: depth += w[k]; cand.append(k + (sgn > 0)); k += sgn
+                    stop = max(cand, key=lambda q: (sup[q], -abs(q - cand[0])))
+                    g[min(cand[0], stop):max(cand[0], stop), j] = True
+    pg = np.pad(grown, 1); small = (wu[:, None] <= 1.0) & (wv[None, :] <= 1.0)                # the corner between two such strips
+    cell = grown | (small & (pg[:-2, 1:-1] | pg[2:, 1:-1]) & (pg[1:-1, :-2] | pg[1:-1, 2:]))
+    how = 'cells'
+    fine = np.zeros(shape, bool)
+    for i, j in zip(*np.nonzero(cell)): fine[U[i]:U[i + 1], V[j]:V[j + 1]] = True
+    area = fine.sum() * res * res; box_area = float(np.prod(hi[[0, 2]] - lo[[0, 2]]))
+    if not cell.any() or area < 1.5 or area > 1.05 * box_area or (pc.any() and fine[pc].mean() < 0.9):
+        U, V = U[[0, -1]], V[[0, -1]]; cell = np.ones((1, 1), bool); how = 'rectangle'     # safety net: one rectangle
+        fine[:] = False; fine[U[0]:U[1], V[0]:V[1]] = True
+    # 5 solid / open sides and inner walls, per line, cell by cell along it
+    back_ = ndimage.binary_dilation(wall, iterations=r(0.15)); pad = np.pad(cell, 1); deep = r(0.5)
+    step = np.linalg.norm(np.diff(pf, axis=0), axis=1) * res < 1.0 if len(pf) > 1 else np.zeros(0, bool)
+    solid, opened = [], []
+    for axis, A, B in ((0, U, V), (1, V, U)):
+        for k, c in enumerate(A):
+            n_ = shape[1 - axis]; border, inner = np.zeros(n_, bool), np.zeros(n_, bool)
+            for j in range(len(B) - 1):
+                p, q = (pad[k, j + 1], pad[k + 1, j + 1]) if axis == 0 else (pad[j + 1, k], pad[j + 1, k + 1])
+                border[B[j]:B[j + 1]] = p != q; inner[B[j]:B[j + 1]] = p and q
+            ci = int(np.clip(c, 0, shape[axis] - 1)); wm = wall if axis == 0 else wall.T; ev = (back_ if axis == 0 else back_.T)[ci].copy()
+            ev |= border & (wm[max(ci - deep, 0):ci + deep + 1].any(0))                     # a side: the wall or tall things standing at it
+            wk = np.zeros(n_, bool)                                                         # a door where the walk goes through this line
+            if len(pf) > 1:
+                d0, d1 = pf[:-1, axis] - c, pf[1:, axis] - c
+                for k_ in np.flatnonzero(step & (d0 * d1 < 0)):
+                    t = d0[k_] / (d0[k_] - d1[k_]); x = int(pf[k_, 1 - axis] + t * (pf[k_ + 1, 1 - axis] - pf[k_, 1 - axis]))
+                    wk[max(x - r(0.45), 0):x + r(0.45) + 1] = True
+            sb = border & _close(ev | ~border, r(1.2))
+            for s0, s1 in _runs(border):                                                    # a side with too little behind it stays open
+                if ev[s0:s1].mean() < 0.35: sb[s0:s1] = False
+            # between two inside rectangles: a wall only with walked / seen floor on both sides of it (a row of tall cupboards
+            # or panels has the room on one side only: furniture, not a wall)
+            fm = inside if axis == 0 else inside.T; both = fm[max(ci - r(0.5), 0):ci].any(0) & fm[ci + 1:ci + r(0.5) + 1].any(0)
+            si = inner & _close(ev, r(0.4)) & _close(both, r(0.4))
+            for s0, s1 in _runs(si):
+                if (s1 - s0) * res < 1.0: si[s0:s1] = False
+            for m, dst in (((sb | si) & ~wk, solid), (border & ~sb & ~wk, opened)):
+                for s0, s1 in _runs(m):
+                    if (s1 - s0) * res < 0.3: continue
+                    e = np.array([[c, s0], [c, s1]], float) if axis == 0 else np.array([[s0, c], [s1, c]], float)
+                    dst.append([round(float(v), 3) for v in back(e * res + u0).reshape(-1)])
+    # the closed outline: border edges of the inside rectangles chained corner to corner (the longest loop)
+    nxt = {}
+    for i, j in zip(*np.nonzero(cell)):
+        for (di, dj), e in (((-1, 0), ((i, j + 1), (i, j))), ((1, 0), ((i + 1, j), (i + 1, j + 1))), ((0, -1), ((i, j), (i + 1, j))), ((0, 1), ((i + 1, j + 1), (i, j + 1)))):
+            if not pad[i + 1 + di, j + 1 + dj]: nxt.setdefault(e[0], []).append(e[1])
+    loops = []
+    while nxt:
+        p0 = next(iter(nxt)); loop, p = [p0], p0
+        while True:
+            q = nxt[p].pop(); nxt.pop(p) if not nxt[p] else None; p = q
+            if p == p0 or p not in nxt: break
+            loop.append(p)
+        loops.append(loop)
+    ring = max(loops, key=len) if loops else []
+    ring = [p for k, p in enumerate(ring) if (ring[k - 1][0] != ring[(k + 1) % len(ring)][0]) and (ring[k - 1][1] != ring[(k + 1) % len(ring)][1])]   # corners only
+    outline = [[round(float(v), 3) for v in back(np.array([U[i], V[j]], float) * res + u0)] for i, j in ring]
+    return dict(walls=solid, open=opened, outline=outline, yaw=round(float(np.degrees(th)), 2), source=how,
+                grid=dict(th=th, c0=c0, u0=u0, res=res, fine=fine))
+
+
+def _walk(tour):
+    """The filmed walk in room metres, (n, 3), from the tour's settings.json (navgrid.camera_path); empty when there is none."""
+    try:
+        sys.path.insert(0, os.path.dirname(os.path.abspath(__file__))); import navgrid
+        return navgrid.camera_path(tour)
+    except Exception: return np.zeros((0, 3))
 
 
 def floorplan(run, tour, M=None):
@@ -421,18 +559,27 @@ def floorplan(run, tour, M=None):
     img = (img / np.maximum(alpha, 1e-6)[:, None]).reshape(Hp, Wp, 3); alpha = alpha.reshape(Hp, Wp)
     has = alpha > 0.2
     dist, (ii, jj) = ndimage.distance_transform_edt(~has, return_indices=True)
-    img = img[ii, jj] * (dist <= 4)[..., None]                                              # fill gaps up to ~3 cm, rest stays black
+    # outline and walls (walls_cells); the picture shows the room only: every gap inside the outline filled from the nearest
+    # splat, everything further than 25 cm outside it black (floaters and things seen through a window are not the room)
+    wc = walls_cells(Q, a, lo, hi, h, _walk(tour)); room = np.ones((Hp, Wp), bool); fill = dist <= 4
+    if wc:
+        g = wc.pop('grid'); rr, cc_ = np.mgrid[0:Hp, 0:Wp]; xz = np.stack([lo[0] + (cc_ + 0.5) / px, lo[2] + (rr + 0.5) / px], -1)
+        k = (((xz - g['c0']) @ np.array([[np.cos(g['th']), -np.sin(g['th'])], [np.sin(g['th']), np.cos(g['th'])]]) - g['u0']) / g['res']).astype(int)
+        fine = ndimage.binary_dilation(g['fine'], iterations=int(round(0.25 / g['res']))); okk = np.all((k >= 0) & (k < fine.shape), -1)
+        room = np.zeros((Hp, Wp), bool); room[okk] = fine[k[okk][:, 0], k[okk][:, 1]]; fill = (fill | (dist <= 0.6 * px)) & room
+    else:
+        b4 = [[lo[0], lo[2]], [hi[0], lo[2]], [hi[0], hi[2]], [lo[0], hi[2]]]
+        wc = dict(walls=[[round(float(v), 3) for v in b4[k] + b4[(k + 1) % 4]] for k in range(4)], open=[], outline=[[round(float(v), 3) for v in q] for q in b4], yaw=0.0, source='box')
+    img = img[ii, jj] * fill[..., None]
     # walls: opacity-weighted density between knee and head height (vertical surfaces stack up there)
     w = inside & (Q[:, 1] > 0.15 * h) & (Q[:, 1] < 0.85 * h) & (a > 0.3)
     g, _, _ = np.histogram2d(row[w], col[w], bins=(Hp, Wp), range=((0, Hp), (0, Wp)), weights=a[w])
     g = np.log1p(ndimage.gaussian_filter(g, 1.0)); g = np.clip(g / max(np.percentile(g[g > 0], 99), 1e-6), 0, 1) if (g > 0).any() else g
-    img = img * (1 - 0.75 * np.clip((g - 0.35) / 0.4, 0, 1))[..., None]
+    img = img * (1 - 0.75 * np.clip((g - 0.35) / 0.4, 0, 1))[..., None] * room[..., None]
     W2, H2 = (span * out_px).astype(int) + 1
     Image.fromarray((img * 255).clip(0, 255).astype(np.uint8)).resize((int(W2), int(H2)), Image.LANCZOS).save(f'{tour}/floorplan.png')
-    walls, how = walls2d(Q, a, lo, hi, h)                                                  # 2D lines / 3D solid walls in the tour
-    json.dump(dict(walls=walls, height=round(float(h), 2), box=[round(float(x), 3) for x in list(lo) + list(hi)], source=how),
-              open(f'{tour}/walls.json', 'w'))
-    print(f'floor plan walls: {len(walls)} ({how})', flush=True)
+    json.dump(dict(height=round(float(h), 2), box=[round(float(x), 3) for x in list(lo) + list(hi)], **wc), open(f'{tour}/walls.json', 'w'))
+    print(f"floor plan: {len(wc['walls'])} walls, {len(wc['open'])} open sides, {len(wc['outline'])} corners, turned {wc['yaw']} deg ({wc['source']})", flush=True)
     return int(W2), int(H2), float(out_px)
 
 
@@ -604,10 +751,14 @@ def collision(run, tour, faces=150000):
     / 63 MB with holes in walls (59 % of voxels observed): too big to download and leaky on its own."""
     import trimesh
     pl = json.load(open(f'{tour}/plan.json')); s = pl['scale']; lo, hi = np.array(pl['box'][:3]), np.array(pl['box'][3:])
-    parts = [trimesh.load(f'{tour}/room_collision.glb', force='mesh')] if os.path.exists(f'{tour}/room_collision.glb') else []
-    if os.path.exists(f'{tour}/walls.json'):                                               # inner walls from the floor plan (a house)
-        wj = json.load(open(f'{tour}/walls.json'))
-        for x0, z0, x1, z1 in wj['walls']:
+    wj = json.load(open(f'{tour}/walls.json')) if os.path.exists(f'{tour}/walls.json') else None
+    if wj and wj.get('outline'):                                                          # the plan's own closed outline: a floor slab + its sides.
+        # Not room_collision.glb: its four walls are the SfM points' box along other axes and can stand inside the real room
+        c, e = (lo + hi) / 2, hi - lo + 1.0; T = np.eye(4); T[0, 3], T[1, 3], T[2, 3] = c[0], -0.05, c[2]
+        parts = [trimesh.creation.box(extents=(e[0], 0.1, e[2]), transform=T)]
+    else: parts = [trimesh.load(f'{tour}/room_collision.glb', force='mesh')] if os.path.exists(f'{tour}/room_collision.glb') else []
+    if wj:                                                                                 # walls of the floor plan; a side that was never
+        for x0, z0, x1, z1 in wj['walls'] + wj.get('open', []):                            # filmed still stops the walk (nothing to see there)
             L = float(np.hypot(x1 - x0, z1 - z0)); hgt = float(wj.get('height', 2.5))
             if L < 0.3: continue
             T = np.eye(4); u = np.array([x1 - x0, z1 - z0]) / L; T[[0, 2], 0] = u; T[[0, 2], 2] = [-u[1], u[0]]

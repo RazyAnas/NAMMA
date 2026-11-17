@@ -94,7 +94,7 @@ function tick(force) { if (!goal) return false; const c = camState(); if (!c) re
   else if (!nav) R = { pts: null, fine: null, len: Math.hypot(c.x - e[0], c.z - e[1]) };          // no grid: straight-line distance only
   const d = Math.hypot(c.x - e[0], c.z - e[1]), len = R ? R.len : d;
   rdist.textContent = (len < 10 ? len.toFixed(1) : Math.round(len)) + ' m' + (nav ? ' · ' + walkTime(len) : ' (straight line)');
-  if (R && R.fine) R.hid = hiddenParts(R.fine, [c.x, c.z], walls, nav);                     // which of it is behind a wall from here
+  if (R && R.fine) R.hid = hiddenParts(R.fine, [c.x, c.z], inOutline(c.x, c.z) ? walls : [], nav);                     // which of it is behind a wall from here
   const nx = R && R.pts ? (R.pts.find((p) => Math.hypot(p[0] - c.x, p[2] - c.z) > 0.6) || R.pts[R.pts.length - 1]) : [e[0], 0, e[1]];      // the next turn: where the arrow points
   rarr.style.transform = `rotate(${(Math.atan2(nx[2] - c.z, nx[0] - c.x) - Math.atan2(c.fz, c.fx)) * 180 / Math.PI}deg)`;
   let level = true; if (nav && nav.floor && R && R.pts && window.viewer && window.viewer.state.cameraMode === 'walk') { const w = window.nammaWalk, eh = w ? (w.eyeHeight || 1.3) + (w.hoverHeight || 0.2) : 1.5;

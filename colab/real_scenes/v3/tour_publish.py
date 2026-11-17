@@ -198,6 +198,7 @@ if __name__ == '__main__':
         sys.exit(0)
     fp, co, rb, hd, rs = ('floorplan' in sys.argv[2:], 'collision' in sys.argv[2:], 'rebuild' in sys.argv[2:],
                           'head' in sys.argv[2:], 'respot' in sys.argv[2:])
+    co = co or fp                                                   # new walls are also what walk mode bumps into and routes go around
     rs = rs or ((hd or rb) and 'norespot' not in sys.argv[2:])      # every page update repairs spots + field of view itself (checked, safe)
     extra = ([f'{run}/full/{x}' for x in ('model.ply', 'level.json', 'nav.json')] if fp or rb else []) + ([f'{run}/mesh/{x}' for x in ('mesh.glb', 'mesh.json', 'mesh-edited.glb')] if co or rb else [])
     if rb and os.environ.get('TOUR_MODEL'): extra.append(f"{run}/{os.environ['TOUR_MODEL']}")
