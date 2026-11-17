@@ -648,3 +648,32 @@ Measured on the switch room (ar-check runs 44065980869, 44071630168, 44080414402
   answer (3.2 cm), so real photos are not proven: six thumbnails are too few and too small.
 So: one picture is not trustworthy (about 1 in 4 right), the agreement of several is. On a CPU that is minutes of standing
 around; the model wants a GPU. Not measured: real on-site photos at full size, the phone's own drift, the scan's guessed scale.
+
+## Shape lock: finding the phone in the room in the browser, no server (18 Nov, same branch)
+Owner: relocalisation must be real time and in the browser, no GPU; "gather what is already done by others, check what gap
+they left and try something different; try by doing experiments".
+What others do (survey, 18 Nov; sources in the session notes): every open method that finds a camera in a Gaussian splat
+(iComMa, 6DGS, GS-CPR, SplatLoc, GSplatLoc, STDLoc, GSFeatLoc, GSVisLoc) needs a CUDA GPU and solves the full pose from one
+picture, ignoring what an AR phone already knows; browser AR that is open stops at flat picture targets (MindAR, AR.js; 8th
+Wall's hosted service ended Feb 2026); positioning against a scan in a browser is a cloud service (MultiSet, Niantic) or
+closed (Immersal); floor-plan localisation uses trained depth networks on a GPU or an iPhone's LiDAR (PALMS: building scale,
+4.7 m RMSE). Nothing found that matches a phone's own depth to a self-made scan in a browser.
+What is different here: the phone already knows down, real metres and (depth API) the distance to what it looks at. Then only
+a turn, a shift and a scale are unknown, and that is 2D scan matching against the scan's own mesh: `ar_shape.py` (reference,
+explains the steps) = `ar_geo.js` (browser, in a Web Worker). The map is `ar_shape.bin` (256 kB, written with `ar_map.bin`).
+Experiment 1 (`scripts/ar/exp_geo.py`: the switch room's real mesh and filmed walk, SIMULATED depth: 27 x 60 pixels at 5 Hz,
+5 % noise, 30 % of pixels missing, 5 % wrong, 4.5 m range):
+- one match after looking round for 5 s is right 70-90 %, after 10 s 100 % (30 of 30 over three runs), 5-8 cm at the room's
+  corners; walking straight ahead without looking round: 50-65 % after 10 s. At 8-10 % depth noise it fails in 5 s.
+- no score of a single match tells right from wrong (tested: the margin over the next-best place does not). What works:
+  believe a position when three matches in a row, a second apart, agree within 15 cm: believed after 4-6 s, right in 31 of
+  36 visits (12 of 12 standing and looking round), 7-11 cm off; the rest were wrong at that moment.
+- scale: floor-to-ceiling seen by the phone over the scan's gives it directly, but from below the cable trays hide the
+  ceiling (the scan's levels: 2.23 m trays, 2.65 m ceiling), so every pairing of levels is tried and the match decides.
+- cost: 0.6 s per match in JavaScript on this laptop (5000 points, 10 deg steps, then a polish), 0.7 s in a real browser
+  worker; the made-up room of `tests/v3/test_ar_shape.py` is found to 2-9 cm by the browser code, same answer as Python.
+In the AR page: depth points every 6th frame (the unprojection that ran on the test phone), the last 25 s to the worker about
+once a second, three agreeing matches set the join; the picture server stays optional (`#s=`). The page now starts without one.
+NOT measured, and the real risk: ARCore's depth on a real phone (weak on blank white walls, which this room has), the phone's
+speed (a match may take 2-4 s there), and the page itself on a phone. Experiment 2 (appearance: features baked from views of
+the splat, matched on the phone with gravity known) is not started.

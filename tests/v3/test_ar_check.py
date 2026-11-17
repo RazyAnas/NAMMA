@@ -55,10 +55,15 @@ def test_ar_page_is_one_valid_script():
     import shutil, subprocess, tempfile
     import pytest
     sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', '..', 'colab', 'real_scenes', 'final')); import make_tour
-    h = make_tour.ar_page(); assert h and 'NM_AR_CORE' not in h and 'NM_POI_CORE' not in h and 'function solve(' in h and 'function route(' in h
+    h = make_tour.ar_page(); assert h and 'NM_AR_CORE' not in h and 'NM_POI_CORE' not in h and 'function solve(' in h and 'function route(' in h and 'function steady(' in h
     if not shutil.which('node'): pytest.skip('node not installed')
     a = h.index('<script type="module">') + len('<script type="module">'); f = os.path.join(tempfile.mkdtemp(), 'ar.mjs'); open(f, 'w').write(h[a:h.rindex('</script>')])
     r = subprocess.run(['node', '--check', f], capture_output=True, text=True); assert r.returncode == 0, r.stderr[:500]
+    # the shape lock runs in a Web Worker made from the text of this tag: it must be a valid classic script with the four entry points
+    g0 = h.index('<script id="geo-src" type="text/plain">') + len('<script id="geo-src" type="text/plain">'); g = h[g0:h.index('</script>', g0)]
+    assert 'NM_AR_GEO' not in g and 'export ' not in g and all(f'function {x}(' in g for x in ('readShape', 'prepare', 'locate', 'toJoin'))
+    w = os.path.join(tempfile.mkdtemp(), 'worker.js'); open(w, 'w').write(g + '\nonmessage = (e) => [readShape, prepare, locate, toJoin];')
+    r = subprocess.run(['node', '--check', w], capture_output=True, text=True); assert r.returncode == 0, r.stderr[:500]
 
 
 def test_location_server_plumbing(tmp_path):
@@ -96,3 +101,5 @@ def test_ar_map_round_trip(tmp_path):
     assert np.allclose(p.min(0), [0, 0, 0], atol=0.02) and np.allclose(p.max(0), [4, 2.4, 3], atol=0.02)   # metres = units x 2, far box gone
     on = np.isclose(p[:, 0], 0, atol=0.01) | np.isclose(p[:, 0], 4, atol=0.01) | np.isclose(p[:, 1], 0, atol=0.01) | np.isclose(p[:, 1], 2.4, atol=0.01) | np.isclose(p[:, 2], 0, atol=0.01) | np.isclose(p[:, 2], 3, atol=0.01)
     assert on.all(), 'points off the mesh surface'
+    raw = (tour / 'ar_shape.bin').read_bytes(); x0, z0, cell, H, N, nb = struct.unpack('<4f2I', raw[:24])       # the shape-lock map beside it
+    assert len(raw) == 28 + 8 * nb + (nb + 1) * N * N and abs(H - 2.4) < 0.05 and x0 < 0 < x0 + N * cell           # room height in metres (1.2 units x 2)

@@ -2,9 +2,12 @@
 <!-- On-site AR for one tour: stand in the scanned room with an Android phone (Chrome), and the room's outline, its places and
      the route to a chosen place are drawn over the camera. Published as ar.html beside the tour's index.html (make_tour.ar_page),
      so it reads the same walls.json / overlay.json / nav.json / pois.json.
-     Open it as  ar.html#s=<server address>&k=<key>  : the server (scripts/ar/serve_ar.py) says where a camera picture was taken
-     inside the scan; the phone's own AR tracking carries the position between answers. The maths is ar_core.js, the route and
-     arrows are poi_core.js, both pasted in below. Not yet tried on a phone (17 Nov). -->
+     How the phone finds itself, both feeding the same join (ar_core.js):
+       shape lock (no server): the phone's depth points, collected while the person looks around, are matched to the scan's
+         shape (ar_shape.bin) by ar_geo.js in a Web Worker, about once a second; believed when three matches in a row agree.
+       pictures (optional): opened as ar.html#s=<server address>&k=<key>, a camera picture goes to a server
+         (scripts/ar/serve_ar.py, DRS-VPT) that says where it was taken.
+     The phone's own AR tracking carries the position in between. Route and arrows are poi_core.js. Not yet tried on a phone (18 Nov). -->
 <html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover"><title>NAMMA AR</title>
 <style>
   html,body{margin:0;height:100%;background:#111;color:#eee;font:16px/1.4 system-ui,sans-serif}
@@ -23,22 +26,37 @@
 <div id="start"><h1>NAMMA AR</h1><p id="why">Checking this phone…</p>
   <p><select id="dest0"></select></p><p><button id="go" disabled>Start AR</button></p>
   <p style="font-size:13px">Stand inside the scanned room. Hold the phone upright and look around slowly; the first position takes up to a minute. The lines appear once the phone knows where it is.</p></div>
-<div id="hud"><div class="bar" id="top"><div id="msg">Looking for the room…</div><div id="stat"></div></div><div id="labels"></div>
+<div id="hud"><div class="bar" id="top"><div id="msg">Look around slowly: walls, floor, ceiling…</div><div id="stat"></div></div><div id="labels"></div>
   <div class="bar" id="bot"><select id="dest"></select><button id="save">Save report</button><button id="exit">Exit</button></div></div>
+<script id="geo-src" type="text/plain">/*NM_AR_GEO*/</script>
 <script type="module">
 /*NM_AR_CORE*/
 /*NM_POI_CORE*/
 const $ = (id) => document.getElementById(id), hp = new URLSearchParams(location.hash.slice(1)), SERVER = (hp.get('s') || '').replace(/\/+$/, ''), KEY = hp.get('k') || '';
 const getJ = (f) => fetch('./' + f).then(r => r.ok ? r.json() : null).catch(() => null);
 const [wj, ov, navJ, poisJ] = await Promise.all(['walls.json', 'overlay.json', 'nav.json', 'pois.json'].map(getJ));
+const shapeBuf = await fetch('./ar_shape.bin').then(r => r.ok ? r.arrayBuffer() : null).catch(() => null);
 const nav = navJ ? decodeNav(navJ) : null, H = (wj && wj.height) || 2.5;
 const places = [...((ov && ov.spots) || []).map(s => ({ name: s.title, pos: [s.x, 0, s.z] })), ...readPois(poisJ).map(p => ({ name: p.name, pos: p.approach ? [p.approach[0], 0, p.approach[1]] : p.pos, at: p.pos }))];
 for (const id of ['dest0', 'dest']) { $(id).innerHTML = '<option value="">Where to?</option>' + places.map((p, i) => `<option value="${i}">${p.name.replace(/[<&]/g, '')}</option>`).join('');
   $(id).onchange = (e) => { $('dest0').value = $('dest').value = e.target.value; dest = e.target.value === '' ? null : places[+e.target.value]; routeAt = 0; arrived = false; }; }
-let dest = null, routeAt = 0, arrived = false, R = null, J = null, fixes = [], busy = false, sent = 0, failed = 0, lastMs = 0, session = null;
-const ok = !!(navigator.xr && SERVER) && await navigator.xr.isSessionSupported('immersive-ar').catch(() => false);
-$('why').textContent = !SERVER ? 'This page needs the server address in its link (#s=…). Open it from the QR code the server prints.' : ok ? 'Ready.' : 'This phone or browser has no AR here. Use Chrome on an Android phone with Google Play Services for AR.';
-$('go').disabled = !ok; $('go').onclick = () => start().catch(e => { $('why').textContent = 'AR could not start: ' + e.message; });
+let dest = null, routeAt = 0, arrived = false, R = null, J = null, Jsrv = null, Jgeo = null, fixes = [], busy = false, sent = 0, failed = 0, lastMs = 0, session = null;
+// shape lock: ar_geo.js in a worker (a match is about a second of CPU; the camera view must not stutter)
+let geo = null, geoBusy = false, geoJoins = [], geoMs = 0, geoN = 0, geoRuns = 0, chunks = [], depthOn = false, frameNo = 0, geoAt = 0;
+if (shapeBuf) try {
+  const code = $('geo-src').textContent + `
+let M = null; onmessage = (e) => { const d = e.data; if (d.shape) { M = readShape(d.shape); return; }
+  const t0 = performance.now(); let J = null, L = null; try { L = prepare(d.pts, d.path, 5000); J = L && M ? locate(M, L, { step: 10 }) : null; } catch (err) {}
+  postMessage({ join: J ? toJoin(J, L) : null, ms: performance.now() - t0, n: L ? L.p.length / 3 : 0 }); };`;
+  geo = new Worker(URL.createObjectURL(new Blob([code], { type: 'text/javascript' }))); geo.postMessage({ shape: shapeBuf }, [shapeBuf]);
+  geo.onmessage = (e) => { geoBusy = false; geoRuns++; geoMs = e.data.ms; geoN = e.data.n; const j = e.data.join; if (!j) return;
+    geoJoins.push(j); if (geoJoins.length > 6) geoJoins.shift(); if (steady(geoJoins, refs)) Jgeo = j; };       // one match is not believed; three in a row that agree are
+  geo.onerror = () => { geo = null; };
+} catch (e) { geo = null; }
+const ok = !!navigator.xr && await navigator.xr.isSessionSupported('immersive-ar').catch(() => false);
+$('why').textContent = !ok ? 'This phone or browser has no AR here. Use Chrome on an Android phone with Google Play Services for AR.'
+  : !geo && !SERVER ? 'This tour has no AR map yet (ar_shape.bin), and the link names no server.' : 'Ready.';
+$('go').disabled = !ok || (!geo && !SERVER); $('go').onclick = () => start().catch(e => { $('why').textContent = 'AR could not start: ' + e.message; });
 
 // ---- drawing: everything is triangles in tour coordinates (metres, y up), moved into the AR world by the join ----
 const VS = 'attribute vec3 p;uniform mat4 P,V,M;void main(){gl_Position=P*V*M*vec4(p,1.0);}', FS = 'precision mediump float;uniform vec4 c;void main(){gl_FragColor=c;}';
@@ -51,18 +69,41 @@ const outlinePts = wj && wj.outline && wj.outline.length > 2 ? [...wj.outline, w
 const fixedTris = { outline: new Float32Array(outlinePts ? band(outlinePts, 0.06, 0.02) : ((wj && wj.walls) || []).flatMap(w => band([[w[0], w[1]], [w[2], w[3]]], 0.06, 0.02))),
   corners: new Float32Array(outlinePts ? outlinePts.slice(0, -1).flatMap(q => post(q[0], q[1], Math.min(H, 2.4), 0.02)) : []),
   posts: new Float32Array(places.flatMap(p => post((p.at || p.pos)[0], (p.at || p.pos)[2], 1.2, 0.03))) };
+const refs = outlinePts ? outlinePts.slice(0, -1).map(q => [q[0], 0, q[1]]) : [[-2, 0, -2], [2, 0, -2], [2, 0, 2], [-2, 0, 2]];   // where the joins must agree
+// The phone's depth image -> points in its AR world (the maths that ran on the test phone: app/static/record/quick-model.js
+// depthFrameToWorld). A coarse grid of pixels, 0.3-4.5 m; a few hundred points per call.
+function depthPoints(frame, view, t) {
+  let di; try { di = frame.getDepthInformation(view); } catch (e) { return; }
+  if (!di || !di.data) return; const w = di.width, h = di.height, dv = new DataView(di.data), two = di.data.byteLength === w * h * 2, four = di.data.byteLength === w * h * 4;
+  if (!two && !four) return; const n = di.normDepthBufferFromNormView.matrix, a = n[0], b = n[4], c = n[12], d = n[1], e = n[5], f = n[13], det = a * e - b * d;
+  if (Math.abs(det) < 1e-12) return; const ia = e / det, ib = -b / det, ic = (b * f - c * e) / det, id = -d / det, ie = a / det, jf = (c * d - a * f) / det;
+  const P = view.projectionMatrix, m = view.transform.matrix, st = Math.max(1, Math.floor(Math.min(w, h) / 14)), out = [];
+  for (let row = st >> 1; row < h; row += st) for (let col = st >> 1; col < w; col += st) { const i = row * w + col, dm = (two ? dv.getUint16(i * 2, true) : dv.getFloat32(i * 4, true)) * di.rawValueToMeters;
+    if (!(dm >= 0.3 && dm <= 4.5)) continue; const u = (col + 0.5) / w, v = (row + 0.5) / h, vx = ia * u + ib * v + ic, vy = id * u + ie * v + jf;
+    if (vx < 0 || vx > 1 || vy < 0 || vy > 1) continue; const X = dm * (2 * vx - 1 + P[8]) / P[0], Y = dm * (1 - 2 * vy + P[9]) / P[5], Z = -dm;
+    out.push(m[0] * X + m[4] * Y + m[8] * Z + m[12], m[1] * X + m[5] * Y + m[9] * Z + m[13], m[2] * X + m[6] * Y + m[10] * Z + m[14]); }
+  chunks.push({ t, pts: out, cam: [m[12], m[13], m[14]] }); while (chunks.length && t - chunks[0].t > 25000) chunks.shift();   // the last 25 s
+}
+function shapeMatch(t) {                                                                       // everything seen lately -> the worker
+  if (!geo || geoBusy || !chunks.length || t - geoAt < 700 || t - chunks[0].t < 2000) return; let n = 0; for (const c of chunks) n += c.pts.length;
+  if (n < 1800) return; const pts = new Float32Array(n), path = new Float32Array(chunks.length * 3); let o = 0;
+  chunks.forEach((c, k) => { pts.set(c.pts, o); o += c.pts.length; path.set(c.cam, 3 * k); });
+  geoBusy = true; geoAt = t; geo.postMessage({ pts, path }, [pts.buffer, path.buffer]);
+}
 const fineOf = (pts) => { const out = []; for (let i = 1; i < pts.length; i++) { const a = pts[i - 1], b = pts[i], n = Math.max(1, Math.ceil(Math.hypot(b[0] - a[0], b[2] - a[2]) / 0.25));
   for (let k = i === 1 ? 0 : 1; k <= n; k++) out.push([a[0] + (b[0] - a[0]) * k / n, a[1] + (b[1] - a[1]) * k / n, a[2] + (b[2] - a[2]) * k / n]); } return out; };
 const toTour = (p) => { const q = [(p[0] - J.t[0]) / J.s, (p[1] - J.t[1]) / J.s, (p[2] - J.t[2]) / J.s], c = Math.cos(-J.yaw), s = Math.sin(-J.yaw); return [c * q[0] + s * q[2], q[1], -s * q[0] + c * q[2]]; };
 
 async function start() {
-  session = await navigator.xr.requestSession('immersive-ar', { requiredFeatures: ['local', 'camera-access'], optionalFeatures: ['dom-overlay'], domOverlay: { root: $('hud') } });
+  session = await navigator.xr.requestSession('immersive-ar', { requiredFeatures: ['local'], optionalFeatures: ['dom-overlay', 'depth-sensing', ...(SERVER ? ['camera-access'] : [])],
+    domOverlay: { root: $('hud') }, depthSensing: { usagePreference: ['cpu-optimized'], dataFormatPreference: ['luminance-alpha', 'float32'] } });
+  depthOn = !!geo && (!session.enabledFeatures || session.enabledFeatures.includes('depth-sensing'));
   const canvas = document.createElement('canvas'), gl = canvas.getContext('webgl', { xrCompatible: true, antialias: true }); await gl.makeXRCompatible();
   const layer = new XRWebGLLayer(session, gl); session.updateRenderState({ baseLayer: layer }); const binding = new XRWebGLBinding(session, gl), space = await session.requestReferenceSpace('local');
-  space.addEventListener('reset', () => { fixes = []; J = null; $('msg').textContent = 'Tracking restarted. Looking for the room…'; });      // old fixes belong to the old origin
+  space.addEventListener('reset', () => { fixes = []; J = Jsrv = Jgeo = null; geoJoins = []; chunks = []; $('msg').textContent = 'Tracking restarted. Looking for the room…'; });   // everything so far belongs to the old origin
   $('hud').addEventListener('beforexrselect', (e) => e.preventDefault()); $('start').style.display = 'none'; $('hud').style.display = 'block';
   $('exit').onclick = () => session.end(); session.addEventListener('end', () => { $('hud').style.display = 'none'; $('start').style.display = 'block'; $('why').textContent = 'AR ended.'; });
-  $('save').onclick = saveReport;
+  $('save').onclick = saveReport; $('save').style.display = SERVER ? '' : 'none';
   const sh = (t, s) => { const o = gl.createShader(t); gl.shaderSource(o, s); gl.compileShader(o); return o; }, prog = gl.createProgram();
   gl.attachShader(prog, sh(gl.VERTEX_SHADER, VS)); gl.attachShader(prog, sh(gl.FRAGMENT_SHADER, FS)); gl.linkProgram(prog);
   const loc = { p: gl.getAttribLocation(prog, 'p'), P: gl.getUniformLocation(prog, 'P'), V: gl.getUniformLocation(prog, 'V'), M: gl.getUniformLocation(prog, 'M'), c: gl.getUniformLocation(prog, 'c') }, buf = gl.createBuffer();
@@ -90,17 +131,20 @@ async function start() {
     try { const blob = await grab(cam); if (!blob) return; const k = snap.w / cam.width, K = [[K0[0][0] * k, 0, K0[0][2] * k], [0, K0[1][1] * k, K0[1][2] * k], [0, 0, 1]];
       const fd = new FormData(); fd.append('image', blob, 'frame.jpg'); fd.append('K', JSON.stringify(K)); sent++;
       const r = await fetch(SERVER + '/locate', { method: 'POST', body: fd, headers: { 'x-namma-key': KEY } }); if (!r.ok) throw new Error('server ' + r.status);
-      const j = await r.json(); fixes.push(fix(j.T_w2c, viewCm, t)); if (fixes.length > 60) fixes.shift(); J = solve(fixes); lastMs = performance.now() - t0;
+      const j = await r.json(); fixes.push(fix(j.T_w2c, viewCm, t)); if (fixes.length > 60) fixes.shift(); Jsrv = solve(fixes); lastMs = performance.now() - t0;
     } catch (e) { failed++; $('msg').textContent = 'No answer from the server (' + e.message + ')'; await new Promise(r => setTimeout(r, 3000)); } finally { busy = false; }
   }
   const labels = places.map(p => { const d = document.createElement('div'); d.className = 'lbl'; d.textContent = p.name; $('labels').appendChild(d); return d; });
   session.requestAnimationFrame(function loop(t, frame) {
     session.requestAnimationFrame(loop); const pose = frame.getViewerPose(space); gl.bindFramebuffer(gl.FRAMEBUFFER, layer.framebuffer); gl.clearColor(0, 0, 0, 0); gl.clear(gl.COLOR_BUFFER_BIT);
     const view = pose && pose.views[0]; if (!view) return;
-    if (!busy && view.camera && !pose.emulatedPosition) locate(view, t);                       // one picture at a time, the next as soon as the answer is in
+    if (SERVER && !busy && view.camera && !pose.emulatedPosition) locate(view, t);             // one picture at a time, the next as soon as the answer is in
+    if (depthOn && !pose.emulatedPosition && frameNo++ % 6 === 0) { depthPoints(frame, view, t); shapeMatch(t); }
+    J = Jgeo || Jsrv;                                                                          // the room's shape first (no server), else the pictures
     const vp = layer.getViewport(view), me = [view.transform.matrix[12], view.transform.matrix[13], view.transform.matrix[14]];
-    $('stat').textContent = J ? `${J.used} of ${J.of} pictures agree · within ${J.cm.toFixed(0)} cm, ${J.deg.toFixed(1)}° · scale ${J.scaled ? J.s.toFixed(3) : 'not measured yet'} · ${(lastMs / 1000).toFixed(0)} s per picture`
-      : `${fixes.length} answers, ${sent} sent${failed ? ', ' + failed + ' failed' : ''}`;
+    const sh = geo ? (depthOn ? `shape: ${Jgeo ? 'found' : 'looking'} · ${geoRuns} matches, ${(geoMs / 1000).toFixed(1)} s each, ${geoN} points${Jgeo ? ' · scale ' + Jgeo.s.toFixed(3) : ''}` : 'shape: this phone gave no depth') : 'shape: no map in this tour';
+    const pc = SERVER ? (Jsrv ? `pictures: ${Jsrv.used} of ${Jsrv.of} agree · within ${Jsrv.cm.toFixed(0)} cm, ${Jsrv.deg.toFixed(1)}° · ${(lastMs / 1000).toFixed(0)} s each` : `pictures: ${fixes.length} answers, ${sent} sent${failed ? ', ' + failed + ' failed' : ''}`) : '';
+    $('stat').textContent = sh + (pc ? '\n' + pc : '');
     if (!J) { labels.forEach(l => { l.style.display = 'none'; }); return; }
     if (!arrived) $('msg').textContent = dest ? 'To ' + dest.name : 'Choose a place below';
     const here = toTour(me);
@@ -123,7 +167,7 @@ async function start() {
   });
 }
 async function saveReport() {                                                                  // numbers only: no pictures, nothing about the phone's owner
-  const body = { tour: location.pathname.split('/').slice(-2, -1)[0], when: new Date().toISOString(), join: J, sent, failed, seconds_per_picture: lastMs / 1000,
+  const body = { tour: location.pathname.split('/').slice(-2, -1)[0], when: new Date().toISOString(), join: J, shape: { join: Jgeo, last: geoJoins, runs: geoRuns, ms: geoMs, points: geoN, depth: depthOn }, sent, failed, seconds_per_picture: lastMs / 1000,
     fixes: fixes.map(f => ({ at: Math.round(f.at), tilt: +f.tilt.toFixed(2), yaw: +f.yaw.toFixed(4), tour: f.tour.map(v => +v.toFixed(3)), xr: f.xr.map(v => +v.toFixed(3)) })) };
   try { const r = await fetch(SERVER + '/report', { method: 'POST', body: JSON.stringify(body), headers: { 'content-type': 'application/json', 'x-namma-key': KEY } }); $('msg').textContent = r.ok ? 'Report saved' : 'Report not saved (' + r.status + ')'; }
   catch (e) { $('msg').textContent = 'Report not saved (' + e.message + ')'; }

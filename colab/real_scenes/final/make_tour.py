@@ -320,9 +320,10 @@ OVERLAY = OVERLAY.replace('/*NM_POI*/', _places_js())
 
 def ar_page():
     """The on-site AR page (ar.html beside index.html): ar_page.html with ar_core.js (joining the phone's AR world to the scan)
-    and poi_core.js (route, arrows) pasted in, their `export` words dropped. None when a file is missing: a tour without AR."""
+    and poi_core.js (route, arrows) pasted in, and ar_geo.js (the shape lock) as the text of its Web Worker, their `export` words
+    dropped. None when a file is missing: a tour without AR."""
     d = os.path.dirname(os.path.abspath(__file__)); strip = lambda f: re.sub(r'(?m)^export\s+', '', open(os.path.join(d, f)).read())
-    try: return open(os.path.join(d, 'ar_page.html')).read().replace('/*NM_AR_CORE*/', strip('ar_core.js')).replace('/*NM_POI_CORE*/', strip('poi_core.js'))
+    try: return open(os.path.join(d, 'ar_page.html')).read().replace('/*NM_AR_GEO*/', strip('ar_geo.js')).replace('/*NM_AR_CORE*/', strip('ar_core.js')).replace('/*NM_POI_CORE*/', strip('poi_core.js'))
     except OSError: return None
 
 def room_collision(pts, h, path):
@@ -815,6 +816,10 @@ def ar_map(run, tour, cap=600000, grid=0.01):
     _, first = np.unique(np.floor(p / grid).astype(np.int64), axis=0, return_index=True); p = p[first]
     if len(p) > cap: p = p[np.random.default_rng(0).choice(len(p), cap, replace=False)]
     if len(p) < 1000: return None
+    try:                                                                                    # the same points as the shape-lock map (ar_shape.py)
+        sys.path.insert(0, os.path.dirname(os.path.abspath(__file__))); import ar_shape
+        ar_shape.ShapeMap(p).write(f'{tour}/ar_shape.bin'); print('AR shape map:', round(os.path.getsize(f'{tour}/ar_shape.bin') / 1e3), 'kB', flush=True)
+    except Exception as e: print('AR shape map skipped:', type(e).__name__, str(e)[:120], flush=True)
     a, b = p.min(0), p.max(0); q = np.round((p - a) / np.maximum(b - a, 1e-9) * 65535).astype('<u2')
     open(f'{tour}/ar_map.bin', 'wb').write(np.r_[a, b].astype('<f4').tobytes() + q.tobytes())
     print('AR map:', len(p), 'points,', round(os.path.getsize(f'{tour}/ar_map.bin') / 1e6, 1), 'MB', flush=True); return len(p)

@@ -63,3 +63,12 @@ test('lens from the WebXR projection matrix, and the join as a matrix', () => {
   const J = { yaw: 0.9, s: 1.2, t: [1, 2, 3] }, m = A.joinCm(J), p = [0.4, 1.1, -2], q = A.apply(J, p);
   for (let r = 0; r < 3; r++) assert.ok(Math.abs(m[r] * p[0] + m[4 + r] * p[1] + m[8 + r] * p[2] + m[12 + r] - q[r]) < 1e-9);
 });
+
+test('shape-lock joins are believed only when three in a row agree', () => {
+  const refs = [[0, 0, 0], [6, 0, 0], [6, 0, 4], [0, 0, 4]], J = (yaw, tx) => ({ yaw, s: 1, t: [tx, -1.3, 0.5] });
+  assert.equal(A.steady([J(0.5, 1), J(0.5, 1.02)], refs), false, 'two are not enough');
+  assert.equal(A.steady([J(0.5, 1), J(0.505, 1.02), J(0.5, 1.03)], refs), true);
+  assert.equal(A.steady([J(2.0, 4), J(0.5, 1), J(0.505, 1.02), J(0.5, 1.03)], refs), true, 'an old wrong one does not count');
+  assert.equal(A.steady([J(0.5, 1), J(0.5, 1.02), J(0.56, 1.03)], refs), false, 'turned 3.4 deg: a corner 7 m away moves 40 cm');
+  assert.equal(A.steady([J(0.5, 1), J(0.5, 1.4), J(0.5, 1.02)], refs), false);
+});

@@ -66,3 +66,12 @@ export function solve(fixes, o = {}) {
   return { ...J, used: a.length, of: fixes.length, cm: med(a.map(f => err(J, f)[0])) * 100, deg: med(a.map(f => err(J, f)[1])) * 180 / Math.PI,
     span, scaled, cm1: med(a.map(f => err(J1, f)[0])) * 100 };
 }
+
+// The shape lock (ar_geo.js) gives a join about once a second. One alone is not to be believed (measured: no score tells a right
+// match from a wrong one); the last k that put the same points (the room's corners, tour coordinates) within tol metres are.
+export function steady(joins, refs, k = 3, tol = 0.15) {
+  if (joins.length < k) return false; const last = joins[joins.length - 1];
+  for (let i = joins.length - k; i < joins.length - 1; i++) for (const p of refs) { const a = apply(joins[i], p), b = apply(last, p);
+    if (Math.hypot(a[0] - b[0], a[1] - b[1], a[2] - b[2]) > tol) return false; }
+  return true;
+}
