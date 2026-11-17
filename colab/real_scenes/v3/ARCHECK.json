@@ -1,5 +1,6 @@
 {
  "run": "20261116-2207",
  "views": 16,
- "note": "switch room (app job 20261116-132659-2f21): DRS-VPT against the published splat and the mesh"
+ "round": 2,
+ "note": "switch room (app job 20261116-132659-2f21): DRS-VPT against the published splat and the mesh, two densities each, with the half-turn twin test"
 }
