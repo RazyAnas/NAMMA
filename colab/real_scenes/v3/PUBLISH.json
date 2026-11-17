@@ -2,9 +2,7 @@
  "run": "20261116-2207",
  "same": true,
  "head": true,
- "floorplan": true,
- "collision": true,
  "check": true,
  "prune": false,
- "note": "switch room (app job 20261116-132659-2f21): floor plan redrawn with the closed outline (walls_cells), collision and routes from it, current page code; same link"
+ "note": "switch room (app job 20261116-132659-2f21): page update only, adds the on-site AR page ar.html beside the tour; same link"
 }
