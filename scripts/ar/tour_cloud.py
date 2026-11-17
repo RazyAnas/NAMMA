@@ -3,6 +3,7 @@ coordinates: metres, y up, floor at y = 0, the frame of walls.json / nav.json / 
 
     read_cply(path)  -> dict(xyz (N,3) float64, opacity (N,), size (N,) largest axis in metres, rgb (N,3) 0-1)
     cloud(path, ...) -> (M,3) float32 point cloud for localisation (solid, small splats; one point per grid cell)
+    read_map(raw)    -> (N,3) float32: the tour's ar_map.bin, points on the room mesh (the better map when the tour has one)
     python tour_cloud.py <scene.compressed.ply> [out.npy]
 
 The scene file holds F(Rp + t) * s with F = diag(-1, -1, 1) (make_tour.py header: the viewer turns every splat 180 deg about
@@ -55,6 +56,12 @@ def cloud(path, grid=0.02, opacity=0.3, size=0.25, box=None, max_points=None, se
     if max_points and len(p) > max_points: p = p[np.random.default_rng(seed).choice(len(p), max_points, replace=False)]
     return p.astype(np.float32)
 
+
+
+def read_map(raw):
+    """A tour's ar_map.bin (make_tour.ar_map: points on the room mesh) -> (N, 3) float32, room metres. bytes or a path."""
+    raw = raw if isinstance(raw, (bytes, bytearray)) else open(raw, 'rb').read(); a, b = np.frombuffer(raw, '<f4', 6).reshape(2, 3).astype(np.float64)
+    return (a + np.frombuffer(raw, '<u2', offset=24).reshape(-1, 3) / 65535.0 * (b - a)).astype(np.float32)
 
 if __name__ == '__main__':
     pts = cloud(sys.argv[1]); print(len(pts), 'points; min', pts.min(0).round(2), 'max', pts.max(0).round(2))

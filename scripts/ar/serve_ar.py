@@ -4,7 +4,7 @@
 
 Runs wherever the model can run (a GPU session, a CPU box with ~8 GB free memory): it needs torch + the drs-vpt package
 (github.com/ori-drs/drs-vpt; weights CC BY-NC 4.0, so a test, not a product part). It reads only the tour's public files:
-scene.compressed.ply -> the map (tour_cloud.py), walls.json -> the room box. Nothing private, no token.
+ar_map.bin -> the map (points on the room mesh; a tour without one: its splat's centres), walls.json -> the room box. Nothing private, no token.
   POST /locate   form: image (jpeg), K (3x3 json, pixels of that image)  ->  {T_w2c: 4x4 in the tour's room metres, seconds}
   POST /report   json from the page's "Save report"                      ->  kept as ar_reports/<time>.json next to this file
   GET  /health   {ready, points, device}
@@ -51,7 +51,7 @@ def make_app(locate, key, info, origin='*', reports=os.path.join(HERE, 'ar_repor
     return app
 
 
-def drsvpt(base, device, up='y', grid=0.02):
+def drsvpt(base, device, up='y'):
     """The locate(image, K) -> T_w2c function for one tour: its map prepared once."""
     import tour_cloud
     from drs_vpt.hub import load_model
@@ -59,12 +59,14 @@ def drsvpt(base, device, up='y', grid=0.02):
     get = lambda f: urllib.request.urlopen(base + f, timeout=120).read()
     try: box = json.loads(get('walls.json')).get('box')
     except Exception: box = None
-    cloud = tour_cloud.cloud(get('scene.compressed.ply'), grid=grid, box=box); A = ZUP if up == 'z' else np.eye(3)
-    model = load_model(device=device); enc = encode_map(model, np.ascontiguousarray(cloud @ A.T, np.float32), grid_size=0.01, max_points=250000)
+    try: cloud, kind = tour_cloud.read_map(get('ar_map.bin')), 'mesh'                       # measured best (ar-check round 3: 28 % of pictures within 10 cm)
+    except Exception: cloud, kind = tour_cloud.cloud(get('scene.compressed.ply'), grid=0.01, opacity=0.1, box=box), 'splat centres (no ar_map.bin in this tour)'
+    A = ZUP if up == 'z' else np.eye(3)                                                     # y up measured right; z up 0 of 6
+    model = load_model(device=device); enc = encode_map(model, np.ascontiguousarray(cloud @ A.T, np.float32), grid_size=0.01, max_points=600000)
     def locate(img, K):
         T = np.asarray(localize(model, img, enc, K)['T_w2c'], float); T[:3, :3] = T[:3, :3] @ A   # found in the turned cloud -> the tour's own axes
         return T
-    return locate, dict(points=int(len(cloud)), device=device)
+    return locate, dict(points=int(len(cloud)), map=kind, device=device)
 
 
 if __name__ == '__main__':

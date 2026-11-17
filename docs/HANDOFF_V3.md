@@ -630,6 +630,21 @@ Built (nothing of it has run on a phone):
 - `ar_page.html` -> `ar.html` beside `index.html` (written by `build` and by a page update): Android Chrome AR with camera
   access; draws the room outline, place posts and names, the route band with arrows, arrival within 1 m; status line with the
   agreement in cm and degrees; "Save report" sends numbers only. Opened as `ar.html#s=<server>&k=<key>`.
-- `scripts/ar/serve_ar.py`: `/locate` (DRS-VPT against the tour's public splat), `/report`, key header. It needs a machine with
+- `scripts/ar/serve_ar.py`: `/locate` (DRS-VPT against the tour's `ar_map.bin`, points on the room mesh written by
+  `make_tour.ar_map` with the collision step; a tour without one: its splat's centres), `/report`, key header. It needs a machine with
   torch and about 8 GB of memory. **No such machine is chosen yet**: not the laptop; the choices are a free Hugging Face CPU
   Space (slow, always on) or a Kaggle GPU session with a tunnel (fast, started before going on site). The owner decides.
+
+Measured on the switch room (ar-check runs 44065980869, 44071630168, 44080414402; CPU runner, 30-38 s per picture):
+- the room's own axes (y up) are right for the model; a cloud turned z up gave 0 of 6.
+- share of pictures placed within 10 cm / 5 deg, drawn views | 240 px photos: splat centres 2 cm 12 % | 0 of 6; splat centres
+  1 cm incl. faint 25 % | 0 of 6; walk-collision mesh 16 % | 0 of 6; full mesh 1 cm 28 % (9 of 32) | 1 of 6 (2 of 6 within
+  25 cm / 10 deg). A right answer is 2-8 cm and under 2 deg off.
+- the wrong answers: about half put the camera upside down (floor taken for ceiling), most others are turned about half
+  round; none is the exact half-turn twin of the true pose (tested), and they do not agree with each other.
+- what the AR page would do with all 38 answers (gravity test, then agreement; phone tracking and scale taken as exact):
+  full mesh: 17 upright, 12 agree, the room's corners end up 5.1 cm from where they are, and the join was within 15 cm after
+  every number of pictures from the first on; walk-collision mesh: 10 upright, 7 agree, 6.3 cm. Photos alone: one usable
+  answer (3.2 cm), so real photos are not proven: six thumbnails are too few and too small.
+So: one picture is not trustworthy (about 1 in 4 right), the agreement of several is. On a CPU that is minutes of standing
+around; the model wants a GPU. Not measured: real on-site photos at full size, the phone's own drift, the scan's guessed scale.

@@ -227,6 +227,9 @@ if __name__ == '__main__':
     if co:
         make_tour.collision(os.path.join(d, run), tour)
         api.upload_file(path_or_fileobj=f'{tour}/collision.glb', path_in_repo=f'{run}/{src}/collision.glb', repo_id=repo, repo_type='dataset')   # the tour being updated (was always tour/)
+        try:                                                                              # the map on-site AR is located against
+            if make_tour.ar_map(os.path.join(d, run), tour): api.upload_file(path_or_fileobj=f'{tour}/ar_map.bin', path_in_repo=f'{run}/{src}/ar_map.bin', repo_id=repo, repo_type='dataset')
+        except Exception as e: print('AR map skipped:', type(e).__name__, str(e)[:120], flush=True)
     if (co or hd) and not rb and (co or not os.path.exists(f'{tour}/nav.json')):         # routes to places: the walkable grid of this collision
         if make_tour.navgrid(tour): api.upload_file(path_or_fileobj=f'{tour}/nav.json', path_in_repo=f'{run}/{src}/nav.json', repo_id=repo, repo_type='dataset')
     if rb:                                                                                # scene file again from the model (current settings)

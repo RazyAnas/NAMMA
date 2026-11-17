@@ -799,6 +799,27 @@ def collision(run, tour, faces=150000):
         print('collision:', sum(len(x.faces) for x in parts), 'faces,', round(os.path.getsize(f'{tour}/collision.glb') / 1e6, 1), 'MB', flush=True)
 
 
+def ar_map(run, tour, cap=600000, grid=0.01):
+    """The map on-site AR is located against (scripts/ar/serve_ar.py): points on the room mesh, one per 1 cm cell inside the
+    room box, at most `cap`, room metres -> <tour>/ar_map.bin (6 floats: min and max corner, then uint16 x y z per point, about
+    3.6 MB; scripts/ar/tour_cloud.read_map reads it). Measured on the switch room (ar-check, 17 Nov): with this map DRS-VPT
+    places 28 % of pictures within 10 cm, with the public walk-collision mesh 16 %, with splat centres 12-25 %. No mesh: no
+    file, and the server falls back to those. Returns the number of points or None."""
+    import trimesh
+    src = next((f for f in (f'{run}/mesh/mesh-edited.glb', f'{run}/mesh/mesh.glb') if os.path.exists(f)), None)
+    if not src: return None
+    pl = json.load(open(f'{tour}/plan.json')); lo, hi = np.array(pl['box'][:3]), np.array(pl['box'][3:])
+    m = trimesh.load(src, force='mesh'); m.apply_scale(pl['scale'])
+    if not len(m.faces): return None
+    p = np.asarray(m.sample(2500000), float); p = p[np.all((p >= lo - 0.3) & (p <= hi + 0.3), 1)]
+    _, first = np.unique(np.floor(p / grid).astype(np.int64), axis=0, return_index=True); p = p[first]
+    if len(p) > cap: p = p[np.random.default_rng(0).choice(len(p), cap, replace=False)]
+    if len(p) < 1000: return None
+    a, b = p.min(0), p.max(0); q = np.round((p - a) / np.maximum(b - a, 1e-9) * 65535).astype('<u2')
+    open(f'{tour}/ar_map.bin', 'wb').write(np.r_[a, b].astype('<f4').tobytes() + q.tobytes())
+    print('AR map:', len(p), 'points,', round(os.path.getsize(f'{tour}/ar_map.bin') / 1e6, 1), 'MB', flush=True); return len(p)
+
+
 def navgrid(tour):
     """Walkable grid for routes to places: <tour>/collision.glb -> <tour>/nav.json (navgrid.py: what blocks a standing person,
     grown by a body radius, only the part joined to the filmed walk). The browser runs A* on it (poi_core.js). collision.glb is
@@ -936,6 +957,8 @@ def build(run, tour, public, st='npx --no-install splat-transform'):
     boot = dict(contentUrl='./' + os.path.relpath(out, tour), settingsUrl='./settings.json')
     # collision for walk mode: the room mesh (mesh_tsdf.py, room coordinates before scaling) if there is one, else the room box
     collision(run, tour)
+    try: ar_map(run, tour)                                                                  # never fail a tour build for this
+    except Exception as e: print('AR map skipped:', type(e).__name__, str(e)[:120], flush=True)
     if os.path.exists(f'{tour}/collision.glb'): boot['collisionUrl'] = './collision.glb'
     nav = navgrid(tour)                                                                    # walkable grid for routes to places
     shutil.copy(f'{public}/index.css', tour)

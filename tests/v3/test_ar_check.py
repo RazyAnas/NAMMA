@@ -79,3 +79,20 @@ def test_location_server_plumbing(tmp_path):
     assert c.get('/health').json()['points'] == 5
     assert c.post('/report', content=json.dumps({'join': {'s': 1}}), headers={'x-namma-key': 'secret', 'content-type': 'application/json'}).status_code == 200
     assert len(list(tmp_path.glob('*.json'))) == 1 and c.post('/report', content='{}', headers={'x-namma-key': 'no'}).status_code == 401
+
+
+def test_ar_map_round_trip(tmp_path):
+    """make_tour.ar_map writes points on the room mesh, cut to the room box, in room metres; tour_cloud.read_map reads them back."""
+    import json, trimesh
+    sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', '..', 'colab', 'real_scenes', 'final')); import make_tour
+    run, tour = tmp_path, tmp_path / 'tour'; tour.mkdir(); (run / 'mesh').mkdir()
+    assert make_tour.ar_map(str(run), str(tour)) is None                                    # no mesh: no map, no error
+    json.dump(dict(scale=2.0, box=[-1, -0.1, -1, 5, 3, 4]), open(tour / 'plan.json', 'w'))
+    room = trimesh.creation.box(extents=(2, 1.2, 1.5)); room.apply_translation([1, 0.6, 0.75])   # model units: x 0..2, y 0..1.2, z 0..1.5
+    far = trimesh.creation.box(extents=(1, 1, 1)); far.apply_translation([20, 0, 0])             # outside the room box: must be cut
+    trimesh.util.concatenate([room, far]).export(run / 'mesh' / 'mesh.glb')
+    n = make_tour.ar_map(str(run), str(tour), cap=20000); p = tour_cloud.read_map(str(tour / 'ar_map.bin'))
+    assert n == len(p) == 20000 and p.dtype == np.float32
+    assert np.allclose(p.min(0), [0, 0, 0], atol=0.02) and np.allclose(p.max(0), [4, 2.4, 3], atol=0.02)   # metres = units x 2, far box gone
+    on = np.isclose(p[:, 0], 0, atol=0.01) | np.isclose(p[:, 0], 4, atol=0.01) | np.isclose(p[:, 1], 0, atol=0.01) | np.isclose(p[:, 1], 2.4, atol=0.01) | np.isclose(p[:, 2], 0, atol=0.01) | np.isclose(p[:, 2], 3, atol=0.01)
+    assert on.all(), 'points off the mesh surface'
