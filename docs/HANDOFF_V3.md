@@ -677,3 +677,8 @@ once a second, three agreeing matches set the join; the picture server stays opt
 NOT measured, and the real risk: ARCore's depth on a real phone (weak on blank white walls, which this room has), the phone's
 speed (a match may take 2-4 s there), and the page itself on a phone. Experiment 2 (appearance: features baked from views of
 the splat, matched on the phone with gravity known) is not started.
+The way in (17 Nov evening, owner: "there is no AR button, it used to be there"): the tour page had no AR button of its own.
+The one the owner remembered is the viewer's built-in button (`.sse-arMode`), which shows only on a phone with AR and floats
+the scan in front of the camera; it has nothing to do with `ar.html`. `OVERLAY` now has `#nm-ar` (top right): shown when
+`./ar_shape.bin` answers, opens `./ar.html` where `immersive-ar` is supported, and elsewhere says an Android phone with Chrome
+is needed. On such tours the viewer's own AR button is hidden (`body.nm-has-ar`), so "AR" means one thing.
