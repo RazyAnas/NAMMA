@@ -103,3 +103,19 @@ def test_ar_map_round_trip(tmp_path):
     assert on.all(), 'points off the mesh surface'
     raw = (tour / 'ar_shape.bin').read_bytes(); x0, z0, cell, H, N, nb = struct.unpack('<4f2I', raw[:24])       # the shape-lock map beside it
     assert len(raw) == 28 + 8 * nb + (nb + 1) * N * N and abs(H - 2.4) < 0.05 and x0 < 0 < x0 + N * cell           # room height in metres (1.2 units x 2)
+
+
+def test_tour_page_has_an_ar_button():
+    """The tour page (OVERLAY) carries its own AR button: hidden until the tour's AR map answers, it opens ar.html on a phone
+    with AR and says what is needed elsewhere. Every script of the overlay must still parse with it in."""
+    import re, shutil, subprocess, tempfile
+    import pytest
+    sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', '..', 'colab', 'real_scenes', 'final')); import make_tour
+    o = make_tour.OVERLAY; assert 'id="nm-ar"' in o and "fetch('./ar_shape.bin')" in o and "location.href = './ar.html'" in o
+    assert re.search(r'#nm-ar\{[^}]*display:none', o) and 'body.nm-has-ar .sse-viewer .sse-arMode{display:none!important}' in o
+    if not shutil.which('node'): pytest.skip('node not installed')
+    scripts = re.findall(r'<script([^>]*)>(.*?)</script>', o, re.S); assert scripts
+    for i, (attr, body) in enumerate(scripts):
+        if 'json' in attr or 'text/plain' in attr or not body.strip(): continue
+        f = os.path.join(tempfile.mkdtemp(), f's{i}.mjs' if 'module' in attr else f's{i}.js'); open(f, 'w').write(body)
+        r = subprocess.run(['node', '--check', f], capture_output=True, text=True); assert r.returncode == 0, r.stderr[:500]

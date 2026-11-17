@@ -46,6 +46,11 @@ OVERLAY = """<style>
   #nm-strip span{position:absolute;left:0;right:0;bottom:0;padding:10px 6px 3px;color:#fff;font-size:11px;text-align:left;background:linear-gradient(transparent,rgba(0,0,0,.7))}
   #nm-jump{position:fixed;right:max(16px,env(safe-area-inset-right));bottom:calc(max(16px,env(safe-area-inset-bottom)) + 112px);z-index:10;display:none;width:52px;height:52px;border-radius:50%}
   #nm-jump svg{width:26px;height:26px}
+  /* AR guide (ar.html): top right; shown only when the tour carries its AR map. The viewer's own AR button (the scan floating in
+     front of the camera, not laid over the real room) is hidden then, so that "AR" means one thing */
+  #nm-ar{position:fixed;right:max(16px,env(safe-area-inset-right));top:max(16px,env(safe-area-inset-top));z-index:10;display:none;align-items:center;gap:7px;height:40px;padding:0 15px 0 11px;border-radius:20px;font:600 13px Arial,sans-serif;cursor:pointer}
+  #nm-ar svg{width:20px;height:20px;fill:none;stroke:currentColor;stroke-width:1.8;stroke-linejoin:round;stroke-linecap:round}
+  body.nm-has-ar .sse-viewer .sse-arMode{display:none!important}
   body:has(.sse-settingsPanel:not(.sse-hidden)) #nm-jump{display:none!important}
   #nm-fp,#nm-help{position:fixed;inset:0;z-index:30;display:none;align-items:center;justify-content:center;background:rgba(0,0,0,.25);backdrop-filter:blur(3px);-webkit-backdrop-filter:blur(3px)}
   #nm-fp .box{position:relative;width:min(92vw,980px);height:min(78vh,700px);border-radius:16px;overflow:hidden}
@@ -131,6 +136,7 @@ OVERLAY = """<style>
   <button class="nm-btn" id="nm-helpbtn" title="Controls (?)"><svg width="24" height="24"><g class="s"><use href="#nmKeysIcon"/></g><g class="f"><use href="#nmKeysIcon"/></g></svg></button>
   <button class="nm-btn" id="nm-exp" title="Open floor plan"><svg width="20" height="20" viewBox="0 0 24 24"><g class="s"><use href="#nmExpandIcon"/></g><g class="f"><use href="#nmExpandIcon"/></g></svg></button></span></div></div>
 <div id="nm-strip" class="nm-panel"></div>
+<button class="nm-panel" id="nm-ar" title="AR guide: see the route laid over the real room (Android phone, standing in this room)"><svg viewBox="0 0 24 24"><path d="M12 3l8 4.5v9L12 21l-8-4.5v-9z"/><path d="M4 7.5l8 4.5 8-4.5M12 12v9"/></svg>AR</button>
 <button class="nm-btn nm-panel" id="nm-jump" title="Jump" aria-label="Jump"><svg viewBox="0 0 24 24"><g class="s"><use href="#nmJumpIcon"/></g><g class="f"><use href="#nmJumpIcon"/></g></svg></button>
 <div id="nm-fp"><div class="box nm-panel"><button class="nm-btn x" id="nm-fpx" title="Close"><svg width="24" height="24"><g class="s"><use href="#nmCloseIcon"/></g><g class="f"><use href="#nmCloseIcon"/></g></svg></button>
   <div class="tog"><button class="nm-pill on" data-m="2d">2D</button><button class="nm-pill" data-m="3d">3D</button></div>
@@ -272,6 +278,14 @@ OVERLAY = """<style>
     closeHelp = () => { help.style.display = 'none'; };
   document.getElementById('nm-hx').onclick = closeHelp; document.getElementById('nm-hgo').onclick = closeHelp; help.onclick = (e) => { if (e.target === help) closeHelp(); };
   document.getElementById('nm-helpbtn').onclick = (e) => { e.stopPropagation(); openHelp(); };
+  // AR guide: the button appears when this tour has its AR map (ar_shape.bin, written with the collision mesh; the AR page is ar.html)
+  { const ar = document.getElementById('nm-ar');
+    fetch('./ar_shape.bin').then(r => { if (r.ok) { ar.style.display = 'flex'; document.body.classList.add('nm-has-ar'); } }).catch(() => {});
+    ar.onclick = async (e) => { e.stopPropagation();
+      const ok = !!navigator.xr && await navigator.xr.isSessionSupported('immersive-ar').catch(() => false);
+      if (ok) { location.href = './ar.html'; return; }
+      const t = document.getElementById('nm-toast'); t.textContent = 'AR needs an Android phone with Chrome, standing in this room. Open this same link there and tap AR.';
+      t.classList.remove('ok'); t.style.display = 'block'; setTimeout(() => { t.style.display = 'none'; }, 7000); }; }
   { const t0 = Date.now(), k = setInterval(() => { const v = window.viewer; if ((v && v.state && v.state.loaded) || Date.now() - t0 > 120000) { clearInterval(k); openHelp(); } }, 300); }
   // objects (objects3d.py): search by name / description, and click an object in the 3D view to see what it is
   const obs = o.objects || [], find = document.getElementById('nm-find'), q = document.getElementById('nm-q'), hits = document.getElementById('nm-hits'), card = document.getElementById('nm-card');
