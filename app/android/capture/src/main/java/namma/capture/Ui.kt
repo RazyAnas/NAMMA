@@ -4,8 +4,10 @@ import android.content.Context
 import android.graphics.Color
 import android.graphics.Typeface
 import android.graphics.drawable.GradientDrawable
+import android.os.Build
 import android.view.Gravity
 import android.view.View
+import android.view.WindowInsets
 import android.widget.Button
 import android.widget.LinearLayout
 import android.widget.TextView
@@ -35,6 +37,21 @@ object Ui {
 
     fun card(c: Context) = column(c, 12).apply {
         background = GradientDrawable().apply { cornerRadius = dp(c, 12).toFloat(); setColor(CARD) }
+    }
+
+    /** Android 15+ draws every screen under the status bar, the navigation bar and the camera cut-out: keep these views'
+     *  content clear of them (the insets are added to the padding each view already has). */
+    fun insets(root: View, vararg views: View) {
+        val base = views.map { intArrayOf(it.paddingLeft, it.paddingTop, it.paddingRight, it.paddingBottom) }
+        root.setOnApplyWindowInsetsListener { _, w ->
+            val l: Int; val t: Int; val r: Int; val b: Int
+            if (Build.VERSION.SDK_INT >= 30) { val i = w.getInsets(WindowInsets.Type.systemBars() or WindowInsets.Type.displayCutout()); l = i.left; t = i.top; r = i.right; b = i.bottom }
+            else { @Suppress("DEPRECATION") l = w.systemWindowInsetLeft; @Suppress("DEPRECATION") t = w.systemWindowInsetTop
+                @Suppress("DEPRECATION") r = w.systemWindowInsetRight; @Suppress("DEPRECATION") b = w.systemWindowInsetBottom }
+            views.forEachIndexed { k, v -> v.setPadding(base[k][0] + l, base[k][1] + t, base[k][2] + r, base[k][3] + b) }
+            w
+        }
+        root.requestApplyInsets()
     }
 
     fun gap(c: Context, h: Int = 12) = View(c).apply { layoutParams = LinearLayout.LayoutParams(1, dp(c, h)) }

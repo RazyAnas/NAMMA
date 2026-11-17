@@ -1,9 +1,15 @@
-# Kaggle job anasrazy/namma-v3 (2x T4, ~75 min): video in -> photoreal 3D model out, built only from the standard tools that
+# Kaggle job anasrazy/namma-v3 (2x T4; 1.3 h for a 2-min room, ~5 h for a house, never past Kaggle's 12 h: final/budget.py):
+# video in -> photoreal 3D model out, built only from the standard tools that
 # Polycam / Postshot / nerfstudio users get good rooms with. Our own trainer and repair layers are out of the default path.
-#   1 frames   sharpest frame per time window (video) or an evenly spaced subset (frame folder, e.g. DL3DV)
-#   2 cameras  hloc SuperPoint + LightGlue -> COLMAP model (one shared SIMPLE_RADIAL camera) + sfm_report.json
+#   1 frames   video: frames follow the camera's motion (more in turns, fewer in pauses), the sharpest of each stretch
+#              (frames.from_video_smart; FRAME_PICK=time = the old equal time windows); frame folder (DL3DV): evenly spaced
+#   2 cameras  hloc ALIKED + LightGlue -> COLMAP model (one shared SIMPLE_RADIAL camera) + sfm_report.json, with a time
+#              limit: out of time -> fewer frames; broken apart -> more frames where it broke, once
 #   3 splats   gsplat's own examples/simple_trainer.py: MCMC densification, bilateral grid (phone auto-exposure), SfM depth loss,
 #              held-out eval on every 8th frame. GPU 1 trains a 7k-step preview while GPU 0 trains the full 30k-step model
+#   time       every stage has a share of the session (final/budget.py -> budget.json): the splat recipe is the best one that
+#              fits (run 4's, else fewer steps / pixels / frames, never nothing), the trainer stops itself at its deadline
+#              and keeps what it has (final/budget_patch.py), a snapshot of the model goes to HF at every checkpoint
 #   4 QA       per model: qa_sheet.jpg (held-out real | model, 50 cm off the walk, outside, top-down), metrics.json (pass/fail),
 #              levelled model.splat (SuperSplat), model.ply (full colour detail), walkthrough.mp4 (trainer's fly-through: colour | depth)
 # SOURCE  dl3dv:auto | dl3dv:<scene hash>   handheld scene from HF DL3DV/DL3DV-Benchmark (Kaggle secret HF_TOKEN; "Agree" on HF once)
@@ -38,8 +44,12 @@ _g = subprocess.run('nvidia-smi --query-gpu=name,memory.total --format=csv,nohea
 say('GPUs:', _g.stdout.strip().replace('\n', ' | ') or 'none')
 if _g.returncode or not _g.stdout.strip():
     raise SystemExit('NO GPU in this Kaggle session (account not phone-verified, or no GPU quota left): stopping before any work')
-sh(f'git clone -q --depth 1 -b claude/wonderful-cori-i3fn41 https://github.com/RazyAnas/NAMMA {W}/repo', check=True)
+REF = os.environ.get('NAMMA_REF', 'claude/wonderful-cori-i3fn41')                           # a test run can take the code of another branch
+sh(f'git clone -q --depth 1 -b {REF} https://github.com/RazyAnas/NAMMA {W}/repo', check=True)
 F = f'{W}/repo/colab/real_scenes/final'; sys.path.insert(0, F)
+import budget
+CLK = budget.Clock(T0, path=f'{O}/budget.json'); say(f'session budget: done by {CLK.deadline_h:.2f} h (Kaggle stops at {budget.HARD_H:.0f} h)')
+MESH = os.environ.get('NO_MESH') != '1'
 sh('ls /kaggle/input /kaggle/input/* | head -30')
 EX = f'{W}/gsplat/examples'
 
@@ -94,8 +104,8 @@ def source():
         hf_setup(tok); scene, folder = dl3dv.fetch(SOURCE[6:], f'{W}/dl3dv', tok)
         json.dump(dict(source=f'{dl3dv.REPO}/{scene}', frames='nerfstudio/images_4 (960 x 540)'), open(f'{O}/source.json', 'w'))
         return folder
-    if SOURCE.startswith('kaggle:'): return attached(SOURCE[7:])
-    hf_setup(hf_token())
+    hf_setup(hf_token())                         # also for kaggle: sources (every run started from GitHub): without it nothing was
+    if SOURCE.startswith('kaggle:'): return attached(SOURCE[7:])   # sent to HF while the job ran, the snapshots included (test 1, 16 Nov)
     if SOURCE == 'kaggle':
         v = sorted(glob.glob('/kaggle/input/**/*.mp4', recursive=True) + glob.glob('/kaggle/input/**/*.mov', recursive=True)
                    + glob.glob('/kaggle/input/**/*.MOV', recursive=True))
@@ -149,10 +159,14 @@ else:
         import cv2; cap_ = cv2.VideoCapture(v); VTOT = int(cap_.get(cv2.CAP_PROP_FRAME_COUNT)); fps = cap_.get(cv2.CAP_PROP_FPS) or 30
         # run 4's density by walking time (411 frames in 123 s), never more than the camera solve handles in its proven range
         # (31 Oct: 3,470 frames took 7.6 h of SfM and broke into 4 pieces; runs 4 / 6 solved 411 / 900 in minutes)
-        if NF.startswith('auto') and VTOT > 0: NFRAMES = max(50, min(int(os.environ.get('SFM_MAX', 1000)), round(VTOT / fps * 411 / 123.3)))
-        say('video frames', VTOT, '-> frames to extract', NFRAMES)
+        # and never more than the solve is predicted to finish in its share of the session (budget.sfm_minutes)
+        global FPS, CAP_N
+        FPS = fps; CAP_N = min(int(os.environ.get('SFM_MAX', budget.SFM_MAX)), budget.sfm_max_frames(budget.sfm_budget_min(CLK.left_h())))
+        if NF.startswith('auto') and VTOT > 0: NFRAMES = budget.frame_count(VTOT / fps, CAP_N)
+        say('video frames', VTOT, '-> frames to extract', NFRAMES, f'(camera solve: at most {CAP_N} frames)')
 
-    t_fr = time.time()
+    t_fr = time.time(); FPS = 30.0; CAP_N = NFRAMES; PICK = None; CAND = f'{W}/cand'
+    SMART = NF.startswith('auto') and os.environ.get('FRAME_PICK', 'smart') == 'smart'
     if not os.path.isdir(src): plan_frames(src)
     if not os.path.isdir(src) and os.environ.get('FIX_BANDS') != '0':                          # a squeezed picture with smeared edges
         try:                                                                                   # (frames.find_bands): repaired in every reader
@@ -160,8 +174,15 @@ else:
         except Exception as e: say('edge check failed:', str(e)[:160])
     if os.path.isdir(src): n = frames.from_images(src, f'{D}/images', NFRAMES, LONG)
     else:                                                                                      # ffmpeg on all cores; OpenCV if that fails
-        try: n = frames.from_video_fast(src, f'{D}/images', NFRAMES, LONG, VTOT)
-        except Exception as e: say('fast frame reader failed:', str(e)[:200]); n = 0
+        n = 0
+        if SMART:                                                                              # frames by motion; any trouble: by time
+            try: n, PICK = frames.from_video_smart(src, f'{D}/images', CAP_N, LONG, VTOT, FPS, cand=CAND)
+            except Exception as e: say('motion-aware frame reader failed:', str(e)[:200])
+            if n < 20: shutil.rmtree(f'{D}/images', ignore_errors=True); PICK = None; n = 0
+            else: say('frames by motion:', {k: v for k, v in PICK.items() if k != 'kept'})
+        if n < 20:
+            try: n = frames.from_video_fast(src, f'{D}/images', NFRAMES, LONG, VTOT)
+            except Exception as e: say('fast frame reader failed:', str(e)[:200]); n = 0
         if n < 20: shutil.rmtree(f'{D}/images', ignore_errors=True); n = frames.from_video(src, f'{D}/images', NFRAMES, LONG)
     if n < 20 and not os.path.isdir(src):                                                       # e.g. 4K HEVC OpenCV cannot decode:
         say('only', n, 'frames decoded; converting the video with ffmpeg first')                 # H.264 at the training size
@@ -169,6 +190,7 @@ else:
         plan_frames(f'{W}/video.mp4'); shutil.rmtree(f'{D}/images', ignore_errors=True); n = frames.from_video(f'{W}/video.mp4', f'{D}/images', NFRAMES, LONG)
     say(n, 'frames ->', f'{D}/images'); assert n >= 20, f'only {n} frames from {src}'
     t_sfm = time.time(); frames_min = round((t_sfm - t_fr) / 60, 1)
+    CLK.mark('frames', t_fr, frames=n, video_frames=VTOT, pick={k: v for k, v in (PICK or dict(mode='time')).items() if k != 'kept'}, bands=frames.BANDS)
 
     # 2 cameras (same hloc venv that solved 574/578 frames of the 22 Oct video)
     E = f'{W}/sfmenv/bin/python'; P = f'--python {E}'
@@ -177,11 +199,46 @@ else:
        f'git clone -q --recursive https://github.com/cvg/Hierarchical-Localization {W}/hloc && '
        f'uv pip install -q {P} "numpy<2" -e {W}/hloc "lightglue @ git+https://github.com/cvg/LightGlue" >> {W}/sfm_pip.log 2>&1; tail -3 {W}/sfm_pip.log')
     sh(f'{E} -c "import hloc, lightglue, pycolmap; print(\'hloc ok, pycolmap\', pycolmap.__version__)"', check=True)
-    # live in the Kaggle log (a `| tail` here held every line back until the end: the 30 Oct house run looked stuck for hours)
-    sh(f'cd {W} && PYTHONUNBUFFERED=1 {E} {F}/sfm_hloc.py {D}/images {W}/sfm 10 15 SIMPLE_RADIAL 2>&1 | tee {W}/sfm.log '
-       f'| grep --line-buffered -v -E "it/s|s/it" | while IFS= read -r l; do echo "[$(date -u +%H:%M:%S)] $l"; done')
-    assert os.path.exists(f'{W}/sfm/sfm/images.bin'), 'camera solve failed: no COLMAP model (see the hloc log above)'
-    sfm_min = round((time.time() - t_sfm) / 60, 1)
+    def solve(limit_min):
+        """One camera solve with a time limit (30 Oct: 3,470 frames ran 7.6 h with nothing to stop it). hloc keeps its features
+        and matches in {W}/sfm, so a second solve only works on what is new. True if a COLMAP model came out."""
+        shutil.rmtree(f'{W}/sfm/sfm', ignore_errors=True)
+        for x in ('sfm_report.json', 'sfm.npz'):
+            if os.path.exists(f'{W}/sfm/{x}'): os.remove(f'{W}/sfm/{x}')
+        # live in the Kaggle log (a `| tail` here held every line back until the end: the 30 Oct house run looked stuck for hours)
+        sh(f'cd {W} && PYTHONUNBUFFERED=1 timeout -k 30 {int(limit_min * 60)} {E} {F}/sfm_hloc.py {D}/images {W}/sfm 10 15 SIMPLE_RADIAL 2>&1 '
+           f'| tee -a {W}/sfm.log | grep --line-buffered -v -E "it/s|s/it" | while IFS= read -r l; do echo "[$(date -u +%H:%M:%S)] $l"; done')
+        return os.path.exists(f'{W}/sfm/sfm/images.bin') and os.path.exists(f'{W}/sfm/sfm_report.json')
+
+    count = lambda: len(glob.glob(f'{D}/images/*.jpg'))
+    lim = min(budget.sfm_timeout_min(n), max(30.0, CLK.left_h() * 60 * 0.4)); say(f'camera solve: {n} frames, predicted {budget.sfm_minutes(n):.0f} min, limit {lim:.0f} min')
+    ok = solve(lim); sfm_tries = [dict(frames=n, ok=ok)]
+    if not ok and n > 80:                                                                        # out of time: 60 % of the frames
+        n = frames.thin_dir(f'{D}/images', int(n * 0.6)); lim = min(budget.sfm_timeout_min(n), max(30.0, CLK.left_h() * 60 * 0.4))
+        say(f'camera solve gave no model in its time: again with {n} frames, limit {lim:.0f} min'); ok = solve(lim); sfm_tries.append(dict(frames=n, ok=ok))
+    assert ok, 'camera solve failed: no COLMAP model (see the hloc log above)'
+    r1 = json.load(open(f'{W}/sfm/sfm_report.json'))
+    if (PICK and (r1['registered'] < 0.85 * r1['frames'] or r1['models'] > 1) and os.path.isdir(CAND)
+            and budget.sfm_minutes(n * 1.3) * 2.2 < CLK.left_h() * 60 * 0.25):                   # broke apart, and there is time:
+        import numpy as np                                                                       # more frames where it lost the video
+        reg = set(str(x) for x in np.load(f'{W}/sfm/sfm.npz', allow_pickle=True)['names'])
+        lost = sorted(set(os.path.basename(f) for f in glob.glob(f'{D}/images/*.jpg')) - reg)
+        room = int(CAP_N * 1.2) - n; added = frames.add_candidates(CAND, f'{D}/images', lost, around=2, most=room) if room > 0 else []
+        if added:
+            shutil.copytree(f'{W}/sfm/sfm', f'{W}/sfm_first', dirs_exist_ok=True)
+            for x in ('sfm_report.json', 'sfm.npz'): shutil.copy(f'{W}/sfm/{x}', f'{W}/sfm_first_{x}')
+            say(f"camera solve lost {len(lost)} of {r1['frames']} frames ({r1['models']} models): {len(added)} more frames around them, solving again")
+            ok2 = solve(min(budget.sfm_timeout_min(count()), max(30.0, CLK.left_h() * 60 * 0.3)))
+            r2 = json.load(open(f'{W}/sfm/sfm_report.json')) if ok2 else dict(registered=0)
+            sfm_tries.append(dict(frames=count(), ok=ok2, added=len(added), registered=r2['registered'], was=r1['registered']))
+            if r2['registered'] <= r1['registered']:                                             # no better: the first solve, the first frames
+                say('the denser solve is no better: keeping the first one'); shutil.rmtree(f'{W}/sfm/sfm', ignore_errors=True)
+                shutil.copytree(f'{W}/sfm_first', f'{W}/sfm/sfm')
+                for x in ('sfm_report.json', 'sfm.npz'): shutil.copy(f'{W}/sfm_first_{x}', f'{W}/sfm/{x}')
+                for a in added: os.remove(f'{D}/images/{a}')
+            n = count()
+    shutil.rmtree(CAND, ignore_errors=True)
+    sfm_min = round((time.time() - t_sfm) / 60, 1); CLK.mark('cameras', t_sfm, tries=sfm_tries, predicted_min=round(budget.sfm_minutes(n), 1))
     try: shutil.copytree(f'{W}/sfm', f'{O}/sfm_work', dirs_exist_ok=True); shutil.copy(f'{W}/sfm.log', O)   # a retry continues from here
     except Exception as e: say('could not keep the SfM work:', str(e)[:150])
 rep = json.load(open(f'{W}/sfm/sfm_report.json')); shutil.copy(f'{W}/sfm/sfm_report.json', O); push(f'{O}/sfm_report.json', 'sfm_report.json')
@@ -192,6 +249,11 @@ assert rep['registered'] >= 20, 'fewer than 20 frames have cameras: nothing to t
 DEPTH = '--depth-loss' if not rep.get('frames_without_points') else ''                     # its loader needs points in every frame
 os.makedirs(f'{D}/sparse/0', exist_ok=True)
 for x in ('cameras.bin', 'images.bin', 'points3D.bin'): shutil.copy(f'{W}/sfm/sfm/{x}', f'{D}/sparse/0/{x}')
+# frames + cameras into the job's output NOW, in the layout REUSE reads (images/ + sparse/0): until 16 Nov they were copied
+# only after training, so a run that died while training had to decode and solve again (sfm_work has no frames)
+try: shutil.copytree(f'{D}/sparse', f'{O}/sparse', dirs_exist_ok=True); shutil.copytree(f'{D}/images', f'{O}/images', dirs_exist_ok=True)
+except Exception as e: say('could not keep frames + cameras early:', str(e)[:150])
+if not REUSE: R0 = O                                                                       # take(k) thins from the full set
 
 # 3 splats: wait for the dependencies, reuse namma-prep's compiled gsplat if it matches (else it compiles, ~5 min)
 dep_proc.wait(); sh(f'grep -v "^\\s*$" {W}/deps.log | tail -8')
@@ -215,6 +277,8 @@ import room_prior                                                               
 say('room prior patched in:', room_prior.patch(f'{EX}/simple_trainer.py'))
 import geo_prior                                                                        # dense depth + normal guide (kind 'geo')
 say('geo prior patched in:', geo_prior.patch(f'{EX}/simple_trainer.py'))
+import budget_patch                                                                     # the trainer stops itself at NM_DEADLINE
+TIMED = budget_patch.patch(f'{EX}/simple_trainer.py'); say('deadline stop patched in:', TIMED)
 if any(len(v) > 3 and 'geo' in v[3] for v in VARIANTS):                                  # DA3 depth per frame, before training
     sh(f'cd {EX} && PYTHONPATH={EX}:{F}:$PYTHONPATH python {F}/geo_prior.py {D} {W}/geo 2>&1 | grep -v "it/s" | tail -15')
     if os.path.exists(f'{W}/geo/geo_report.json'): shutil.copy(f'{W}/geo/geo_report.json', O); push(f'{O}/geo_report.json', 'geo_report.json')
@@ -233,25 +297,47 @@ if PREP_ONLY:                                    # plan of 30 Oct: prove a whole
     assert os.path.exists(f'{O}/precheck.json'), 'pre-check failed (see its log above)'
     say('PRE-CHECK DONE', json.load(open(f'{O}/precheck.json')).get('decision')); raise SystemExit(0)
 
-if os.environ.get('AUTO_STEPS') == '1':     # run 4's recipe for any size: ~83.6 steps per training view, 1.5 M splats per 37 m2
-    import math, precheck, rooms
-    precheck.setup(EX, D, W, O, {}, PP)
-    for _ in range(4):
-        precheck.DEPTH = DEPTH; nreg = rep['registered']; tv = nreg - math.ceil(nreg / 8); steps = int(round(83.6 * tv))
-        nm, C_, R_, P_, ob_ = rooms.load(f'{D}/sparse/0'); area = sum(r_['area_m2'] for r_ in rooms.split(nm, C_, R_, P_, ob_)[1])
-        cap = int(min(4e6, max(1.5e6, 1.5e6 * area / 37)))
-        dry = precheck.bench('dryrun', '0', cap); hours = (steps * (dry['s_per_step'] or 9) * 1.1) / 3600 + 0.5
-        left = 11.0 - (time.time() - T0) / 3600                                                # Kaggle stops a session at 12 h
-        say(f'GO/NO-GO: {n} frames, {tv} train views, {area:.1f} m2, cap {cap}, {steps} steps, {dry["s_per_step"]} s/step, '
-            f'peak {dry["peak_mem_gb"]} GB -> {hours:.1f} h of {left:.1f} h left')
-        json.dump(dict(frames=n, train_views=tv, area_m2=round(area, 1), cap=cap, steps=steps, dry=dry, hours=round(hours, 2), left=round(left, 2)),
-                  open(f'{O}/go_nogo.json', 'w'), indent=1)
-        if dry['ok'] and max(dry['peak_mem_gb'].values()) <= 13 and hours <= min(9.0, left): break
-        if not (REUSE and dry['ok']): raise SystemExit(f'NO-GO: would not finish safely ({hours:.1f} h, dry run ok={dry["ok"]}): nothing trained')
-        rep = take(rep['thin'] + 1); n = rep['frames']; DEPTH = '--depth-loss' if not rep.get('frames_without_points') else ''
+SPS = {}                                                                                   # model name -> predicted s/step
+if os.environ.get('AUTO_STEPS') == '1':     # run 4's recipe for any size (~83.6 steps per training view, 1.5 M splats per 37 m2)
+    # if it fits the session; else the best rung of budget.fit's ladder that does. Until 16 Nov a video that did not fit ended
+    # here with NO-GO and nothing trained, after decode, cameras and the dry run had been paid for.
+    import precheck, rooms, cv2
+    precheck.setup(EX, D, W, O, {}, PP); precheck.DEPTH = DEPTH; t_plan = time.time()
+    nm, C_, R_, P_, ob_ = rooms.load(f'{D}/sparse/0'); area = sum(r_['area_m2'] for r_ in rooms.split(nm, C_, R_, P_, ob_)[1])
+    im0 = cv2.imread(sorted(glob.glob(f'{D}/images/*.jpg'))[0]); long0 = int(max(im0.shape[:2])); cap = budget.cap_for(area)
+    dry = precheck.bench('dryrun', '0', cap)
+    for _ in range(2):                                                                      # too much memory: fewer splats set it
+        if not dry['ok'] or max(dry['peak_mem_gb'].values() or [0]) <= budget.MEM_GB: break
+        cap = int(cap * 0.7); say('dry run peak memory over', budget.MEM_GB, 'GB: splat cap ->', cap); dry = precheck.bench('dryrun', '0', cap)
+    if not dry['ok']: raise SystemExit(f"trainer dry run failed (exit {dry['exit']}, see bench_dryrun.log): nothing trained")
+    sps0 = dry['s_per_step'] or 0.3                                                         # no speed read: a slow guess; the trainer's
+    left = CLK.train_left_h(mesh=MESH)                                                      # own deadline is the safety either way
+    plan = budget.fit(rep['registered'], area, long0, sps0, left, cap); dry2 = None
+    if plan['thin'] > 1:
+        rep = take(rep.get('thin', 1) * plan['thin']); n = rep['frames']; DEPTH = '--depth-loss' if not rep.get('frames_without_points') else ''; precheck.DEPTH = DEPTH
         for x in ('cameras.bin', 'images.bin', 'points3D.bin'): shutil.copy(f'{W}/sfm/sfm/{x}', f'{D}/sparse/0/{x}')
-    else: raise SystemExit('NO-GO: still too long after thinning 4 times')
-    VARIANTS = [['full', steps, cap]]; say('training', VARIANTS)
+    if plan['long'] < long0: say('frames resized to', plan['long'], 'px:', frames.resize_dir(f'{D}/images', plan['long']))
+    if plan['long'] < long0 or plan['thin'] > 1:                                            # another size: measure it, do not trust the scaling
+        dry2 = precheck.bench('dryrun2', '0', plan['cap'])
+        if dry2['ok'] and dry2['s_per_step']:
+            plan['s_per_step'] = dry2['s_per_step']; left = CLK.train_left_h(mesh=MESH)
+            fits = int(left * 3600 / budget.MARGIN / dry2['s_per_step'])
+            if fits < plan['steps']: say(f"measured {dry2['s_per_step']} s/step: {fits} of {plan['steps']} steps fit"); plan['steps'] = max(500, fits)
+            plan['hours'] = round(plan['steps'] * dry2['s_per_step'] * budget.MARGIN / 3600, 2)
+    steps, cap = plan['steps'], plan['cap']; SPS['full'] = plan['s_per_step']
+    say(f"PLAN: {n} frames, {plan['views']} train views, {area:.1f} m2, {long0} -> {plan['long']} px, cap {cap}, {steps} steps, "
+        f"{plan['s_per_step']} s/step, peak {dry['peak_mem_gb']} GB -> {plan['hours']:.1f} h of {left:.1f} h for training: {plan['why']}")
+    json.dump(dict(frames=n, train_views=plan['views'], area_m2=round(area, 1), cap=cap, steps=steps, dry=dry, dry2=dry2, hours=plan['hours'],
+                   left=round(left, 2), plan=plan), open(f'{O}/go_nogo.json', 'w'), indent=1)       # the name older tools read
+    CLK.mark('plan', t_plan, plan=plan, dry_s_per_step=dry['s_per_step'], peak_mem_gb=dry['peak_mem_gb']); push(f'{O}/budget.json', 'budget.json')
+    VARIANTS = [['full', steps, cap]]
+    if NGPU >= 2 and plan['kind'] == 'full':                                                # the other T4: a look at the room ~30 min in,
+        VARIANTS.append(['preview', min(PREVIEW, steps), min(cap, CAP_PREVIEW)])            # then (CHALLENGER=<kind>) one alternative
+        ch = os.environ.get('CHALLENGER', '')                                               # recipe, kept only if it scores better
+        if ch: VARIANTS.append(['challenger', steps, cap, ch]); SPS['challenger'] = plan['s_per_step']
+    say('training', VARIANTS)
+
+TRAIN_END = CLK.train_deadline(mesh=MESH)                                                  # trainers stop themselves here (NM_DEADLINE)
 
 def start(name, steps, cap, gpu, kind='gs'):
     res = f'{W}/{name}'
@@ -262,22 +348,71 @@ def start(name, steps, cap, gpu, kind='gs'):
         env = ('ROOM_PRIOR=1 ' if 'prior' in kind else '') + (f'GEO_PRIOR=1 GEO_DIR={W}/geo ' if 'geo' in kind else '')
         pr = f'{env}PYTHONPATH={F}:' if env else 'PYTHONPATH='                              # kinds: gs, prior, pose, geo and + of them
         po = ' --pose-opt' if 'pose' in kind else ''                                           # refine the SfM cameras while training
-        cmd = (f'cd {EX} && CUDA_VISIBLE_DEVICES={gpu} {pr}{PP}:$PYTHONPATH python simple_trainer.py mcmc --data-dir {D} --data-factor 1 '
-               f'--result-dir {res} --max-steps {steps} --eval-steps {steps} --save-steps {steps} --ply-steps {steps} --save-ply '
-               f'--disable-viewer --use-bilateral-grid {DEPTH} --strategy.cap-max {cap}{po}')
-    say(cmd); return dict(name=name, gpu=gpu, res=res, kind=kind, t=time.time(),
-                          p=subprocess.Popen(cmd, shell=True, executable='/bin/bash', stdout=open(f'{res}.log', 'w'), stderr=subprocess.STDOUT))
+        ss = ' '.join(str(x) for x in budget.save_steps(steps, SPS.get(name, 0.2)))            # a checkpoint about every 20 min
+        # MCMC refreshes splats until step 25k whatever the length: keep run 4's share (25k of 30k) on longer runs (the house's
+        # 71.8k steps ran 47k without a refresh). Shorter runs keep the stock setting they were measured with.
+        rs = f' --strategy.refine-stop-iter {budget.refine_stop(steps)}' if steps > 30000 else ''
+        cmd = (f'cd {EX} && NM_DEADLINE={TRAIN_END:.0f} CUDA_VISIBLE_DEVICES={gpu} {pr}{PP}:$PYTHONPATH python simple_trainer.py mcmc --data-dir {D} '
+               f'--data-factor 1 --result-dir {res} --max-steps {steps} --eval-steps {steps} --save-steps {ss} --ply-steps {steps} --save-ply '
+               f'--disable-viewer --use-bilateral-grid {DEPTH} --strategy.cap-max {cap}{po}{rs}')
+    say(cmd); return dict(name=name, gpu=gpu, res=res, kind=kind, t=time.time(), steps=steps, snap=-1,
+                          p=subprocess.Popen(cmd, shell=True, executable='/bin/bash', stdout=open(f'{res}.log', 'w'), stderr=subprocess.STDOUT,
+                                             start_new_session=True))                      # its own group: stop() ends the python too
 
 def progress(j):
     try: return [x for x in open(j['res'] + '.log', errors='ignore').read()[-3000:].replace('\r', '\n').split('\n') if x.strip()][-1][:150]
     except Exception: return ''
+
+def ckpts(j): return sorted(glob.glob(f"{j['res']}/ckpts/ckpt_*_rank0.pt"), key=lambda f: int(f.split('_')[-2]))
+
+def snapshot(j):
+    """The newest checkpoint as a small .splat in the job's output and on HF (snapshot/<model>.splat), older checkpoints
+    deleted (350 MB - 1 GB each): if the session dies, the room as trained so far is still there."""
+    if j['kind'] == '2dgs': return
+    c = [f for f in ckpts(j) if time.time() - os.path.getmtime(f) > 20]                    # not one still being written
+    if not c: return
+    step = int(c[-1].split('_')[-2])
+    if step <= j['snap'] or step >= j['steps'] - 1: return                                  # the last one is finish()'s
+    try:
+        os.makedirs(f'{O}/snapshot', exist_ok=True); dst = f"{O}/snapshot/{j['name']}.splat"; k = budget.ckpt_to_splat(c[-1], dst)
+        json.dump(dict(step=step + 1, of=j['steps'], splats=k, minutes=round((time.time() - j['t']) / 60)), open(f"{O}/snapshot/{j['name']}.json", 'w'))
+        say(f"snapshot {j['name']}: step {step + 1} of {j['steps']}, {k} splats"); push(dst, f"snapshot/{j['name']}.splat")
+        push(f"{O}/snapshot/{j['name']}.json", f"snapshot/{j['name']}.json")
+        for f in c[:-1]: os.remove(f)
+    except Exception as e: say('snapshot failed:', str(e)[:150])
+    j['snap'] = step
+
+def stop(j, why):
+    """A trainer that is still running 10 min after its deadline (the patch did not apply, or it hangs): end it. finish()
+    then builds the model from its newest checkpoint."""
+    import signal
+    say(f"stopping {j['name']}: {why}"); j['stopped'] = why
+    try: os.killpg(os.getpgid(j['p'].pid), signal.SIGTERM); j['p'].wait(timeout=60)
+    except Exception:
+        try: os.killpg(os.getpgid(j['p'].pid), signal.SIGKILL); j['p'].wait(timeout=30)
+        except Exception as e: say('could not stop it:', str(e)[:100])
+
+def salvage(j):
+    """A trainer that ended without its .ply (stopped, crashed, out of memory late): the .ply from its newest checkpoint,
+    so QA, the tour and the mesh still get a model. Its held-out numbers are missing (the trainer's own eval did not run)."""
+    if j['kind'] == '2dgs' or glob.glob(f"{j['res']}/ply/point_cloud_*.ply"): return
+    c = ckpts(j)
+    if not c: return
+    try:
+        step = int(c[-1].split('_')[-2]); os.makedirs(f"{j['res']}/ply", exist_ok=True)
+        k = budget.ckpt_to_ply(c[-1], f"{j['res']}/ply/point_cloud_{step}.ply"); j['salvaged'] = step + 1
+        say(f"{j['name']}: no .ply from the trainer; built from the checkpoint of step {step + 1} ({k} splats)")
+    except Exception as e: say('salvage failed:', str(e)[:150])
 
 def finish(j):
     out = f"{O}/{j['name']}"; os.makedirs(out, exist_ok=True)
     lines = open(j['res'] + '.log', errors='ignore').read().replace('\r', '\n').split('\n')
     keep = [x for x in lines if x.strip() and '%|' not in x]                              # drop the progress bar
     open(f'{out}/train.log', 'w').write('\n'.join(keep)); print('\n'.join(keep[-25:]), flush=True)
-    say(f"{j['name']} exit {j['p'].returncode} after {(time.time() - j['t']) / 60:.0f} min")
+    say(f"{j['name']} exit {j['p'].returncode} after {(time.time() - j['t']) / 60:.0f} min"); salvage(j)
+    early = [x for x in keep if 'NM_DEADLINE reached' in x]
+    CLK.mark('train ' + j['name'], j['t'], steps=j['steps'], exit=j['p'].returncode, stopped_early=(early[-1][:90] if early else j.get('stopped')),
+             salvaged_step=j.get('salvaged'), predicted_s_per_step=SPS.get(j['name']))
     if j['kind'] == '2dgs':                                                              # its mesh is made at the end (needs full's level)
         st = sorted(glob.glob(f"{j['res']}/stats/val_step*.json"))
         if st: m = json.load(open(st[-1])); json.dump({k: round(v, 3) for k, v in m.items() if isinstance(v, float)}, open(f'{out}/metrics.json', 'w'))
@@ -293,18 +428,56 @@ while running:
     time.sleep(30)
     for j in [j for j in running if j['p'].poll() is not None]:
         running.remove(j); finish(j)
-        if queue: v = queue.pop(0); running.append(start(*v[:3], j['gpu'], *v[3:]))
-    if time.time() - last > 300: last = time.time(); [say(j['name'], progress(j)) for j in running]
+        if queue and time.time() < TRAIN_END - 900: v = queue.pop(0); running.append(start(*v[:3], j['gpu'], *v[3:]))
+        elif queue: say('not started (under 15 min to the training deadline):', [v[0] for v in queue]); queue.clear()
+    for j in running:
+        snapshot(j)
+        if time.time() > TRAIN_END + 600: stop(j, 'still training 10 min after its deadline')
+    if time.time() - last > 300: last = time.time(); [say(j['name'], progress(j), f'| {CLK.left_h():.1f} h left') for j in running]
 
 S = {n: json.load(open(f'{O}/{n}/metrics.json')) for n in [v[0] for v in VARIANTS] if os.path.exists(f'{O}/{n}/metrics.json')}
+BEST = 'full'                                    # CHALLENGER: the alternative replaces full only if it is clearly better on the
+if 'challenger' in S and 'full' in S:            # held-out frames (exposure-fair PSNR + 0.2 dB, LPIPS not worse); both stay on HF
+    q = lambda m: (m.get('heldout_psnr_exposure_fair') or m.get('heldout_psnr') or 0, -(m.get('heldout_lpips') or 9))
+    a, b = q(S['full']), q(S['challenger']); win = b[0] >= a[0] + 0.2 and b[1] >= a[1]
+    say(f"challenger ({os.environ.get('CHALLENGER')}): {b[0]} dB vs full {a[0]} dB ->", 'it replaces full' if win else 'full stays')
+    S['challenger_won'] = bool(win)
+    if win:
+        os.rename(f'{O}/full', f'{O}/full_base'); os.rename(f'{O}/challenger', f'{O}/full'); BEST = 'challenger'
+        S['full_base'], S['full'] = S['full'], S.pop('challenger')
+# what still fits before the deadline: QA is done; the mesh on the finest grid its predicted time allows (budget.mesh_minutes),
+# after the object layer's share if that was asked for (else the tour walks on the room box, make_tour.room_collision)
+NIMG = len(os.listdir(f'{D}/images'))
+TL = budget.tail(CLK.left_h() * 60, mesh=MESH, objects=os.environ.get('OBJECTS') == '1', frames=NIMG, voxels=int(os.environ.get('MESH_VOXELS', 512)))
+say(f'{CLK.left_h() * 60:.0f} min left, {NIMG} frames ->', TL)
 # the mould: a solid mesh in the same coordinates as full/model.splat, from the 2DGS model if one was trained, else the full model
-geo = next(([v[0], '2dgs'] for v in VARIANTS if len(v) > 3 and v[3] == '2dgs'), ['full', '3dgs'])
-if os.path.isdir(f'{W}/{geo[0]}/ckpts') and os.environ.get('NO_MESH') != '1':
-    sh(f"cd {EX} && python {F}/mesh_tsdf.py {EX} {D} {W}/{geo[0]} {O}/mesh {O}/full/level.json {geo[1]} {os.environ.get('MESH_VOXELS', 512)}")
+geo = next(([v[0], '2dgs'] for v in VARIANTS if len(v) > 3 and v[3] == '2dgs'), [BEST, '3dgs'])
+if os.path.isdir(f'{W}/{geo[0]}/ckpts') and TL['mesh']:
+    t_mesh = time.time()
+    sh(f"cd {EX} && timeout -k 30 {int(TL['mesh_timeout_min'] * 60)} python {F}/mesh_tsdf.py {EX} {D} {W}/{geo[0]} {O}/mesh {O}/full/level.json {geo[1]} {TL['mesh_voxels']}")
     if os.path.exists(f'{O}/mesh/mesh.json'): S['mesh'] = json.load(open(f'{O}/mesh/mesh.json'))
+    CLK.mark('mesh', t_mesh, ok='mesh' in S, voxels=TL['mesh_voxels'], limit_min=TL['mesh_timeout_min'], predicted_min=round(budget.mesh_minutes(NIMG, TL['mesh_voxels']), 1))
+elif MESH: say('mesh skipped: not enough time left (the tour uses the room box for walking)'); CLK.note(mesh_skipped=True)
+# the object layer + the search index for the tour's "find anything" (final/objects3d.py, ai_find.region_index; 14.5 min on a
+# T4, 27 Oct), only with OBJECTS=1 and 33 min still left, with a time limit, and never failing the run: the tour works without
+if os.environ.get('OBJECTS') == '1' and os.path.exists(f'{O}/full/model.ply') and os.path.exists(f'{O}/full/level.json'):
+    if budget.tail(CLK.left_h() * 60, mesh=False, objects=True)['objects']:
+        t_ob = time.time(); lim = int((min(budget.TAIL_MIN['objects'] + 15, CLK.left_h() * 60 - budget.TAIL_MIN['base'])) * 60); OB = f'{W}/objects'
+        sh(f'pip install -q -c {W}/pin.txt plyfile open3d scipy accelerate 2>&1 | tail -2; '
+           f'SAM2_BUILD_CUDA=0 pip install -q -c {W}/pin.txt "git+https://github.com/facebookresearch/sam2.git" 2>&1 | tail -2')
+        r_ob = sh(f"cd {EX} && PYTHONPATH={EX}:{F}:$PYTHONPATH timeout -k 30 {lim} python {F}/objects3d.py {D} {O}/full/model.ply {O}/full/level.json 0 {OB} "
+                  f"{int(os.environ.get('OBJECT_FRAMES', 40))} 2>&1 | grep -v 'it/s' | tail -60")
+        if os.path.exists(f'{OB}/objects.json'):                                            # not its tinted full/model.ply
+            for x in ('objects.json', 'objects_sheet.jpg', 'regions.json', 'regions.f16'):
+                if os.path.exists(f'{OB}/{x}'): shutil.copy(f'{OB}/{x}', f'{O}/{x}'); push(f'{O}/{x}', x)
+            shutil.copytree(f'{OB}/crops', f'{O}/crops', dirs_exist_ok=True); S['objects'] = len(json.load(open(f'{O}/objects.json'))['objects'])
+        CLK.mark('objects', t_ob, ok=os.path.exists(f'{O}/objects.json'), objects=S.get('objects'), regions=os.path.exists(f'{O}/regions.f16'))
+    else: say('object layer skipped: under 33 min left'); CLK.note(objects_skipped=True)
 shutil.copytree(f'{D}/sparse', f'{O}/sparse', dirs_exist_ok=True)                        # cameras, so QA can be redone later
 shutil.copytree(f'{D}/images', f'{O}/images', dirs_exist_ok=True)                        # frames, for the tour (cameras need them)
 json.dump(dict(source=SOURCE, sfm=rep, models=S, minutes=round((time.time() - T0) / 60)), open(f'{O}/v3_summary.json', 'w'), indent=1)
 push(f'{O}/v3_summary.json', 'v3_summary.json')
+CLK.note(done=True, minutes=round((time.time() - T0) / 60)); push(f'{O}/budget.json', 'budget.json')
+say(f'time: {CLK.elapsed_h():.2f} h used, {CLK.left_h():.2f} h before the deadline, {budget.HARD_H - CLK.elapsed_h():.2f} h before Kaggle stops the session')
 say('V3 DONE', json.dumps(S)); sh(f'ls -la {O} {O}/*/ | head -40')
 if 'full' not in S: raise SystemExit('V3 FAILED: no full model (see the trainer logs above)')

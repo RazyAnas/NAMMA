@@ -125,6 +125,7 @@ class RecordActivity : Activity(), SensorEventListener {
         recBtn.isEnabled = false; recBtn.alpha = 0.4f; nextBtn.visibility = View.GONE
 
         checklist = makeChecklist(); root.addView(checklist, FrameLayout.LayoutParams(-1, -1))
+        Ui.insets(root, top, bottom, col, checklist)                                   // Android 15+: clear of the bars and the cut-out
         setContentView(root)
     }
 
@@ -165,7 +166,7 @@ class RecordActivity : Activity(), SensorEventListener {
         camReady = true
         try { rig.open(st) { runOnUiThread {
             rig.hint = (rig.sensorOrientation - rotationDeg() + 360) % 360; fitPreview()
-            info.text = "${rig.lens} · ${rig.size.width}x${rig.size.height} ${if (rig.hevc) "HEVC" else "H.264"} ${rig.bitrate / 1_000_000} Mbps · 30 fps · stabilisation off"
+            info.text = "${rig.lens} · ${rig.size.width}x${rig.size.height} ${if (rig.hevc) "HEVC" else "H.264"} ${rig.bitrate / 1_000_000} Mbps · 30 fps · stabilisation ${if (rig.stabilised) "on" else "off"}"
         } } }
         catch (e: Exception) { camReady = false; say("Camera: ${e.message}", false) }
     }
@@ -296,7 +297,7 @@ class RecordActivity : Activity(), SensorEventListener {
             .setNeutralButton("Upload anyway") { _, _ -> save(f, nm(), seconds, q, list, forced = true) }
         else d.setPositiveButton("Upload") { _, _ -> save(f, nm(), seconds, q, list, forced = false) }
             .setNeutralButton("Delete") { _, _ -> f.delete() }
-        d.show()
+        if (!isFinishing && !isDestroyed) d.show()                      // STOP came from leaving the screen: no window to show it in
     }
 
     private fun save(f: File, name: String, seconds: Long, q: Quality.Report, list: List<Quality.Sample>, forced: Boolean) {
@@ -305,11 +306,11 @@ class RecordActivity : Activity(), SensorEventListener {
             .put("device", "${Build.MANUFACTURER} ${Build.MODEL} (Android ${Build.VERSION.RELEASE})")
             .put("camera", JSONObject().put("lens", rig.lens).put("zoom", rig.zoom.toDouble()).put("width", rig.size.width).put("height", rig.size.height)
                 .put("fps", 30).put("bitrate", rig.bitrate).put("codec", if (rig.hevc) "hevc" else "h264").put("locked", rig.locked)
-                .put("exposure", rig.exposureInfo()).put("manual_shutter", rig.manual != null).put("stabilisation", "off").put("orientation", "landscape"))
+                .put("exposure", rig.exposureInfo()).put("manual_shutter", rig.manual != null).put("stabilisation", if (rig.stabilised) "on" else "off").put("orientation", "landscape"))
             .put("steps", if (stepSensor) totalSteps else null)
             .put("passes", passLog).put("cues", JSONObject(coach.counts.mapKeys { it.key.name }.mapValues { it.value }))
             .put("quality", q.json().put("uploaded_anyway", forced))
-            .put("quality_samples", JSONObject().put("columns", JSONArray(listOf("t", "sharp", "crisp", "luma", "texture", "shift", "ncc", "turn_deg", "elevation")))
+            .put("quality_samples", JSONObject().put("columns", JSONArray(Quality.COLUMNS))
                 .put("rows", JSONArray(list.map { it.json() })))
         j.meta.writeText(meta.toString(1))
         Store.add(this, j); UploadService.start(this); CheckJob.schedule(this)

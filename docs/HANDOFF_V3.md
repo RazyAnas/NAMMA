@@ -435,7 +435,7 @@ Rules:
 - **R1:** SfM gets at most ~1,000 frames (`SFM_MAX`), picked by walking time.
 - **R2:** SfM work is saved to `/kaggle/working/sfm_work`.
 - **R3:** train only with proven code paths.
-- **R4:** a full-size dry run plus a time gate (`AUTO_STEPS=1`, ≤ 9 h, else thin more or refuse) before any long training.
+- **R4:** a full-size dry run before any long training (`AUTO_STEPS=1`). Since 16 Nov it no longer refuses: the run is sized to the time left in the session (see "Session time budget" below).
 - **R5:** no mesh for a house (`NO_MESH=1`): collision comes from the floor-plan walls.
 - **R6:** gh_run uploads the model to HF before building the tour.
 
@@ -459,21 +459,125 @@ frame (`final/thin_model.py`, tested byte-identical round trip). The job must us
 Every problem found by hand on the hotel and house tours is now checked (and fixed where possible) by the pipeline itself:
 | What | Where | Rule |
 |---|---|---|
-| Walk collision | `run.py` | every run trains run 4's 2DGS `geo` model beside `full` (55.7 steps/view, timed by the go/no-go); if it cannot fit, the mesh comes from the full model's depth. `MESH_ONLY=1` adds geometry to an existing run (same frames + its level) and `gh_run` starts tour-publish itself |
+| Walk collision | `run.py` | the mesh comes from the full model's depth (`mesh_tsdf.py`), on the finest grid (512, 384 or 256 voxels) whose predicted time fits what is left (`budget.mesh_minutes`: 35-70 min at 411 frames and 512 voxels, runs 4 and 5), with a time limit of 2.5 x that; if `OBJECTS=1`, the object layer's 25 min are held back first; with no room for a mesh the tour walks on the room box. (The 2DGS `geo` model beside `full` and `MESH_ONLY=1` were reverted on 1 Nov, commit b40e616, and are not in the code.) |
 | Clean-up | `gh_run.py` tour step | `final/model_compare.py` cleaned vs trained (12 held-out + 9 off-path views): the cleaned model ships only if >= 40 dB and < 0.1 % pixels changed everywhere |
 | Spots | `make_tour.plan` / `respot` | exact filmed poses; each spot is the frame near its place that sees farthest and is sharp (`pick_spots`); horizontal field of view (the viewer's fov is horizontal on landscape screens; vertical gave a 1.5x zoom). Every page update runs `respot` (refuses if cameras do not match) |
 | Publish safety | `tour_publish.py` | index.js size guard + restore; before uploading, the live state is remembered (`publish_state.json`) |
 | Live check | `scripts/site_look/look.py` ASSERT=1 (tour-publish and every new run) | loads, no script errors, index.js > 1 MB, collision.glb > 100 kB, every spot's view matches its real photo (correlation over the shared field of view >= 0.6; calibrated: good 0.78-0.99, broken -0.02-0.39), walk mode at every spot not blurred (>= 0.5 of the spot view's sharpness; broken 0.32-0.38, good >= 0.71) |
 | Roll back | `tour_publish.py --verify` | live check failed -> the previous version of that link goes back up (or a new link is taken down) and the job fails with the reasons |
 
+
+## Session time budget (16 Nov; merged into the production branch on 17 Nov with everything below, on the owner's word)
+Merged with it: places / routes / AI find in the tour, `OBJECTS=1` in the `best` and `home` presets, the live-coverage recorder
+in the app (its smeared-edge fix is built but not yet tried on a phone), the mesh time rule (not yet re-run on Kaggle) and the
+photo-spot rule (not yet run on a real video).
+Kaggle stops a session at 12 h. `final/budget.py` gives every stage of `v3/run.py` a share of that and writes what it chose to
+`budget.json` (also on HF). Checked without a GPU by `pytest -q --confcutdir=tests/v3 tests/v3` (replays runs 4, 6 and the house).
+| What | Where | Rule |
+|---|---|---|
+| Deadline | `budget.Clock` | everything done by `DEADLINE_H` (11.25 h); training must end 35 min before that (QA, copies, 20 min of mesh) |
+| Frames | `frames.from_video_smart` | one decode pass keeps 4x the wanted frames as candidates with their sharpness and picture motion; half of the frames follow the motion, half the time (turns get more, pauses fewer); paused seconds do not count as walking; a frame far blurrier than its neighbours is left out. `FRAME_PICK=time` = the old equal time windows; any failure falls back to them |
+| Frame cap | `budget.sfm_max_frames` | `SFM_MAX` (1,000) or what the camera solve is predicted to finish in a quarter of the time left: `4 + 3.7e-5 n^2` minutes (200 -> 5, 600 -> 15, 3,470 -> 456 measured) |
+| Camera solve | `run.py solve()` | time limit (2.2x the prediction + 15 min). No model in time -> 60 % of the frames, once. Broke apart (< 85 % registered or > 1 model) and time allows -> unused candidates around the lost frames are added and it is solved again; kept only if more frames register |
+| Inputs | `run.py` | frames + cameras go to `/kaggle/working/images` + `sparse/0` right after the solve (the layout `REUSE` reads), not after training |
+| Recipe | `budget.fit` | run 4's recipe if the dry run says it fits; else the first rung that does: 70 then 60 steps per view, then 1280 / 1080 / 960 px, then every 2nd / 3rd / 4th frame, last the 7k preview recipe. A changed size is dry-run again. Never NO-GO, never more than run 4 (run 6 and the 3M-splat test showed no gain) |
+| Trainer | `budget_patch.py` | `NM_DEADLINE`: once past it the trainer saves, writes the .ply, evaluates and stops. A checkpoint about every 20 min; each becomes `snapshot/<model>.splat` on HF (older checkpoints deleted). A trainer still running 10 min past the deadline is stopped and its model built from the last checkpoint (`budget.ckpt_to_ply`) |
+| Splat refresh | `run.py start()` | `--strategy.refine-stop-iter` = 25/30 of the steps on runs over 30k steps (removed by the 1 Nov revert; back) |
+| Second T4 | `run.py` | trains the 7k preview beside `full`. `CHALLENGER=<kind>` (off by default) trains one alternative after it; it replaces `full` only if it is 0.2 dB better (exposure-fair) with LPIPS not worse |
+| Test runs | `run.py` | `NAMMA_REF=<branch>` makes the Kaggle job clone that branch instead of the production one |
+Kaggle test 1 (16 Nov, GitHub run 43771334616, kernel `namma-budget-test`, code from this branch): the hotel-room video (7,398
+frames, 60 fps) -> 150 frames by motion in 4.2 min (616 candidates; blurry stretches reported at 24, 28, 63-66 and 69-70 s) ->
+cameras 150/150 in one model, 0.97 px, 4.6 min (predicted 4.8) -> a 30k-step model against a 1.15 h deadline: snapshots at steps
+6,000 and 12,000, `NM_DEADLINE reached at step 15960 of 30000: saving and stopping`, trainer exit 0, QA ran (27.35 dB exposure-
+fair, 1M splats), tour built and published; job done at 0.58 h. Two faults it showed, both fixed: the mesh was skipped for one
+minute (34 left of 35 asked, though QA was already done), and nothing was sent to HF while the job ran because `kaggle:` sources
+never set the upload up (so the snapshots stayed in the job's output). Sending to HF from Kaggle still needs the Kaggle secret
+HF_TOKEN on that kernel.
+
+Kaggle test 2 (16 Nov, GitHub run 43776362477, results `20261115-2345`, same kernel): run 4's inputs (dl3dv 389a460c, images_2,
+420 frames, 1440 px) through the sized path with `OBJECTS=1`. Cameras 411/411, 10.5 min (predicted 10.3). Dry run 0.1663 s/step
+-> PLAN `run 4 recipe`, 30,012 steps, predicted 1.53 h; trained in 92.1 min (1.535 h). Preview (7k, second T4) done at 0.56 h.
+Snapshots at steps 7,216 / 14,432 / 21,648. **Held-out 29.24 dB exposure-fair / SSIM 0.930 / LPIPS 0.211 (run 4: 29.22 / 0.934 /
+0.202)**, 1.5M splats, needles 13.7 % (run 4: 12.7 %; `pass` is false for both, it asks for under 10 %). Object layer: 15
+objects, region index 577 regions of 646 masks in 40 frames, 7.8 min with installs. Job done at 2.33 h; tour built with the
+index and published (first Space full -> `namma-tour-2`; link in the private dataset, `tour_url.txt`).
+One fault, fixed, not yet re-run on Kaggle: the mesh was killed by its fixed 20-minute limit with 9.4 h left (the same mesh took
+35 min in run 4 and 70 min in run 5), so this tour walks on the room box. The limit now follows the measured time (table above).
+Still open: `Kaggle secret HF_TOKEN not available` on this kernel, so nothing was sent to HF while the job ran.
+The region index measured for the first time (`ai_find.search`, full-precision CLIP text, this run's index): found suitcase,
+lamp, bed, couch, picture frame, air conditioner, pillow, curtain, door, window, table, fridge, toilet (the photos behind
+toilet, fridge, bed, lamp, couch and door were looked at: all there); missed television and coat (the nearest region was the
+right one both times, but only one frame agreed); refused giraffe, swimming pool, bicycle. Not measured: the page's quantized
+text model on this index. The object layer itself named two floor lamps "couch" (Qwen); the search still finds them as lamps.
+Not yet measured on Kaggle: the motion-aware frame choice against the time windows on the same room (quality), the 960 / 1080 /
+1280 px rungs (speed is scaled from one pair of runs, then re-measured by the second dry run).
+
+## Places, routes and AI find in the tour (16 Nov, branch `claude/smart-budget-poi`)
+Requirement: an admin adds places (POIs) in 3D with spatial indexing; visitors search them, get a walkable route and are told
+when they arrive; an AI finds any named thing in the 3D space and marks it.
+| What | Where | How |
+|---|---|---|
+| Walkable grid | `final/navgrid.py` -> `nav.json` (built by `make_tour.build`, rebuilt by `tour_publish` on `collision` / `head`) | the tour's `collision.glb` on 10 cm cells: clearance measured from the local floor, 25 cm body radius, the filmed path always walkable, only the part joined to it. One level per cell (overlapping floors are not handled) |
+| Places | `pois.json` in the tour folder; code `final/poi_core.js` + `final/poi_overlay.js` (inlined into the page by `make_tour._places_js`) | each place: name, category, note, position in room metres, the walkable spot beside it, Morton cell key, source (admin / ai). In the page a Morton-keyed 3D hash grid answers nearest / within radius / tap-pick for places and object boxes |
+| Admin | the tour link + `?admin=1` | tap to place (on the collision mesh), rename, move, delete; unsaved edits stay in the browser. Save: Hugging Face sign-in or a pasted write token commits `pois.json` to the Space (not yet verified against the real Space), or download the file. `tour_publish` keeps a live `pois.json` across republishes and merges `v3/pois/<run>.json` |
+| Search, route, arrival | search box in the tour | places and objects by words; choosing one runs A* on the grid (8-connected, no corner cutting, keeps off walls, smoothed), draws the route in 3D and on the floor plan with the distance left; within 1 m: "You have reached your destination". "Take me there" walks it |
+| Route look | `poi_core.js ribbon / chevrons / hiddenParts`, `poi_overlay.js drawBand` | a semi-transparent white band on the floor with arrow heads sliding the way to go, drawn in perspective over the 3D view; the part behind a wall (`walls.json`, else the walkable grid) is a dashed outline with hollow arrows and a "behind this wall" tag. Drawn over the picture: furniture in front of it does not cover it |
+| Admin entry | pencil button in the floor-plan bar (`?admin=1`) | Places (tap to place, list, edit) and Collision: the view of what walk mode bumps into (on for the admin, off for visitors as since 1 Nov) and a button to the collision editor (`../editor/`, `v3/collision_editor.html`: works on the published Space only, it signs in with Hugging Face). After an edit there `nav.json` is not rebuilt until the tour is republished with `collision` |
+| AI find, in the page | `final/ai_find.py region_index` -> `regions.json` + `regions.f16`; `poi_core.js aiSearch` | every SAM mask of ~40 frames as a CLIP embedding + its place in the room + its score against generic words. The page embeds the typed words with CLIP's text half (transformers.js, ~65 MB once) and marks a place only when the words beat the generic words on regions of two different frames within 40 cm. Row "Find ... with AI" in the search box |
+| AI find, agent | `final/ai_find.py` as a script, run by `final/objects_job.py` when `v3/OBJECTS.json` has `"find": ["fire extinguisher", ...]` | Qwen2.5-VL plans (names to look for) -> CLIP ranks frames -> Grounding DINO boxes -> Qwen confirms each crop -> rendered depth gives the place -> two frames must agree; renamed and retried once; every step in the trace. Output `pois_ai.json` (shown in the tour as places "found by AI") |
+| In every run | `v3/run.py`, `OBJECTS=1` (presets best, home) | after training, with 40 min left: the object layer + the region index (time-limited, never fails the run) |
+Trial publish (16 Nov, GitHub run 43768617135, from this branch): the house tour with all of the above as a NEW link, read from
+`20261031-1528/tour_v2`, kept as `20261031-1528/tour_poi`, link in `20261031-1528/tour_poi_url.txt` (private dataset). The first
+Space was full, so it is on `anasrazy/namma-tour-2`, with its own copy of the collision editor (which now takes `?run`, `?folder`,
+`?dst`; the admin panel's button passes them). Live check: ok, no script errors, all 6 spots match (0.84-0.99). `tour_v2` and the
+stable link were not written. Not checked on the live link: saving places with the Hugging Face sign-in, the collision editor.
+Measured: 51 Python tests (`pytest -q --confcutdir=tests/v3 tests/v3`) and 11 JS tests (`node tests/browser/poi_e2e.mjs`), incl. the page's
+search against the Python reference. Checked in a browser on a local copy of the house tour: pins, route, arrival, admin edits.
+On six real photos of that tour (240 px thumbnails, CLIP ViT-B/32): 5 of 6 present things found at the right spot (sofa,
+kitchen, fridge, dining table, tripod; the television missed); of 4 absent things 3 refused (giraffe, pool, toilet), 1 wrongly
+found (bed, on a sofa). SAM / Qwen ran in Kaggle test 2 (above): 13 of 15 things found and 3 of 3 absent ones refused at the 0.03 margin. Not run yet: Grounding DINO (the Kaggle agent).
+
 ## Smeared edges in a video (16 Nov)
-A scan uploaded from the live-coverage recorder (DEV app, branch `claude/smart-budget-poi`; inbox job `20261116-132659-2f21`)
-had the top and bottom eighth of every frame smeared: that recorder drew ARCore's 4:3 image corners onto the 16:9 video, so the
-picture was squeezed to 3/4 of its height and the edge rows repeated above and below (fixed in the app on that branch).
-`frames.find_bands(video)` (called by `run.py` before any frame is read; `FIX_BANDS=0` turns it off) looks at 16 frames for rows
-that only repeat the edge row, needs most frames to agree on the same width (at least 3 % of the picture), and every frame
-reader then cuts the bands off and shrinks the other axis by the squeeze factor: 1920x1080 with bands -> 1440x806, shapes right.
-Checked: the bug simulated on run 4's frames through HEVC is found and the restored frames match the originals at 40-42 dB; 5
-real videos and 40 sets of clean frames give no bands. A job that repairs a video prints `smeared edges in the video: ...`.
-That inbox job used the right video (349 MB = 332 MiB) but its Kaggle job was cancelled while still queued (GitHub run
-43877951428), so it is `failed`; a trigger file with `"retry": true` sends it round again.
+The owner's first scan uploaded from the live-coverage recorder (inbox job `20261116-132659-2f21`, 349 MB) had the top and
+bottom eighth of every frame smeared. Cause: `ArRig.encode` drew ARCore's CPU image corners (a 4:3 image) onto the 16:9 video,
+so the picture was squeezed to 3/4 of its height and the texture's edge rows repeated above and below. Fixed in the app
+(`core/TexQuad.whole`: the whole camera texture, same orientation; not yet tried on the phone, it was not attached).
+For videos already recorded: `frames.find_bands(video)` (called by `run.py` before any frame is read, `FIX_BANDS=0` turns it
+off) looks at 16 frames for rows that only repeat the edge row (row-to-row change under 0.3 x the change along the row; real
+picture rows are 0.4 or more, measured), needs most frames to agree on the same width (at least 3 % of the picture), then
+every reader cuts the bands off and shrinks the other axis by the squeeze factor (3/4 here), so shapes are right again:
+1920x1080 with bands -> 1440x806. Checked: the bug simulated on run 4's frames through HEVC is found (134 px, 0.75) and the
+restored frames match the originals at 40-42 dB; 5 real videos and 40 sets of clean frames give no bands. Not yet run on the
+owner's own video (no access to it from here): the first job with it shows `smeared edges in the video: ...` in its log and
+`bands` in `budget.json`.
+That inbox job itself: the right video was used (349 MB = 332 MiB), but its Kaggle job `namma-job` was cancelled while still
+queued (`cancel_acknowledged` one minute after `queued`; GitHub run 43877951428), so the job is `failed` and nothing trained.
+**Retried on 16 Nov with the owner's go-ahead (GitHub run 43905920363, trigger file with `"retry": true`): done.** The repair
+fired on the real video: bands top 134 / bottom 133 px, each frame cut to `[0, 137, 1920, 807]` and resized to 1440x808.
+924 of 934 frames registered in one model at 1.01 px reprojection error with a single focal length (a still-squeezed picture
+would not fit one), 67,549 steps, 1.5M splats, 30.59 dB exposure-fair PSNR, SSIM 0.951, QA pass, mesh built (61 min), 5.8 h
+on Kaggle, tour published to `namma-tour-2`. Looked at in the tour: no bands, round knobs are round, panel labels readable.
+One of the six photo spots ("Spot 2") faces a bare wall; fixed for the next tour on the dev branch (`make_tour.spot_frames`: a spot with under half the
+detail of a typical frame moves to the most detailed frame within a third of the spacing; `plan.json` keeps the chosen frames
+for `respot`). Not yet run on a real video, and the published tour still has the old spot. The trainer's exit code was 1 (gsplat's end-of-run camera-path video
+crashed in `traj.py` `splprep`, after the model and metrics were saved); harmless here, same as the run still finishing.
+
+## App: live coverage while recording (16 Nov, same branch; `app/android`)
+"Record with live coverage (beta)" (`ScanActivity`): ARCore tracks the phone and measures depth; scanned surfaces are shown under a
+blue plastic-like film that follows the real objects (violet = seen from one direction, deep blue = three or more), with a bright
+edge where the scan ends; a top-down map, a coverage figure and a hint to the nearest thin area. After STOP: the usual video
+check + the coverage line, then name and upload; `meta.json` gets `camera.mode: "ar"`, the coverage numbers and the camera track.
+- `core/Coverage.kt`: sparse voxel map (one open-addressing table), 24 viewing-direction bits per voxel, voxel size doubles when
+  full; `levels()` = per pixel of a depth image the coverage of the surface behind it. 11 unit tests (`CoverageTest`).
+- `capture/ArRig.kt`: ARCore owns the camera; the video is encoded from ARCore's camera texture (1080p HEVC). Shared-camera
+  mode with a MediaRecorder stream was refused by the test phone ("Error configuring streams (-38)").
+- `capture/CoverageGl.kt`: the film shader (surface from the depth image, lit, 10 cm grid in room coordinates).
+- Costs against the normal recorder: main lens (not the ultra-wide), 1080p (not 4K), automatic exposure.
+- Test builds: `gradle -p app/android :capture:assembleDebug` installs as `namma.capture.dev` beside the released app;
+  `adb shell am start -n namma.capture.dev/namma.capture.ScanActivity [--ez demo true]`.
+- Checked on a Nothing A059 (Android 16): demo room; AR session with depth; REC -> film -> STOP -> video check; the recorded file
+  (1920x1080 HEVC, 30 fps, upright, no overlay in it); 27-28 fps with the film. Not checked: a whole-room walk, upload from this
+  screen, a phone without the Depth API, other phones.
+- Also fixed: the recorder's text and `meta.json` now say what stabilisation really is (it has been ON since commit 3d95ed9 while
+  both said off: decide which you want, the capture guide says off); Android 15+ insets; `quality_samples.columns` matches the rows.
+

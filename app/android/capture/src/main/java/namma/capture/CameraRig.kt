@@ -52,6 +52,7 @@ class CameraRig(private val ctx: Context, private val small: Boolean, private va
     var manual: Exposure.Pick? = null; private set
     val preview = Size(1920, 1080)
     var lens = ""; private set
+    @Volatile var stabilised = false; private set                                    // what the capture request really asks for
 
     /** Widest back lens: a logical camera whose zoom goes below 1x (the ultra-wide behind it), else the back camera with the
      *  shortest focal length for its sensor width. */
@@ -130,6 +131,7 @@ class CameraRig(private val ctx: Context, private val small: Boolean, private va
             CaptureRequest.CONTROL_VIDEO_STABILIZATION_MODE,
             stabilizationMode
         )
+        stabilised = stabilizationMode == CaptureRequest.CONTROL_VIDEO_STABILIZATION_MODE_ON
         b.set(CaptureRequest.CONTROL_SCENE_MODE, CaptureRequest.CONTROL_SCENE_MODE_DISABLED)            // no HDR scene mode
         if (Build.VERSION.SDK_INT >= 30 && zoom != 1f) b.set(CaptureRequest.CONTROL_ZOOM_RATIO, zoom)
         if (locked) {

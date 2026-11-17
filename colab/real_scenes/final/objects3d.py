@@ -14,9 +14,11 @@ with a photo, a size in metres and a box for walking into / clicking / search. T
   names      Qwen2.5-VL-3B (Apache) names the object outlined in red on its best crop; CLIP ViT-B/32 zero-shot over a home-object
              list is the second opinion; generic answers -> "object N". The CLIP image embedding lets the tour search by
              appearance with the same model's text encoder in the browser.
+  regions    every mask of every frame (also the ones that did not become an object) with its CLIP embedding and its place
+             in the room: regions.json + regions.f16, the index the tour's "find anything" searches (ai_find.py).
   out        objects.json (id, label, metres box/centre in tour coordinates, splat count, purity, frames, crop, embedding),
              splat_object.npy (uint16 object id per splat, 0 = room), objects_sheet.jpg (crops + labels), crops/*.jpg
-Usage (from gsplat's examples dir): python objects3d.py <data dir> <model.ply> <level.json> <metres_per_unit> <out dir> [n_frames]"""
+Usage (from gsplat's examples dir): python objects3d.py <data dir> <model.ply> <level.json> <metres_per_unit, 0 = from the cameras> <out dir> [n_frames]"""
 import json, os, sys, time, numpy as np, torch
 from PIL import Image, ImageDraw
 T0 = time.time()
@@ -295,6 +297,9 @@ def main(data, ply, level_json, mpu, out, nframes=40):
     dev = 'cuda'; os.makedirs(f'{out}/crops', exist_ok=True)
     p = Parser(data, factor=1, normalize=True, test_every=8); C = p.camtoworlds; cid = p.camera_ids[0]
     K0 = p.Ks_dict[cid].copy(); W0, H0 = p.imsize_dict[cid]; s = load_ply(ply, dev); N = len(s['means'])
+    if mpu <= 0:                                  # 0 = not known yet (inside the run itself): the same rule as make_tour.plan,
+        L0 = np.array(json.load(open(level_json))['matrix'])                                # the phone was held ~1.35 m above the floor
+        mpu = float(1.35 / max(np.median(C[:, :3, 3] @ L0[1, :3] + L0[1, 3]), 1e-6)); say('metres per unit', round(mpu, 4))
     ds = Dataset(p, split='train'); pick = np.linspace(0, len(ds) - 1, min(nframes, len(ds))).astype(int)
     k = 1024 / max(W0, H0); W, H = round(W0 * k), round(H0 * k); K = K0.copy(); K[:2] *= k
     op = torch.sigmoid(s['opacities']); solid = (op > 0.3).nonzero()[:, 0]; X = s['means'][solid]
@@ -302,7 +307,7 @@ def main(data, ply, level_json, mpu, out, nframes=40):
     from sam2.automatic_mask_generator import SAM2AutomaticMaskGenerator
     gen = SAM2AutomaticMaskGenerator.from_pretrained('facebook/sam2.1-hiera-large', points_per_side=24, pred_iou_thresh=0.8,
                                                      stability_score_thresh=0.9, min_mask_region_area=400)
-    node_frame, node_splats, frames, visf = [], [], [], []
+    node_frame, node_splats, frames, visf, regions = [], [], [], [], []
     for fi, j in enumerate(pick):
         d = ds[int(j)]; img = np.asarray(Image.fromarray(d['image'].numpy().astype(np.uint8)).resize((W, H), Image.LANCZOS))
         c2w = d['camtoworld'].numpy(); frames.append((int(ds.indices[int(j)]), img, c2w))
@@ -322,7 +327,7 @@ def main(data, ply, level_json, mpu, out, nframes=40):
         visf.append((idx, uf, vf))
         for mi in np.unique(mid[mid > 0]):
             sel = idx[mid == mi]
-            if len(sel) >= 30: node_frame.append(fi); node_splats.append(sel)
+            if len(sel) >= 30: node_frame.append(fi); node_splats.append(sel); regions.append((fi, ms[mi - 1]['bbox'], sel))   # ai_find's index
         say(f'frame {fi + 1}/{len(pick)}: {len(ms)} masks, {int(ok.sum())} visible splats')
     del gen; torch.cuda.empty_cache()
     comp = merge_masks(node_frame, node_splats, len(solid))
@@ -374,6 +379,9 @@ def main(data, ply, level_json, mpu, out, nframes=40):
     faint = np.setdiff1d(np.arange(N), sol); _, nn = cKDTree(Xn).query(means[faint], k=1, workers=-1)
     near = np.linalg.norm(means[faint] - Xn[nn], axis=1) < 0.03 / mpu; allid[faint[near]] = sid[nn[near]]
     np.save(f'{out}/splat_object.npy', allid)
+    try:                                                                                    # the search index for "find anything" (ai_find.py):
+        import ai_find; ai_find.region_index(regions, frames, Xn, sid, L, mpu, out, dev)    # every mask, not only the objects kept above
+    except Exception as e: say('region index not written (the object layer itself is fine):', type(e).__name__, str(e)[:200])
     tiles = []                                                                              # sheet: outlined crop + name
     for o in objs:
         if not o.get('crop'): continue

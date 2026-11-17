@@ -51,7 +51,7 @@ while time.time() - T0 < 280 * 60:
     if 'error' in s or 'cancel' in s: break
     if 'complete' in s and (seen or time.time() - t_push > 900): break
 os.makedirs(OUT, exist_ok=True); kg('kernels', 'output', KID, '-p', OUT, '-o', check=False)
-for f in [f'{OUT}/objects.json'] + glob.glob(f'{OUT}/*.log'):
+for f in [f'{OUT}/objects.json', f'{OUT}/pois_ai.json'] + glob.glob(f'{OUT}/*.log'):
     if os.path.exists(f): print(f'==== {os.path.basename(f)}\n' + ''.join(open(f, errors='ignore').readlines()[-150:]), flush=True)
 dst = f'objects/{STAMP}'
 api.upload_folder(folder_path=OUT, path_in_repo=dst, repo_id=repo, repo_type='dataset', ignore_patterns=['full/*'])
@@ -66,6 +66,9 @@ d0 = d; d = snapshot_download(repo, repo_type='dataset', local_dir='dl2', token=
 HR, HT = f'{OUT}/run', f'{OUT}/run_tint'
 for h in (HR, HT):
     os.makedirs(f'{h}/full', exist_ok=True); shutil.copy(f'{OUT}/objects.json', h); shutil.copytree(f'{OUT}/crops', f'{h}/crops', dirs_exist_ok=True)
+    for x in ('regions.json', 'regions.f16', 'pois_ai.json'):                                # ai_find: the search index + the POIs it found
+        if os.path.exists(f'{OUT}/{x}'): shutil.copy(f'{OUT}/{x}', h)
+    if os.path.isdir(f'{OUT}/find'): shutil.copytree(f'{OUT}/find', f'{h}/find', dirs_exist_ok=True)
     for x in ('level.json', 'nav.json'): shutil.copy(f'{d}/{R}/full/{x}', f'{h}/full/{x}')
     if os.path.exists(f'{d}/{R}/mesh/mesh.glb'): os.makedirs(f'{h}/mesh', exist_ok=True); shutil.copy(f'{d}/{R}/mesh/mesh.glb', f'{h}/mesh/mesh.glb')
 shutil.copy(f'{d0}/{R}/full/model.ply', f'{HR}/full/model.ply'); shutil.move(f'{OUT}/full/model.ply', f'{HT}/full/model.ply')

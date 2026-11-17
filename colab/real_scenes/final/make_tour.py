@@ -4,11 +4,15 @@
   settings.json  start view inside the room at the height the phone was held, a guided walk along the real camera path (where the
                  model is at its best: it plays first), hotspots at evenly spaced spots of the walk, all in room coordinates
   collision.glb  room box + the room mesh's furniture (mesh_tsdf.py, simplified): walk mode stays inside, on the floor
+  nav.json       the walkable grid (10 cm cells) for routes to places, from collision.glb (navgrid.py)
 Coordinates: the viewer turns every splat file 180 deg about z (3DGS convention), so the file gets F (R p + t) with F = diag(-1,-1,1)
 while cameras/hotspots are written in room coordinates R p + t (measured with a test scene, see HANDOFF_V3.md section 9).
 Two steps (the camera reader needs gsplat's examples + torch, the converter needs Node):
   python make_tour.py plan  <examples dir> <data dir (images/ + sparse/0)> <run out dir (full/, mesh/)> <tour dir>
-  python make_tour.py build <run out dir> <tour dir> <viewer public dir> [splat-transform command]"""
+  python make_tour.py build <run out dir> <tour dir> <viewer public dir> [splat-transform command]
+Places (points of interest): nav.json (navgrid: the walkable grid, from collision.glb) + pois.json (the places; written by the
+admin in the page with ?admin=1, or by the AI find) + the code in poi_core.js / poi_overlay.js, put into the page with OVERLAY:
+search, a walkable route with the distance left, "You have reached your destination". No nav.json / pois.json: nothing shows."""
 import json, os, re, shutil, subprocess, sys, numpy as np
 F = np.diag([-1., -1, 1])
 
@@ -64,8 +68,46 @@ OVERLAY = """<style>
   #nm-hits img,#nm-card img{width:44px;height:44px;object-fit:cover;border-radius:5px;flex:none}
   #nm-card{position:fixed;z-index:11;display:none;max-width:260px;padding:6px 8px}
   #nm-card b{display:block} #nm-card small{color:var(--nm-dark)}
+  /* places (poi_overlay.js): pins in the 3D view, the route line, the route bar, the arrival message, the admin panel */
+  #nm-pins{position:fixed;inset:0;z-index:9;pointer-events:none;overflow:hidden}
+  .nm-pin{position:absolute;left:0;top:0;transform:translate(-9999px,0);display:flex;flex-direction:column;align-items:center;gap:3px;pointer-events:auto;cursor:pointer;border:0;background:none;padding:0;margin:0;color:#fff;font:bold 12px Arial,sans-serif;will-change:transform}
+  .nm-pin i{display:block;width:20px;height:20px;border-radius:50% 50% 50% 0;transform:rotate(-45deg);background:var(--nm-acc);border:2px solid #fff;box-shadow:0 2px 6px rgba(0,0,0,.5)}
+  .nm-pin.ai i{background:#7fc8ff} .nm-pin.sel i{background:#fff;border-color:var(--nm-acc)}
+  .nm-pin span{order:-1;padding:2px 7px;border-radius:8px;background:rgba(0,0,0,.6);white-space:nowrap;max-width:160px;overflow:hidden;text-overflow:ellipsis}
+  .nm-pin.far span{display:none} .nm-pin.goal i{animation:nmpulse 1s ease-in-out infinite}
+  @keyframes nmpulse{0%{box-shadow:0 0 0 0 rgba(232,169,107,.9)}100%{box-shadow:0 0 0 16px rgba(232,169,107,0)}}
+  #nm-path{position:fixed;inset:0;width:100%;height:100%;z-index:8;pointer-events:none}
+  /* the route: a semi-transparent white band on the floor with arrow heads (rv, cv); the part behind a wall is a dashed
+     ghost (rh, ch) with a tag where it goes out of sight */
+  #nm-path path{stroke-linejoin:round}
+  #nm-path .rv{fill:rgba(255,255,255,.42);stroke:rgba(255,255,255,.9);stroke-width:1.5;filter:drop-shadow(0 1px 5px rgba(0,0,0,.4))} #nm-path .cv{fill:rgba(255,255,255,.97);stroke:none}
+  #nm-path .rh{fill:rgba(255,255,255,.07);stroke:rgba(255,255,255,.8);stroke-width:2;stroke-dasharray:9 8} #nm-path .ch{fill:none;stroke:rgba(255,255,255,.65);stroke-width:1.5;stroke-dasharray:4 5}
+  #nm-behind{position:fixed;left:0;top:0;z-index:9;pointer-events:none;display:none;padding:3px 9px;border-radius:10px;font:600 11px Arial,sans-serif;color:#fff;background:rgba(20,24,30,.74);border:1px dashed rgba(255,255,255,.75);white-space:nowrap}
+  @keyframes nmdash{to{stroke-dashoffset:-24}}
+  .nm-svg .route{fill:none;stroke:var(--nm-acc);stroke-linecap:round;stroke-linejoin:round;pointer-events:none}
+  .nm-svg .poi{fill:#fff;stroke:var(--nm-acc);cursor:pointer} .nm-svg .poi.ai{stroke:#7fc8ff} .nm-svg .poi.goal{fill:var(--nm-acc);stroke:#fff}
+  #nm-route{position:fixed;left:50%;top:calc(max(16px,env(safe-area-inset-top)) + 48px);transform:translateX(-50%);z-index:12;display:none;align-items:center;gap:10px;padding:6px 6px 6px 12px;border-radius:16px;font-size:13px;max-width:calc(100vw - 32px)}
+  #nm-route .arr{width:26px;height:26px;flex:none;color:var(--nm-acc);transition:transform .2s} #nm-route .arr svg{display:block;width:26px;height:26px;fill:currentColor}
+  #nm-route b{display:block;color:var(--nm-light);max-width:38vw;overflow:hidden;text-overflow:ellipsis;white-space:nowrap} #nm-route small{color:var(--nm-dark)}
+  #nm-route>span:nth-child(2){min-width:0} #nm-route .nm-pill{height:28px;padding:0 10px;font-size:12px;white-space:nowrap;flex:none}
+  #nm-toast{position:fixed;left:50%;top:22%;transform:translateX(-50%);z-index:35;display:none;padding:14px 20px;border-radius:16px;font-size:15px;color:#fff;text-align:center;width:max-content;max-width:min(88vw,420px);pointer-events:none}
+  #nm-toast.ok{border-color:var(--nm-acc);background:rgba(20,20,20,.86)}
+  #nm-admin{position:fixed;right:max(16px,env(safe-area-inset-right));top:max(16px,env(safe-area-inset-top));width:min(88vw,300px);max-height:calc(100vh - 150px);overflow-y:auto;z-index:12;border-radius:16px;padding:12px;font-size:12px;display:flex;flex-direction:column;gap:8px}
+  #nm-admin h1{font-size:13px;margin:0;color:var(--nm-light);display:flex;justify-content:space-between;align-items:center} #nm-admin h1 small{color:var(--nm-acc);font-weight:normal}
+  #nm-admin .r{display:flex;gap:6px;flex-wrap:wrap} #nm-admin .nm-pill{height:30px;padding:0 10px;font-size:12px;flex:1 1 auto} #nm-admin .nm-pill:disabled{opacity:.4;cursor:default}
+  #nm-admin input,#nm-admin select,#nm-admin textarea{width:100%;padding:7px 8px;border-radius:8px;border:1px solid rgba(255,255,255,.14);background:rgba(0,0,0,.35);color:#fff;font:12px Arial,sans-serif;outline:none;-webkit-user-select:text;user-select:text}
+  #nm-admin textarea{resize:vertical;min-height:44px} #nm-admin label{display:flex;flex-direction:column;gap:3px;color:var(--nm-dark)}
+  #nm-admin>*{flex:none} /* a short window: the panel scrolls, its parts keep their height (the list had shrunk to nothing) */
+  #nm-admin .list{display:flex;flex-direction:column;gap:3px;max-height:150px;overflow-y:auto}
+  #nm-admin .list button{display:flex;justify-content:space-between;gap:8px;text-align:left;padding:6px 8px;border-radius:8px;border:1px solid rgba(255,255,255,.08);background:rgba(255,255,255,.04);color:var(--nm-text);font:12px Arial,sans-serif;cursor:pointer}
+  #nm-admin .list button.on{border-color:var(--nm-acc);color:#fff} #nm-admin .list small{color:var(--nm-dark)}
+  #nm-admin .st{color:var(--nm-dark);line-height:1.35;-webkit-user-select:text;user-select:text} #nm-admin .sec{border-top:1px solid rgba(255,255,255,.08);padding-top:8px;display:flex;flex-direction:column;gap:6px}
+  body.nm-place canvas{cursor:crosshair!important}
   @media (max-width:640px),(pointer:coarse){#nm-strip{display:none!important}#nm-plan{width:42vw;padding:6px}body.nm-walk #nm-jump{display:flex}
-    #nm-find{bottom:calc(max(16px,env(safe-area-inset-bottom)) + 70px)}}
+    #nm-find{bottom:calc(max(16px,env(safe-area-inset-bottom)) + 70px)}
+    /* phones: the route bar sits above the search box, left of the jump button; the floor plan fills the top left */
+    #nm-route{left:12px;right:76px;top:auto;bottom:calc(max(16px,env(safe-area-inset-bottom)) + 118px);transform:none;max-width:none} #nm-route>span:nth-child(2){flex:1} #nm-route b{max-width:none}
+    #nm-admin{top:auto;bottom:calc(max(16px,env(safe-area-inset-bottom)) + 170px);max-height:44vh}}
 </style>
 <svg width="0" height="0" style="position:absolute" aria-hidden="true">
   <symbol id="nmPlanIcon" viewBox="0 0 24 24"><path fill-rule="evenodd" d="M4 3h16a1 1 0 0 1 1 1v16a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1V4a1 1 0 0 1 1-1zm1 2v14h6v-5h2v5h6v-6h-4v-2h4V5h-8v4h-2V5H5z"/></symbol>
@@ -75,10 +117,16 @@ OVERLAY = """<style>
   <symbol id="nmCloseIcon" viewBox="0 0 24 24"><path d="M19 6.41 17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/></symbol>
   <symbol id="nmJumpIcon" viewBox="0 0 24 24"><path d="M12 3l6.5 6.5h-4.25V15h-4.5V9.5H5.5L12 3zM5 18h14v2.5H5z"/></symbol>
 </svg>
+<svg id="nm-path" aria-hidden="true"><path class="rh"/><path class="ch"/><path class="rv"/><path class="cv"/></svg><div id="nm-behind">behind this wall</div>
 <div class="nm-ui">
+<div id="nm-pins"></div>
+<div id="nm-route" class="nm-panel"><span class="arr" id="nm-rarr"><svg viewBox="0 0 24 24"><path d="M12 3l7 9h-4.5v9h-5v-9H5z"/></svg></span><span><b id="nm-rname"></b><small id="nm-rdist"></small></span>
+  <button class="nm-pill" id="nm-rgo" style="display:none">Take me there</button><button class="nm-pill" id="nm-rview" style="display:none">View</button><button class="nm-btn" id="nm-rx" title="Stop the route"><svg width="22" height="22"><g class="s"><use href="#nmCloseIcon"/></g><g class="f"><use href="#nmCloseIcon"/></g></svg></button></div>
+<div id="nm-toast" class="nm-panel" role="status"></div>
 <div id="nm-find"><div id="nm-hits"></div><input id="nm-q" type="search" placeholder="Search the room: sofa, lamp, bag ..." autocomplete="off"></div>
 <div id="nm-card" class="nm-panel"></div>
 <div id="nm-plan" class="nm-panel"><div class="wrap" id="nm-mini"></div><div class="bar"><span>Floor plan</span><span class="nm-group">
+  <button class="nm-btn" id="nm-adminbtn" title="Admin: places and collision"><svg width="20" height="20" viewBox="0 0 24 24"><path fill="currentColor" d="M3 17.2V21h3.8L17.8 9.9l-3.7-3.7L3 17.2zM20.7 7a1 1 0 000-1.4l-2.3-2.3a1 1 0 00-1.4 0l-1.8 1.8 3.7 3.7L20.7 7z"/></svg></button>
   <button class="nm-btn" id="nm-helpbtn" title="Controls (?)"><svg width="24" height="24"><g class="s"><use href="#nmKeysIcon"/></g><g class="f"><use href="#nmKeysIcon"/></g></svg></button>
   <button class="nm-btn" id="nm-exp" title="Open floor plan"><svg width="20" height="20" viewBox="0 0 24 24"><g class="s"><use href="#nmExpandIcon"/></g><g class="f"><use href="#nmExpandIcon"/></g></svg></button></span></div></div>
 <div id="nm-strip" class="nm-panel"></div>
@@ -150,6 +198,7 @@ OVERLAY = """<style>
     dots3d = o.spots.map((s, i) => { const p = pr(s.x, 1.0, s.z); g.beginPath(); g.arc(p[0], p[1], 9, 0, 7); g.fillStyle = '#e8a96b'; g.fill(); g.lineWidth = 2; g.strokeStyle = '#fff'; g.stroke();
       g.font = 'bold 12px Arial, sans-serif'; g.textAlign = 'center'; g.lineWidth = 3; g.strokeStyle = '#000b'; g.strokeText(s.title, p[0], p[1] - 14); g.fillStyle = '#fff'; g.fillText(s.title, p[0], p[1] - 14);
       return [p[0], p[1], i]; });
+    if (extra3d) extra3d(g, pr);                                                             // places and the route (poi_overlay.js)
   }
   let drag = null;
   cv.addEventListener('pointerdown', e => { drag = [e.clientX, e.clientY, yaw, pitch, 0]; cv.setPointerCapture(e.pointerId); });
@@ -218,12 +267,17 @@ OVERLAY = """<style>
   // objects (objects3d.py): search by name / description, and click an object in the 3D view to see what it is
   const obs = o.objects || [], find = document.getElementById('nm-find'), q = document.getElementById('nm-q'), hits = document.getElementById('nm-hits'), card = document.getElementById('nm-card');
   const row = (x) => `${x.thumb ? `<img src="./${x.thumb}" alt="">` : ''}<span><b>${x.label}</b><br><small>${x.size}</small></span>`;
-  const match = (s) => { const w = s.toLowerCase().split(' ').filter(Boolean); return obs.filter(x => w.every(t => x.words.includes(t) || x.words.split(' ').some(v => v.startsWith(t.slice(0, Math.max(3, t.length - 1)))))); };
-  const show = () => { hits.innerHTML = ''; (q.value.trim() ? match(q.value) : obs).slice(0, 8).forEach(x => {
-    const b = document.createElement('button'); b.innerHTML = row(x); b.onclick = () => { go(x.i); hits.innerHTML = ''; q.blur(); }; hits.appendChild(b); }); };
+  // places (poi_overlay.js, below) join the list through `extra` and are listed first; `pick` is what choosing a hit does (an
+  // object: fly to its best filmed view, as before; with places on: start a route to it); `extra3d` draws them on the 3D plan
+  // `more` adds rows that are not word matches (poi_overlay.js: 'Find "..." with AI')
+  let extra = () => [], pick = (x) => go(x.i), extra3d = null, more = () => [];
+  const match = (s) => { const w = s.toLowerCase().split(' ').filter(Boolean); return extra().concat(obs).filter(x => w.every(t => x.words.includes(t) || x.words.split(' ').some(v => v.startsWith(t.slice(0, Math.max(3, t.length - 1)))))); };
+  const show = () => { hits.innerHTML = ''; (q.value.trim() ? match(q.value).slice(0, 7).concat(more(q.value.trim())) : extra().concat(obs)).slice(0, 8).forEach(x => {
+    const b = document.createElement('button'); b.innerHTML = row(x); b.onclick = () => { pick(x); hits.innerHTML = ''; q.blur(); }; hits.appendChild(b); }); };
+  q.oninput = show; q.onfocus = show; q.onblur = () => setTimeout(() => { if (document.activeElement !== q) hits.innerHTML = ''; }, 200);
+  ['keydown', 'keyup', 'keypress'].forEach(t => q.addEventListener(t, e => { e.stopPropagation(); if (t === 'keydown' && e.key === 'Enter') { const m = match(q.value).concat(more(q.value.trim())); if (m.length) { pick(m[0]); hits.innerHTML = ''; q.blur(); } } }));
   if (obs.length) {
-    find.style.display = 'block'; q.oninput = show; q.onfocus = show; q.onblur = () => setTimeout(() => { if (document.activeElement !== q) hits.innerHTML = ''; }, 200);
-    ['keydown', 'keyup', 'keypress'].forEach(t => q.addEventListener(t, e => { e.stopPropagation(); if (t === 'keydown' && e.key === 'Enter') { const m = match(q.value); if (m.length) { go(m[0].i); hits.innerHTML = ''; q.blur(); } } }));
+    find.style.display = 'block';
     let down = null;
     window.addEventListener('pointerdown', e => { down = e.target.tagName === 'CANVAS' ? [e.clientX, e.clientY, Date.now()] : null; });
     window.addEventListener('pointerup', e => {
@@ -240,7 +294,19 @@ OVERLAY = """<style>
       card.style.left = Math.min(e.clientX + 12, innerWidth - 270) + 'px'; card.style.top = Math.min(e.clientY + 12, innerHeight - 70) + 'px';
     });
   }
+/*NM_POI*/
 </script>"""
+
+def _places_js():
+    """The places code for the tour page: poi_core.js (spatial index, walkable grid, A*; also imported as a module by the Node
+    tests, so its `export` words are dropped here) + poi_overlay.js (pins, search, route, arrival, admin), in one block inside
+    OVERLAY's script so they share its floor plan and camera helpers without sharing names. Files missing: no places, same tour."""
+    d = os.path.dirname(os.path.abspath(__file__))
+    try: core, ui = open(os.path.join(d, 'poi_core.js')).read(), open(os.path.join(d, 'poi_overlay.js')).read()
+    except OSError: return ''
+    return '  {\n' + re.sub(r'(?m)^export\s+', '', core) + '\n' + ui + '\n  }'
+
+OVERLAY = OVERLAY.replace('/*NM_POI*/', _places_js())
 
 def room_collision(pts, h, path):
     """Walk-mode collision when there is no mesh yet: a floor slab at y = 0 and four walls along the room's main horizontal axes
@@ -390,6 +456,31 @@ def colmap_cameras(sparse, examples):
     return C, P
 
 
+def detail(path, w=96):
+    """How much there is to see in a frame: mean change between neighbouring pixels of a small grey copy (0-255 scale).
+    Measured on the six spots of inbox job 20261116-132659-2f21: a bare wall 5.9, a wall with a cable tray 9.7, a door 10.3,
+    switch panels 17-24."""
+    from PIL import Image
+    im = Image.open(path); im.draft('L', (2 * w, 2 * w)); g = np.asarray(im.convert('L').resize((w, max(8, w * im.size[1] // im.size[0]))), np.float32)
+    return float(np.abs(np.diff(g, axis=0)).mean() + np.abs(np.diff(g, axis=1)).mean())
+
+
+def spot_frames(paths, n=6, score=detail):
+    """Frame numbers of the n photo spots: evenly spaced along the walk, but a spot that faces a bare wall (under half the
+    detail of a typical frame of this video) moves to the most detailed frame within a third of the spacing (owner's panel
+    room, 16 Nov: spot 2 of 6 was a blank wall). Still in walk order, never two on one frame."""
+    N = len(paths); base = [int(i) for i in np.linspace(0, N - 1, n + 2).astype(int)[1:-1]]
+    if N < 4 * n: return base
+    memo = {}; sc = lambda i: memo[i] if i in memo else memo.setdefault(i, score(paths[i]))
+    typical = float(np.median([sc(int(i)) for i in np.unique(np.linspace(0, N - 1, min(N, 60)).astype(int))]))
+    half = max(1, (N - 1) // (n + 1) // 3); out = []
+    for i in base:
+        if sc(i) < 0.5 * typical:
+            i = max((int(j) for j in np.unique(np.linspace(i - half, i + half, 15).astype(int))), key=sc)
+        out.append(i)
+    return out
+
+
 def respot(run, tour, examples):
     """Spots of a built tour moved to the exact filmed camera poses (their thumbnails), and the guided walk smoothed over at
     most 6 frames (owner, 1 Nov, house: spots 3-5 sat ~1 m off the walk, inside furniture). plan() smoothed the path over
@@ -410,7 +501,7 @@ def respot(run, tour, examples):
     P = lambda a, b, i: dict(position=[round(float(x), 4) for x in a[i]], target=[round(float(x), 4) for x in a[i] + look * b[i]], fov=round(fov, 1))
     tr['keyframes']['values']['position'] = [float(x) for k in keys for x in P(cs, fs, k)['position']]
     tr['keyframes']['values']['target'] = [float(x) for k in keys for x in P(cs, fs, k)['target']]
-    spots = np.linspace(0, n - 1, 8).astype(int)[1:-1]; moved = []
+    spots = pl.get('spots') or np.linspace(0, n - 1, 8).astype(int)[1:-1]; moved = []           # the frames plan() chose (spot_frames)
     for k, i in enumerate(spots):
         a = st['annotations'][k]; e = P(cam, fn, i); moved.append(round(float(np.linalg.norm(np.array(a['camera']['initial']['position']) - cam[i])), 2))
         a['camera']['initial'] = e; a['position'] = e['target']; ov['spots'][k].update(x=float(cam[i][0]), z=float(cam[i][2]))
@@ -439,7 +530,8 @@ def plan(examples, data, run, tour):
     lo, hi = np.percentile(pts, 3, 0), np.percentile(pts, 97, 0); pad = 0.12 * (hi - lo); lo, hi = lo - pad, hi + pad
     h = np.percentile(pts[:, 1], 99); lo[1], hi[1] = -0.05 * h, 1.05 * h
     E = euler_xyz(R @ F)                                                                   # file' = F E F p + F t  ->  E = R F
-    json.dump(dict(rotate=E.tolist(), translate=t.tolist(), scale=s, box=lo.tolist() + hi.tolist()), open(f'{tour}/plan.json', 'w'))
+    spots = spot_frames(p.image_paths)                                                     # evenly spaced, none facing a bare wall
+    json.dump(dict(rotate=E.tolist(), translate=t.tolist(), scale=s, box=lo.tolist() + hi.tolist(), spots=spots), open(f'{tour}/plan.json', 'w'))
     room_collision(pts, h, f'{tour}/room_collision.glb')
     # cameras in room coordinates, in walk order (Parser sorts the frame names = video order)
     K = p.Ks_dict[p.camera_ids[0]]; Wd, Hd = p.imsize_dict[p.camera_ids[0]]; fov = float(np.clip(np.degrees(2 * np.arctan(Hd / 2 / K[1, 1])), 10, 120))
@@ -455,7 +547,6 @@ def plan(examples, data, run, tour):
                  keyframes=dict(times=frames,
                                 values=dict(position=[float(x) for k in keys for x in pose(k)['position']],
                                             target=[float(x) for k in keys for x in pose(k)['target']], fov=[fov] * len(keys))))
-    spots = np.linspace(0, len(cam) - 1, 8).astype(int)[1:-1]
     ann = [dict(position=exact(i)['target'], title=f'Spot {n + 1}', text='Real filmed view', camera=dict(initial=exact(i))) for n, i in enumerate(spots)]
     oann, oitems = objects_layer(run, tour, cam, fov, len(ann)); ann += oann
     settings = dict(version=2, tonemapping='none', highPrecisionRendering=False, background=dict(color=[0.08, 0.08, 0.09]),
@@ -481,6 +572,9 @@ def objects_layer(run, tour, cam, fov, first):
     """The object layer (objects3d.py: <run>/objects.json + crops/) in the tour: a labelled hotspot on top of each object; clicking
     it, its search hit or the object itself flies to the real filmed frame that showed it best, looking at it (cameras = video order,
     room coordinates; objects3d writes boxes in the same coordinates: level matrix x metres per unit). No objects.json: nothing."""
+    for x in ('regions.json', 'regions.f16', 'pois_ai.json'):                                # ai_find.py: the search index for "find anything"
+        if os.path.exists(f'{run}/{x}'): shutil.copy(f'{run}/{x}', f'{tour}/{x}')              # in the page, and the places its agent found
+    if os.path.isdir(f'{run}/find'): shutil.copytree(f'{run}/find', f'{tour}/find', dirs_exist_ok=True)
     f = f'{run}/objects.json'
     if not os.path.exists(f): return [], []
     from PIL import Image
@@ -544,6 +638,21 @@ def collision(run, tour, faces=150000):
     if parts:
         trimesh.util.concatenate(parts).export(f'{tour}/collision.glb')
         print('collision:', sum(len(x.faces) for x in parts), 'faces,', round(os.path.getsize(f'{tour}/collision.glb') / 1e6, 1), 'MB', flush=True)
+
+
+def navgrid(tour):
+    """Walkable grid for routes to places: <tour>/collision.glb -> <tour>/nav.json (navgrid.py: what blocks a standing person,
+    grown by a body radius, only the part joined to the filmed walk). The browser runs A* on it (poi_core.js). collision.glb is
+    only read. No collision file, no scipy/trimesh, a broken mesh: no nav.json, the tour has no routes and is otherwise the same."""
+    info = None
+    try:
+        sys.path.insert(0, os.path.dirname(os.path.abspath(__file__))); import navgrid as ng
+        info = ng.write(tour)
+    except Exception as e:                                                                  # never fail a tour build for this
+        print('nav grid failed:', type(e).__name__, str(e)[:160], flush=True)
+        if os.path.exists(f'{tour}/nav.json'): os.remove(f'{tour}/nav.json')
+    print('nav grid:', info if info else 'none: no routes in this tour', flush=True)
+    return info
 
 
 def smear_mask(v, box, scale):
@@ -669,6 +778,7 @@ def build(run, tour, public, st='npx --no-install splat-transform'):
     # collision for walk mode: the room mesh (mesh_tsdf.py, room coordinates before scaling) if there is one, else the room box
     collision(run, tour)
     if os.path.exists(f'{tour}/collision.glb'): boot['collisionUrl'] = './collision.glb'
+    nav = navgrid(tour)                                                                    # walkable grid for routes to places
     shutil.copy(f'{public}/index.css', tour)
     js = open(f'{public}/index.js').read()
     assert 'WALK_MIN_HORIZONTAL_RANGE = 5' in js; open(f'{tour}/index.js', 'w').write(patch_js(js))
@@ -680,9 +790,9 @@ def build(run, tour, public, st='npx --no-install splat-transform'):
                         "window.viewer = await createViewer({ container: document.body, settings, ...options });")
     if os.path.exists(f'{tour}/overlay.json'): html = overlay(html)
     open(f'{tour}/index.html', 'w').write(html)
-    info = json.load(open(f'{tour}/tour.json')); info.update(smears_removed=int(bad.sum()), collision='collisionUrl' in boot, scene_mb=round((sum(os.path.getsize(os.path.join(dp, f)) for dp, _, fs in os.walk(os.path.dirname(out)) for f in fs) if fmt == 'lod' else os.path.getsize(out)) / 1e6, 1), format=fmt, sh_bands=sh)
+    info = json.load(open(f'{tour}/tour.json')); info.update(smears_removed=int(bad.sum()), collision='collisionUrl' in boot, nav=nav, scene_mb=round((sum(os.path.getsize(os.path.join(dp, f)) for dp, _, fs in os.walk(os.path.dirname(out)) for f in fs) if fmt == 'lod' else os.path.getsize(out)) / 1e6, 1), format=fmt, sh_bands=sh)
     json.dump(info, open(f'{tour}/tour.json', 'w'), indent=1); print('TOUR', json.dumps(info), flush=True)
     return info
 
 if __name__ == '__main__':
-    {'plan': plan, 'build': build, 'floorplan': floorplan, 'collision': collision, 'clean': clean, 'respot': respot}[sys.argv[1]](*sys.argv[2:])
+    {'plan': plan, 'build': build, 'floorplan': floorplan, 'collision': collision, 'clean': clean, 'respot': respot, 'navgrid': navgrid}[sys.argv[1]](*sys.argv[2:])
