@@ -581,3 +581,55 @@ check + the coverage line, then name and upload; `meta.json` gets `camera.mode: 
 - Also fixed: the recorder's text and `meta.json` now say what stabilisation really is (it has been ON since commit 3d95ed9 while
   both said off: decide which you want, the capture guide says off); Android 15+ insets; `quality_samples.columns` matches the rows.
 
+
+## Floor plan: a closed outline (17 Nov, branch `claude/smart-budget-poi`)
+Owner, on the switch room (app job `20261116-132659-2f21`, run `20261116-2207`): "this room is nearly rectangular but our model
+is making the floor plan weirdly", fix it without retraining. Cause: `walls2d` ran a line detector on the splats between 55 and
+92 % of the room height. In that room the band is full of cable trays, every tray became a wall, and nothing made the pieces a
+room (12 loose pieces, some crossing). The same `walls.json` feeds walk collision, the route grid and "behind a wall" on the
+route, so the wrong walls also blocked walking.
+New `make_tour.walls_cells` (replaces `walls2d`; nothing else is retrained or rebuilt):
+- wall = a 5 cm cell where at least 5 of 8 height slices (0.3 m to 0.9 x height) hold splats and one of the top two does.
+  Measured on that room's published splat: the four walls show as lines with 3.4-5.4 m of such cells, trays and lamps none.
+- direction = the turn at which those cells pile into the fewest rows and columns (the Hough direction gave 30 deg for a room
+  turned 4.75 deg).
+- inside = flood fill from the filmed walk (the tour's `settings.json` track, this storey only) over seen floor, stopped by walls.
+- wall lines along both axes cut the plan into rectangles; the outline is the border of the inside ones: closed and
+  right-angled by construction. From the edge of the seen floor a side goes on to the strongest wall line within 1 m (panel
+  fronts 2.1 m of evidence, the wall behind them 5.4 m; "outermost line" was tried and was 15 cm too far: the window's bars).
+- a side with no wall behind it (never filmed) is `open`: drawn dashed, still stops the walk; a line between two inside
+  rectangles is a wall only with seen floor on both sides (a row of tall panels is furniture); the walk cuts a 0.9 m door
+  into any wall it crosses, so a wall never stands where the recording walked.
+- too little to go on, or an outline that loses the walk: one rectangle; under 1000 splats: the room box. The raw line pieces
+  are never published.
+`walls.json` gains `open`, `outline`, `yaw`, `source: cells`. `collision()` with an outline uses a floor slab + the plan's
+sides instead of `room_collision.glb`'s four SfM-box walls. `tour_publish.py floorplan` now also redoes collision and the
+route grid. The page draws open sides dashed and tests "inside the room" against the outline.
+Results: switch room 4 walls, 4 corners, 5.60 x 3.40 m, turned -4.75 deg (was 12 pieces); the house (`20261031-1528`,
+measured on its published splat only, its tour was not republished) keeps its outline with 3 inner walls and 5 open sides.
+The switch-room tour was updated in place (same link; run 44065374818: floor plan, collision, route grid, current page code).
+Tests: `tests/v3/test_walls.py` (rectangle with trays and panels, turned rooms, L shape, two rooms with a door, a side never
+filmed, things outside a window, collision from the outline).
+`scripts/ar/tour_cloud.py` reads a published `scene.compressed.ply` back into room metres with numpy only; this is how the
+plans above were checked without the private data.
+Not done: the picture inside the outline is filled from the nearest splat, which looks blocky where the floor was not seen.
+
+## On-site AR with DRS-VPT (17 Nov, same branch; test only)
+Owner: "implement AR using github.com/ori-drs/drs-vpt for this particular model; if AR is accurate we use it for all models
+from the mobile app"; later: nothing may be downloaded to the laptop (no disk space). DRS-VPT (Oxford, ECCV 2026) takes one
+picture and a point cloud in metres and returns the camera pose; code Apache 2.0, **weights CC BY-NC 4.0 (non-commercial)**:
+fine for the competition test, not for a paid product.
+Built (nothing of it has run on a phone):
+- `.github/workflows/ar-check.yml` + `scripts/ar/check_drsvpt.py`: the accuracy check on a GitHub CPU runner (push
+  `colab/real_scenes/v3/ARCHECK.json`). Pictures with a known camera: the scan drawn from the exact pose and lens of 16 filmed
+  frames (the frames themselves are not kept after a job) and the six real 240 px spot thumbnails. Maps: the published splat's
+  centres and the mesh. Report: private `<run>/ar_check/report.json`; numbers in the log.
+- `colab/real_scenes/final/ar_core.js`: the join between the phone's AR world and the scan (one turn, one shift, one scale)
+  from pictures the server located; answers that would tilt the room are thrown out, the rest by agreement; scale held at 1
+  until the answers span 2.5 m. `tests/browser/ar_core_test.mjs`.
+- `ar_page.html` -> `ar.html` beside `index.html` (written by `build` and by a page update): Android Chrome AR with camera
+  access; draws the room outline, place posts and names, the route band with arrows, arrival within 1 m; status line with the
+  agreement in cm and degrees; "Save report" sends numbers only. Opened as `ar.html#s=<server>&k=<key>`.
+- `scripts/ar/serve_ar.py`: `/locate` (DRS-VPT against the tour's public splat), `/report`, key header. It needs a machine with
+  torch and about 8 GB of memory. **No such machine is chosen yet**: not the laptop; the choices are a free Hugging Face CPU
+  Space (slow, always on) or a Kaggle GPU session with a tunnel (fast, started before going on site). The owner decides.
