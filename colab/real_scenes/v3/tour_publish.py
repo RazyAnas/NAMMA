@@ -250,8 +250,10 @@ if __name__ == '__main__':
         open(f'{tour}/index.js', 'w').write(make_tour.patch_js(js))                       # read first, then write (never truncate before reading)
         assert os.path.getsize(f'{tour}/index.js') > 100000
         open(f'{tour}/index.html', 'w').write(h)
+        arp = make_tour.ar_page()                                                           # the on-site AR page beside it
+        if arp: open(f'{tour}/ar.html', 'w').write(arp)
         print('page start options updated', flush=True)
-        for x in ('index.html', 'index.js', 'settings.json', 'overlay.json', 'tour.json'):     # page + repaired spots / fov kept with the run
+        for x in ('index.html', 'ar.html', 'index.js', 'settings.json', 'overlay.json', 'tour.json'):     # page + repaired spots / fov kept with the run
             if os.path.exists(f'{tour}/{x}'): api.upload_file(path_or_fileobj=f'{tour}/{x}', path_in_repo=f'{run}/{src}/{x}', repo_id=repo, repo_type='dataset')
     if get != src:                                                                        # the copy, whole, so it can be updated again later
         api.upload_folder(folder_path=tour, path_in_repo=f'{run}/{src}', repo_id=repo, repo_type='dataset')   # with plan.json: the collision editor reads it

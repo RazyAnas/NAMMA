@@ -47,3 +47,35 @@ def test_reads_a_compressed_splat(tmp_path):
     assert np.allclose(s['xyz'], [[2, 3, -1], [-2, -1, 3]]), s['xyz']                       # x and y negated: the viewer's flip undone
     assert np.allclose(s['size'], [np.exp(-3), np.exp(-5)]) and np.allclose(s['opacity'], [1, 0.2], atol=0.003)
     assert len(tour_cloud.cloud(str(f), grid=0.02, opacity=0.5)) == 1                       # only the solid one is a map point
+
+
+def test_ar_page_is_one_valid_script():
+    """ar.html = ar_page.html + ar_core.js + poi_core.js in one module script: it must parse (a name declared in two of the
+    files would stop the whole page) and must not leave a placeholder behind."""
+    import shutil, subprocess, tempfile
+    import pytest
+    sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', '..', 'colab', 'real_scenes', 'final')); import make_tour
+    h = make_tour.ar_page(); assert h and 'NM_AR_CORE' not in h and 'NM_POI_CORE' not in h and 'function solve(' in h and 'function route(' in h
+    if not shutil.which('node'): pytest.skip('node not installed')
+    a = h.index('<script type="module">') + len('<script type="module">'); f = os.path.join(tempfile.mkdtemp(), 'ar.mjs'); open(f, 'w').write(h[a:h.rindex('</script>')])
+    r = subprocess.run(['node', '--check', f], capture_output=True, text=True); assert r.returncode == 0, r.stderr[:500]
+
+
+def test_location_server_plumbing(tmp_path):
+    """The AR server without the model: key needed, the picture and lens reach the locate function, the answer and a report come back."""
+    import io, json
+    import pytest
+    pytest.importorskip('fastapi'); pytest.importorskip('httpx'); pytest.importorskip('multipart')
+    from fastapi.testclient import TestClient
+    from PIL import Image
+    import serve_ar
+    seen = {}
+    def locate(img, K): seen['shape'], seen['K'] = img.shape, K; T = np.eye(4); T[0, 3] = 1.5; return T
+    c = TestClient(serve_ar.make_app(locate, 'secret', dict(points=5, device='fake'), reports=str(tmp_path)))
+    buf = io.BytesIO(); Image.new('RGB', (36, 64), (120, 90, 60)).save(buf, 'JPEG'); K = [[50, 0, 18], [0, 50, 32], [0, 0, 1]]
+    post = lambda key, k=K: c.post('/locate', files={'image': ('f.jpg', buf.getvalue(), 'image/jpeg')}, data={'K': json.dumps(k)}, headers={'x-namma-key': key} if key else {})
+    assert post(None).status_code == 401 and post('wrong').status_code == 401 and post('secret', [[1, 2], [3, 4]]).status_code == 400
+    r = post('secret'); assert r.status_code == 200 and r.json()['T_w2c'][0][3] == 1.5 and seen['shape'] == (64, 36, 3) and seen['K'][0, 2] == 18
+    assert c.get('/health').json()['points'] == 5
+    assert c.post('/report', content=json.dumps({'join': {'s': 1}}), headers={'x-namma-key': 'secret', 'content-type': 'application/json'}).status_code == 200
+    assert len(list(tmp_path.glob('*.json'))) == 1 and c.post('/report', content='{}', headers={'x-namma-key': 'no'}).status_code == 401

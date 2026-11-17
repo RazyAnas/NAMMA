@@ -317,6 +317,14 @@ def _places_js():
 
 OVERLAY = OVERLAY.replace('/*NM_POI*/', _places_js())
 
+
+def ar_page():
+    """The on-site AR page (ar.html beside index.html): ar_page.html with ar_core.js (joining the phone's AR world to the scan)
+    and poi_core.js (route, arrows) pasted in, their `export` words dropped. None when a file is missing: a tour without AR."""
+    d = os.path.dirname(os.path.abspath(__file__)); strip = lambda f: re.sub(r'(?m)^export\s+', '', open(os.path.join(d, f)).read())
+    try: return open(os.path.join(d, 'ar_page.html')).read().replace('/*NM_AR_CORE*/', strip('ar_core.js')).replace('/*NM_POI_CORE*/', strip('poi_core.js'))
+    except OSError: return None
+
 def room_collision(pts, h, path):
     """Walk-mode collision when there is no mesh yet: a floor slab at y = 0 and four walls along the room's main horizontal axes
     (2nd-98th percentile of the SfM points), 3 m high. Room coordinates in metres."""
@@ -941,6 +949,8 @@ def build(run, tour, public, st='npx --no-install splat-transform'):
                         "window.viewer = await createViewer({ container: document.body, settings, ...options });")
     if os.path.exists(f'{tour}/overlay.json'): html = overlay(html)
     open(f'{tour}/index.html', 'w').write(html)
+    arp = ar_page()                                                                        # on-site AR for this tour (needs a server: scripts/ar/serve_ar.py)
+    if arp: open(f'{tour}/ar.html', 'w').write(arp)
     info = json.load(open(f'{tour}/tour.json')); info.update(smears_removed=int(bad.sum()), collision='collisionUrl' in boot, nav=nav, scene_mb=round((sum(os.path.getsize(os.path.join(dp, f)) for dp, _, fs in os.walk(os.path.dirname(out)) for f in fs) if fmt == 'lod' else os.path.getsize(out)) / 1e6, 1), format=fmt, sh_bands=sh)
     json.dump(info, open(f'{tour}/tour.json', 'w'), indent=1); print('TOUR', json.dumps(info), flush=True)
     return info
