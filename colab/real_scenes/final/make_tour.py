@@ -456,6 +456,31 @@ def colmap_cameras(sparse, examples):
     return C, P
 
 
+def detail(path, w=96):
+    """How much there is to see in a frame: mean change between neighbouring pixels of a small grey copy (0-255 scale).
+    Measured on the six spots of inbox job 20261116-132659-2f21: a bare wall 5.9, a wall with a cable tray 9.7, a door 10.3,
+    switch panels 17-24."""
+    from PIL import Image
+    im = Image.open(path); im.draft('L', (2 * w, 2 * w)); g = np.asarray(im.convert('L').resize((w, max(8, w * im.size[1] // im.size[0]))), np.float32)
+    return float(np.abs(np.diff(g, axis=0)).mean() + np.abs(np.diff(g, axis=1)).mean())
+
+
+def spot_frames(paths, n=6, score=detail):
+    """Frame numbers of the n photo spots: evenly spaced along the walk, but a spot that faces a bare wall (under half the
+    detail of a typical frame of this video) moves to the most detailed frame within a third of the spacing (owner's panel
+    room, 16 Nov: spot 2 of 6 was a blank wall). Still in walk order, never two on one frame."""
+    N = len(paths); base = [int(i) for i in np.linspace(0, N - 1, n + 2).astype(int)[1:-1]]
+    if N < 4 * n: return base
+    memo = {}; sc = lambda i: memo[i] if i in memo else memo.setdefault(i, score(paths[i]))
+    typical = float(np.median([sc(int(i)) for i in np.unique(np.linspace(0, N - 1, min(N, 60)).astype(int))]))
+    half = max(1, (N - 1) // (n + 1) // 3); out = []
+    for i in base:
+        if sc(i) < 0.5 * typical:
+            i = max((int(j) for j in np.unique(np.linspace(i - half, i + half, 15).astype(int))), key=sc)
+        out.append(i)
+    return out
+
+
 def respot(run, tour, examples):
     """Spots of a built tour moved to the exact filmed camera poses (their thumbnails), and the guided walk smoothed over at
     most 6 frames (owner, 1 Nov, house: spots 3-5 sat ~1 m off the walk, inside furniture). plan() smoothed the path over
@@ -476,7 +501,7 @@ def respot(run, tour, examples):
     P = lambda a, b, i: dict(position=[round(float(x), 4) for x in a[i]], target=[round(float(x), 4) for x in a[i] + look * b[i]], fov=round(fov, 1))
     tr['keyframes']['values']['position'] = [float(x) for k in keys for x in P(cs, fs, k)['position']]
     tr['keyframes']['values']['target'] = [float(x) for k in keys for x in P(cs, fs, k)['target']]
-    spots = np.linspace(0, n - 1, 8).astype(int)[1:-1]; moved = []
+    spots = pl.get('spots') or np.linspace(0, n - 1, 8).astype(int)[1:-1]; moved = []           # the frames plan() chose (spot_frames)
     for k, i in enumerate(spots):
         a = st['annotations'][k]; e = P(cam, fn, i); moved.append(round(float(np.linalg.norm(np.array(a['camera']['initial']['position']) - cam[i])), 2))
         a['camera']['initial'] = e; a['position'] = e['target']; ov['spots'][k].update(x=float(cam[i][0]), z=float(cam[i][2]))
@@ -505,7 +530,8 @@ def plan(examples, data, run, tour):
     lo, hi = np.percentile(pts, 3, 0), np.percentile(pts, 97, 0); pad = 0.12 * (hi - lo); lo, hi = lo - pad, hi + pad
     h = np.percentile(pts[:, 1], 99); lo[1], hi[1] = -0.05 * h, 1.05 * h
     E = euler_xyz(R @ F)                                                                   # file' = F E F p + F t  ->  E = R F
-    json.dump(dict(rotate=E.tolist(), translate=t.tolist(), scale=s, box=lo.tolist() + hi.tolist()), open(f'{tour}/plan.json', 'w'))
+    spots = spot_frames(p.image_paths)                                                     # evenly spaced, none facing a bare wall
+    json.dump(dict(rotate=E.tolist(), translate=t.tolist(), scale=s, box=lo.tolist() + hi.tolist(), spots=spots), open(f'{tour}/plan.json', 'w'))
     room_collision(pts, h, f'{tour}/room_collision.glb')
     # cameras in room coordinates, in walk order (Parser sorts the frame names = video order)
     K = p.Ks_dict[p.camera_ids[0]]; Wd, Hd = p.imsize_dict[p.camera_ids[0]]; fov = float(np.clip(np.degrees(2 * np.arctan(Hd / 2 / K[1, 1])), 10, 120))
@@ -521,7 +547,6 @@ def plan(examples, data, run, tour):
                  keyframes=dict(times=frames,
                                 values=dict(position=[float(x) for k in keys for x in pose(k)['position']],
                                             target=[float(x) for k in keys for x in pose(k)['target']], fov=[fov] * len(keys))))
-    spots = np.linspace(0, len(cam) - 1, 8).astype(int)[1:-1]
     ann = [dict(position=exact(i)['target'], title=f'Spot {n + 1}', text='Real filmed view', camera=dict(initial=exact(i))) for n, i in enumerate(spots)]
     oann, oitems = objects_layer(run, tour, cam, fov, len(ann)); ann += oann
     settings = dict(version=2, tonemapping='none', highPrecisionRendering=False, background=dict(color=[0.08, 0.08, 0.09]),

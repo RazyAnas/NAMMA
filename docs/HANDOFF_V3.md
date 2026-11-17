@@ -554,7 +554,9 @@ fired on the real video: bands top 134 / bottom 133 px, each frame cut to `[0, 1
 924 of 934 frames registered in one model at 1.01 px reprojection error with a single focal length (a still-squeezed picture
 would not fit one), 67,549 steps, 1.5M splats, 30.59 dB exposure-fair PSNR, SSIM 0.951, QA pass, mesh built (61 min), 5.8 h
 on Kaggle, tour published to `namma-tour-2`. Looked at in the tour: no bands, round knobs are round, panel labels readable.
-One of the six photo spots ("Spot 2") faces a bare wall. The trainer's exit code was 1 (gsplat's end-of-run camera-path video
+One of the six photo spots ("Spot 2") faces a bare wall; fixed for the next tour on the dev branch (`make_tour.spot_frames`: a spot with under half the
+detail of a typical frame moves to the most detailed frame within a third of the spacing; `plan.json` keeps the chosen frames
+for `respot`). Not yet run on a real video, and the published tour still has the old spot. The trainer's exit code was 1 (gsplat's end-of-run camera-path video
 crashed in `traj.py` `splprep`, after the model and metrics were saved); harmless here, same as the run still finishing.
 
 ## App: live coverage while recording (16 Nov, same branch; `app/android`)
