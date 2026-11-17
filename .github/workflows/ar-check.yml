@@ -37,7 +37,7 @@ jobs:
           run = json.load(open('colab/real_scenes/v3/ARCHECK.json'))['run']; api = HfApi(token=os.environ['HF_TOKEN'])
           repo = api.whoami()['name'] + '/namma-v3-out'
           pats = [f'{run}/sparse/0/*', f'{run}/full/model.ply', f'{run}/full/level.json', f'{run}/mesh/mesh.glb'] + \
-                 [f'{run}/tour/{x}' for x in ('plan.json', 'walls.json', 'scene.compressed.ply', 'thumbs/*')]
+                 [f'{run}/tour/{x}' for x in ('plan.json', 'walls.json', 'scene.compressed.ply', 'collision.glb', 'thumbs/*')]
           snapshot_download(repo, repo_type='dataset', allow_patterns=pats, local_dir='scan', token=os.environ['HF_TOKEN'])
           for d, _, fs in os.walk(os.path.join('scan', run)):
               for f in fs: print(os.path.relpath(os.path.join(d, f), 'scan'), os.path.getsize(os.path.join(d, f)) // 1024, 'KB')
