@@ -917,7 +917,7 @@ def head(html, fmt, bud=4):
              'var st=v&&v.state,q=new URLSearchParams(location.search);'
              'if(st&&st.hasCollisionOverlay&&q.get("showcollision")!=="0"&&!st.collisionOverlayEnabled)st.collisionOverlayEnabled=true;'
              'if(p)m.textContent=p[1]+"%";else if(s>90&&!(st&&st.loaded))m.textContent="Taking longer than usual. Check your connection and reload.";'
-             'if((st&&st.loaded&&(q.get("showcollision")==="0"||st.hasCollisionOverlay))||s>120){d.classList.add("namma-ready","namma-show");clearInterval(k);}},200);})();</script>')
+             'if((st&&st.loaded)||s>120){d.classList.add("namma-ready","namma-show");clearInterval(k);}},200);})();</script>')
     # Stable tour URLs can leave old assets in browser cache; version all changed files on each publish.
     cache = os.urandom(6).hex()
     html = re.sub(r'href="\./index\.css(?:\?[^"]*)?"', lambda _: f'href="./index.css?v={cache}"', html, count=1)
