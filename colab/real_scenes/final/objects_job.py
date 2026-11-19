@@ -42,4 +42,10 @@ say('frames', frames.from_images(max(cnt, key=cnt.get), f'{D}/images', int(CFG.g
 json.dump(dict(matrix=CFG['level']), open(f'{W}/level.json', 'w'))
 r = sh(f'cd {EX} && PYTHONPATH={EX}:{F}:$PYTHONPATH python {F}/objects3d.py {D} {ply[0]} {W}/level.json {CFG["metres_per_unit"]} {O} '
        f'{int(CFG.get("frames", 40))}')
-say('objects3d exit', r, 'after', round((time.time() - T0) / 60, 1), 'min'); sys.exit(r)
+say('objects3d exit', r, 'after', round((time.time() - T0) / 60, 1), 'min')
+if r == 0 and CFG.get('find'):                  # AI find: things the admin asked for that the object layer may not list (final/ai_find.py)
+    gc.collect(); sh('pip install -q "transformers>=4.45" 2>&1 | tail -1')
+    r2 = sh(f'cd {EX} && PYTHONPATH={EX}:{F}:$PYTHONPATH python {F}/ai_find.py {D} {ply[0]} {W}/level.json {CFG["metres_per_unit"]} {O} '
+            f"'{json.dumps(CFG['find'])}' {int(CFG.get('find_frames', 60))}")
+    say('ai_find exit', r2, 'after', round((time.time() - T0) / 60, 1), 'min')              # its failure does not fail the object layer
+sys.exit(r)

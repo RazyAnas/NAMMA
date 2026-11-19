@@ -1,0 +1,175 @@
+<!doctype html>
+<!-- On-site AR for one tour: stand in the scanned room with an Android phone (Chrome), and the room's outline, its places and
+     the route to a chosen place are drawn over the camera. Published as ar.html beside the tour's index.html (make_tour.ar_page),
+     so it reads the same walls.json / overlay.json / nav.json / pois.json.
+     How the phone finds itself, both feeding the same join (ar_core.js):
+       shape lock (no server): the phone's depth points, collected while the person looks around, are matched to the scan's
+         shape (ar_shape.bin) by ar_geo.js in a Web Worker, about once a second; believed when three matches in a row agree.
+       pictures (optional): opened as ar.html#s=<server address>&k=<key>, a camera picture goes to a server
+         (scripts/ar/serve_ar.py, DRS-VPT) that says where it was taken.
+     The phone's own AR tracking carries the position in between. Route and arrows are poi_core.js. Not yet tried on a phone (18 Nov). -->
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover"><title>NAMMA AR</title>
+<style>
+  html,body{margin:0;height:100%;background:#111;color:#eee;font:16px/1.4 system-ui,sans-serif}
+  #start{max-width:440px;margin:0 auto;padding:28px 20px}
+  h1{font-size:22px;margin:0 0 8px} p{color:#bbb;margin:8px 0}
+  button,select{font:inherit;border-radius:12px;border:0;padding:12px 16px;background:#e8a96b;color:#111;font-weight:600}
+  select{background:#2a2a2a;color:#eee;font-weight:400;max-width:100%}
+  button:disabled{opacity:.4}
+  #hud{position:fixed;inset:0;pointer-events:none;display:none}
+  #hud .bar{position:absolute;left:10px;right:10px;padding:10px 12px;border-radius:14px;background:#000a;pointer-events:auto}
+  #top{top:calc(10px + env(safe-area-inset-top))} #bot{bottom:calc(14px + env(safe-area-inset-bottom));display:flex;gap:8px;align-items:center;flex-wrap:wrap}
+  #stat{font-size:13px;color:#ddd;white-space:pre-line} #msg{font-weight:600;color:#ffd9a8}
+  .lbl{position:absolute;transform:translate(-50%,-100%);padding:2px 8px;border-radius:9px;background:#000b;font-size:12px;white-space:nowrap;display:none}
+  #bot button{padding:9px 12px;font-size:14px} #bot select{flex:1;min-width:120px;padding:9px 10px}
+</style></head><body>
+<div id="start"><h1>NAMMA AR</h1><p id="why">Checking this phone…</p>
+  <p><select id="dest0"></select></p><p><button id="go" disabled>Start AR</button></p>
+  <p style="font-size:13px">Stand inside the scanned room. Hold the phone upright and look around slowly; the first position takes up to a minute. The lines appear once the phone knows where it is.</p></div>
+<div id="hud"><div class="bar" id="top"><div id="msg">Look around slowly: walls, floor, ceiling…</div><div id="stat"></div></div><div id="labels"></div>
+  <div class="bar" id="bot"><select id="dest"></select><button id="save">Save report</button><button id="exit">Exit</button></div></div>
+<script id="geo-src" type="text/plain">/*NM_AR_GEO*/</script>
+<script type="module">
+/*NM_AR_CORE*/
+/*NM_POI_CORE*/
+const $ = (id) => document.getElementById(id), hp = new URLSearchParams(location.hash.slice(1)), SERVER = (hp.get('s') || '').replace(/\/+$/, ''), KEY = hp.get('k') || '';
+const getJ = (f) => fetch('./' + f).then(r => r.ok ? r.json() : null).catch(() => null);
+const [wj, ov, navJ, poisJ] = await Promise.all(['walls.json', 'overlay.json', 'nav.json', 'pois.json'].map(getJ));
+const shapeBuf = await fetch('./ar_shape.bin').then(r => r.ok ? r.arrayBuffer() : null).catch(() => null);
+const nav = navJ ? decodeNav(navJ) : null, H = (wj && wj.height) || 2.5;
+const places = [...((ov && ov.spots) || []).map(s => ({ name: s.title, pos: [s.x, 0, s.z] })), ...readPois(poisJ).map(p => ({ name: p.name, pos: p.approach ? [p.approach[0], 0, p.approach[1]] : p.pos, at: p.pos }))];
+for (const id of ['dest0', 'dest']) { $(id).innerHTML = '<option value="">Where to?</option>' + places.map((p, i) => `<option value="${i}">${p.name.replace(/[<&]/g, '')}</option>`).join('');
+  $(id).onchange = (e) => { $('dest0').value = $('dest').value = e.target.value; dest = e.target.value === '' ? null : places[+e.target.value]; routeAt = 0; arrived = false; }; }
+let dest = null, routeAt = 0, arrived = false, R = null, J = null, Jsrv = null, Jgeo = null, fixes = [], busy = false, sent = 0, failed = 0, lastMs = 0, session = null;
+// shape lock: ar_geo.js in a worker (a match is about a second of CPU; the camera view must not stutter)
+let geo = null, geoBusy = false, geoJoins = [], geoMs = 0, geoN = 0, geoRuns = 0, chunks = [], depthOn = false, frameNo = 0, geoAt = 0;
+if (shapeBuf) try {
+  const code = $('geo-src').textContent + `
+let M = null; onmessage = (e) => { const d = e.data; if (d.shape) { M = readShape(d.shape); return; }
+  const t0 = performance.now(); let J = null, L = null; try { L = prepare(d.pts, d.path, 5000); J = L && M ? locate(M, L, { step: 10 }) : null; } catch (err) {}
+  postMessage({ join: J ? toJoin(J, L) : null, ms: performance.now() - t0, n: L ? L.p.length / 3 : 0 }); };`;
+  geo = new Worker(URL.createObjectURL(new Blob([code], { type: 'text/javascript' }))); geo.postMessage({ shape: shapeBuf }, [shapeBuf]);
+  geo.onmessage = (e) => { geoBusy = false; geoRuns++; geoMs = e.data.ms; geoN = e.data.n; const j = e.data.join; if (!j) return;
+    geoJoins.push(j); if (geoJoins.length > 6) geoJoins.shift(); if (steady(geoJoins, refs)) Jgeo = j; };       // one match is not believed; three in a row that agree are
+  geo.onerror = () => { geo = null; };
+} catch (e) { geo = null; }
+const ok = !!navigator.xr && await navigator.xr.isSessionSupported('immersive-ar').catch(() => false);
+$('why').textContent = !ok ? 'This phone or browser has no AR here. Use Chrome on an Android phone with Google Play Services for AR.'
+  : !geo && !SERVER ? 'This tour has no AR map yet (ar_shape.bin), and the link names no server.' : 'Ready.';
+$('go').disabled = !ok || (!geo && !SERVER); $('go').onclick = () => start().catch(e => { $('why').textContent = 'AR could not start: ' + e.message; });
+
+// ---- drawing: everything is triangles in tour coordinates (metres, y up), moved into the AR world by the join ----
+const VS = 'attribute vec3 p;uniform mat4 P,V,M;void main(){gl_Position=P*V*M*vec4(p,1.0);}', FS = 'precision mediump float;uniform vec4 c;void main(){gl_FragColor=c;}';
+const quad = (a, b, c, d) => [...a, ...b, ...c, ...a, ...c, ...d];
+function band(pts, w, y) { const out = [];                                                    // a flat strip of width w along a polyline
+  for (let i = 1; i < pts.length; i++) { const a = pts[i - 1], b = pts[i], l = Math.hypot(b[0] - a[0], b[1] - a[1]) || 1, nx = -(b[1] - a[1]) / l * w / 2, nz = (b[0] - a[0]) / l * w / 2;
+    out.push(...quad([a[0] + nx, y, a[1] + nz], [b[0] + nx, y, b[1] + nz], [b[0] - nx, y, b[1] - nz], [a[0] - nx, y, a[1] - nz])); } return out; }
+const post = (x, z, h, r) => [...quad([x - r, 0, z], [x + r, 0, z], [x + r, h, z], [x - r, h, z]), ...quad([x, 0, z - r], [x, 0, z + r], [x, h, z + r], [x, h, z - r])];
+const outlinePts = wj && wj.outline && wj.outline.length > 2 ? [...wj.outline, wj.outline[0]] : null;
+const fixedTris = { outline: new Float32Array(outlinePts ? band(outlinePts, 0.06, 0.02) : ((wj && wj.walls) || []).flatMap(w => band([[w[0], w[1]], [w[2], w[3]]], 0.06, 0.02))),
+  corners: new Float32Array(outlinePts ? outlinePts.slice(0, -1).flatMap(q => post(q[0], q[1], Math.min(H, 2.4), 0.02)) : []),
+  posts: new Float32Array(places.flatMap(p => post((p.at || p.pos)[0], (p.at || p.pos)[2], 1.2, 0.03))) };
+const refs = outlinePts ? outlinePts.slice(0, -1).map(q => [q[0], 0, q[1]]) : [[-2, 0, -2], [2, 0, -2], [2, 0, 2], [-2, 0, 2]];   // where the joins must agree
+// The phone's depth image -> points in its AR world (the maths that ran on the test phone: app/static/record/quick-model.js
+// depthFrameToWorld). A coarse grid of pixels, 0.3-4.5 m; a few hundred points per call.
+function depthPoints(frame, view, t) {
+  let di; try { di = frame.getDepthInformation(view); } catch (e) { return; }
+  if (!di || !di.data) return; const w = di.width, h = di.height, dv = new DataView(di.data), two = di.data.byteLength === w * h * 2, four = di.data.byteLength === w * h * 4;
+  if (!two && !four) return; const n = di.normDepthBufferFromNormView.matrix, a = n[0], b = n[4], c = n[12], d = n[1], e = n[5], f = n[13], det = a * e - b * d;
+  if (Math.abs(det) < 1e-12) return; const ia = e / det, ib = -b / det, ic = (b * f - c * e) / det, id = -d / det, ie = a / det, jf = (c * d - a * f) / det;
+  const P = view.projectionMatrix, m = view.transform.matrix, st = Math.max(1, Math.floor(Math.min(w, h) / 14)), out = [];
+  for (let row = st >> 1; row < h; row += st) for (let col = st >> 1; col < w; col += st) { const i = row * w + col, dm = (two ? dv.getUint16(i * 2, true) : dv.getFloat32(i * 4, true)) * di.rawValueToMeters;
+    if (!(dm >= 0.3 && dm <= 4.5)) continue; const u = (col + 0.5) / w, v = (row + 0.5) / h, vx = ia * u + ib * v + ic, vy = id * u + ie * v + jf;
+    if (vx < 0 || vx > 1 || vy < 0 || vy > 1) continue; const X = dm * (2 * vx - 1 + P[8]) / P[0], Y = dm * (1 - 2 * vy + P[9]) / P[5], Z = -dm;
+    out.push(m[0] * X + m[4] * Y + m[8] * Z + m[12], m[1] * X + m[5] * Y + m[9] * Z + m[13], m[2] * X + m[6] * Y + m[10] * Z + m[14]); }
+  chunks.push({ t, pts: out, cam: [m[12], m[13], m[14]] }); while (chunks.length && t - chunks[0].t > 25000) chunks.shift();   // the last 25 s
+}
+function shapeMatch(t) {                                                                       // everything seen lately -> the worker
+  if (!geo || geoBusy || !chunks.length || t - geoAt < 700 || t - chunks[0].t < 2000) return; let n = 0; for (const c of chunks) n += c.pts.length;
+  if (n < 1800) return; const pts = new Float32Array(n), path = new Float32Array(chunks.length * 3); let o = 0;
+  chunks.forEach((c, k) => { pts.set(c.pts, o); o += c.pts.length; path.set(c.cam, 3 * k); });
+  geoBusy = true; geoAt = t; geo.postMessage({ pts, path }, [pts.buffer, path.buffer]);
+}
+const fineOf = (pts) => { const out = []; for (let i = 1; i < pts.length; i++) { const a = pts[i - 1], b = pts[i], n = Math.max(1, Math.ceil(Math.hypot(b[0] - a[0], b[2] - a[2]) / 0.25));
+  for (let k = i === 1 ? 0 : 1; k <= n; k++) out.push([a[0] + (b[0] - a[0]) * k / n, a[1] + (b[1] - a[1]) * k / n, a[2] + (b[2] - a[2]) * k / n]); } return out; };
+const toTour = (p) => { const q = [(p[0] - J.t[0]) / J.s, (p[1] - J.t[1]) / J.s, (p[2] - J.t[2]) / J.s], c = Math.cos(-J.yaw), s = Math.sin(-J.yaw); return [c * q[0] + s * q[2], q[1], -s * q[0] + c * q[2]]; };
+
+async function start() {
+  session = await navigator.xr.requestSession('immersive-ar', { requiredFeatures: ['local'], optionalFeatures: ['dom-overlay', 'depth-sensing', ...(SERVER ? ['camera-access'] : [])],
+    domOverlay: { root: $('hud') }, depthSensing: { usagePreference: ['cpu-optimized'], dataFormatPreference: ['luminance-alpha', 'float32'] } });
+  depthOn = !!geo && (!session.enabledFeatures || session.enabledFeatures.includes('depth-sensing'));
+  const canvas = document.createElement('canvas'), gl = canvas.getContext('webgl', { xrCompatible: true, antialias: true }); await gl.makeXRCompatible();
+  const layer = new XRWebGLLayer(session, gl); session.updateRenderState({ baseLayer: layer }); const binding = new XRWebGLBinding(session, gl), space = await session.requestReferenceSpace('local');
+  space.addEventListener('reset', () => { fixes = []; J = Jsrv = Jgeo = null; geoJoins = []; chunks = []; $('msg').textContent = 'Tracking restarted. Looking for the room…'; });   // everything so far belongs to the old origin
+  $('hud').addEventListener('beforexrselect', (e) => e.preventDefault()); $('start').style.display = 'none'; $('hud').style.display = 'block';
+  $('exit').onclick = () => session.end(); session.addEventListener('end', () => { $('hud').style.display = 'none'; $('start').style.display = 'block'; $('why').textContent = 'AR ended.'; });
+  $('save').onclick = saveReport; $('save').style.display = SERVER ? '' : 'none';
+  const sh = (t, s) => { const o = gl.createShader(t); gl.shaderSource(o, s); gl.compileShader(o); return o; }, prog = gl.createProgram();
+  gl.attachShader(prog, sh(gl.VERTEX_SHADER, VS)); gl.attachShader(prog, sh(gl.FRAGMENT_SHADER, FS)); gl.linkProgram(prog);
+  const loc = { p: gl.getAttribLocation(prog, 'p'), P: gl.getUniformLocation(prog, 'P'), V: gl.getUniformLocation(prog, 'V'), M: gl.getUniformLocation(prog, 'M'), c: gl.getUniformLocation(prog, 'c') }, buf = gl.createBuffer();
+  const tris = (data, col) => { if (!data.length) return; gl.bindBuffer(gl.ARRAY_BUFFER, buf); gl.bufferData(gl.ARRAY_BUFFER, data, gl.DYNAMIC_DRAW); gl.enableVertexAttribArray(loc.p);
+    gl.vertexAttribPointer(loc.p, 3, gl.FLOAT, false, 0, 0); gl.uniform4fv(loc.c, col); gl.drawArrays(gl.TRIANGLES, 0, data.length / 3); };
+  // the camera picture, small, for the server: the AR camera texture drawn into our own framebuffer and read back
+  const bs = gl.createProgram(); gl.attachShader(bs, sh(gl.VERTEX_SHADER, 'attribute vec2 a;varying vec2 v;void main(){v=a*0.5+0.5;gl_Position=vec4(a,0.0,1.0);}'));
+  gl.attachShader(bs, sh(gl.FRAGMENT_SHADER, 'precision mediump float;varying vec2 v;uniform sampler2D s;void main(){gl_FragColor=texture2D(s,v);}')); gl.linkProgram(bs);
+  const bq = gl.createBuffer(); gl.bindBuffer(gl.ARRAY_BUFFER, bq); gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([-1, -1, 1, -1, -1, 1, 1, 1]), gl.STATIC_DRAW);
+  let snap = null; const c2 = document.createElement('canvas'), g2 = c2.getContext('2d');
+  function grab(camera) {
+    if (!snap) { const w = Math.min(camera.width, camera.width >= camera.height ? 640 : 360), h = Math.round(w * camera.height / camera.width), tex = gl.createTexture(), fb = gl.createFramebuffer();
+      gl.bindTexture(gl.TEXTURE_2D, tex); gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, w, h, 0, gl.RGBA, gl.UNSIGNED_BYTE, null); gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
+      gl.bindFramebuffer(gl.FRAMEBUFFER, fb); gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, tex, 0); snap = { w, h, fb, px: new Uint8Array(w * h * 4) }; c2.width = w; c2.height = h; }
+    const t = binding.getCameraImage(camera); if (!t) return null;
+    gl.bindFramebuffer(gl.FRAMEBUFFER, snap.fb); gl.viewport(0, 0, snap.w, snap.h); gl.disable(gl.BLEND); gl.useProgram(bs); gl.bindBuffer(gl.ARRAY_BUFFER, bq); const a = gl.getAttribLocation(bs, 'a');
+    gl.enableVertexAttribArray(a); gl.vertexAttribPointer(a, 2, gl.FLOAT, false, 0, 0); gl.activeTexture(gl.TEXTURE0); gl.bindTexture(gl.TEXTURE_2D, t); gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
+    gl.readPixels(0, 0, snap.w, snap.h, gl.RGBA, gl.UNSIGNED_BYTE, snap.px); gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+    const im = g2.createImageData(snap.w, snap.h), row = snap.w * 4;                         // readPixels starts at the bottom row
+    for (let y = 0; y < snap.h; y++) im.data.set(snap.px.subarray((snap.h - 1 - y) * row, (snap.h - y) * row), y * row);
+    g2.putImageData(im, 0, 0); return new Promise(res => c2.toBlob(res, 'image/jpeg', 0.88));
+  }
+  async function locate(view, t) {
+    busy = true; const cam = view.camera, viewCm = Array.from(view.transform.matrix), K0 = intrinsics(view.projectionMatrix, cam.width, cam.height), t0 = performance.now();
+    try { const blob = await grab(cam); if (!blob) return; const k = snap.w / cam.width, K = [[K0[0][0] * k, 0, K0[0][2] * k], [0, K0[1][1] * k, K0[1][2] * k], [0, 0, 1]];
+      const fd = new FormData(); fd.append('image', blob, 'frame.jpg'); fd.append('K', JSON.stringify(K)); sent++;
+      const r = await fetch(SERVER + '/locate', { method: 'POST', body: fd, headers: { 'x-namma-key': KEY } }); if (!r.ok) throw new Error('server ' + r.status);
+      const j = await r.json(); fixes.push(fix(j.T_w2c, viewCm, t)); if (fixes.length > 60) fixes.shift(); Jsrv = solve(fixes); lastMs = performance.now() - t0;
+    } catch (e) { failed++; $('msg').textContent = 'No answer from the server (' + e.message + ')'; await new Promise(r => setTimeout(r, 3000)); } finally { busy = false; }
+  }
+  const labels = places.map(p => { const d = document.createElement('div'); d.className = 'lbl'; d.textContent = p.name; $('labels').appendChild(d); return d; });
+  session.requestAnimationFrame(function loop(t, frame) {
+    session.requestAnimationFrame(loop); const pose = frame.getViewerPose(space); gl.bindFramebuffer(gl.FRAMEBUFFER, layer.framebuffer); gl.clearColor(0, 0, 0, 0); gl.clear(gl.COLOR_BUFFER_BIT);
+    const view = pose && pose.views[0]; if (!view) return;
+    if (SERVER && !busy && view.camera && !pose.emulatedPosition) locate(view, t);             // one picture at a time, the next as soon as the answer is in
+    if (depthOn && !pose.emulatedPosition && frameNo++ % 6 === 0) { depthPoints(frame, view, t); shapeMatch(t); }
+    J = Jgeo || Jsrv;                                                                          // the room's shape first (no server), else the pictures
+    const vp = layer.getViewport(view), me = [view.transform.matrix[12], view.transform.matrix[13], view.transform.matrix[14]];
+    const sh = geo ? (depthOn ? `shape: ${Jgeo ? 'found' : 'looking'} · ${geoRuns} matches, ${(geoMs / 1000).toFixed(1)} s each, ${geoN} points${Jgeo ? ' · scale ' + Jgeo.s.toFixed(3) : ''}` : 'shape: this phone gave no depth') : 'shape: no map in this tour';
+    const pc = SERVER ? (Jsrv ? `pictures: ${Jsrv.used} of ${Jsrv.of} agree · within ${Jsrv.cm.toFixed(0)} cm, ${Jsrv.deg.toFixed(1)}° · ${(lastMs / 1000).toFixed(0)} s each` : `pictures: ${fixes.length} answers, ${sent} sent${failed ? ', ' + failed + ' failed' : ''}`) : '';
+    $('stat').textContent = sh + (pc ? '\n' + pc : '');
+    if (!J) { labels.forEach(l => { l.style.display = 'none'; }); return; }
+    if (!arrived) $('msg').textContent = dest ? 'To ' + dest.name : 'Choose a place below';
+    const here = toTour(me);
+    if (dest && nav && t - routeAt > 500) { routeAt = t; const r = route(nav, [here[0], here[2]], [dest.pos[0], dest.pos[2]]); R = r.ok ? { fine: fineOf(r.points), len: r.length } : null;
+      if (R) R.rb = ribbon(R.fine, 0.45); const left = Math.hypot(here[0] - dest.pos[0], here[2] - dest.pos[2]);
+      if (left < 1.0) { arrived = true; $('msg').textContent = 'You have reached ' + dest.name; } else { arrived = false; $('msg').textContent = `To ${dest.name}: ${(R ? R.len : left).toFixed(1)} m`; } }
+    if (!dest) R = null;
+    gl.viewport(vp.x, vp.y, vp.width, vp.height); gl.useProgram(prog); gl.enable(gl.BLEND); gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA); gl.disable(gl.DEPTH_TEST);
+    gl.uniformMatrix4fv(loc.P, false, view.projectionMatrix); gl.uniformMatrix4fv(loc.V, false, view.transform.inverse.matrix); gl.uniformMatrix4fv(loc.M, false, new Float32Array(joinCm(J)));
+    tris(fixedTris.outline, [0.96, 0.92, 0.84, 0.9]); tris(fixedTris.corners, [0.96, 0.92, 0.84, 0.55]);
+    if (R && R.fine.length > 1 && !arrived) { const b = []; for (let i = 1; i < R.fine.length; i++) b.push(...quad(R.rb.L[i - 1], R.rb.L[i], R.rb.R[i], R.rb.R[i - 1])); tris(new Float32Array(b.map((v, k) => k % 3 === 1 ? v + 0.02 : v)), [0.25, 0.6, 1, 0.45]);
+      const ch = chevrons(R.fine, R.rb.s, 0.45, 0.8, (t / 1000 * 0.6) % 0.8).flatMap(c => { const q = c.pts.map(p => [p[0], p[1] + 0.03, p[2]]); return [...quad(q[0], q[1], q[4], q[5]), ...quad(q[1], q[2], q[3], q[4])]; });
+      tris(new Float32Array(ch), [1, 1, 1, 0.95]); }
+    tris(fixedTris.posts, [0.91, 0.66, 0.42, 0.95]);
+    // names above the posts: tour -> AR world -> screen
+    const V = fromCm(view.transform.inverse.matrix), Pm = fromCm(view.projectionMatrix), W = innerWidth, Hh = innerHeight;
+    places.forEach((p, i) => { const a = apply(J, [(p.at || p.pos)[0], 1.3, (p.at || p.pos)[2]]), e = V.map(r => r[0] * a[0] + r[1] * a[1] + r[2] * a[2] + r[3]), c = Pm.map(r => r[0] * e[0] + r[1] * e[1] + r[2] * e[2] + r[3] * e[3]);
+      const on = c[3] > 0.2 && Math.abs(c[0] / c[3]) < 1 && Math.abs(c[1] / c[3]) < 1; labels[i].style.display = on ? 'block' : 'none';
+      if (on) { labels[i].style.left = ((c[0] / c[3] + 1) / 2 * W) + 'px'; labels[i].style.top = ((1 - c[1] / c[3]) / 2 * Hh) + 'px'; } });
+  });
+}
+async function saveReport() {                                                                  // numbers only: no pictures, nothing about the phone's owner
+  const body = { tour: location.pathname.split('/').slice(-2, -1)[0], when: new Date().toISOString(), join: J, shape: { join: Jgeo, last: geoJoins, runs: geoRuns, ms: geoMs, points: geoN, depth: depthOn }, sent, failed, seconds_per_picture: lastMs / 1000,
+    fixes: fixes.map(f => ({ at: Math.round(f.at), tilt: +f.tilt.toFixed(2), yaw: +f.yaw.toFixed(4), tour: f.tour.map(v => +v.toFixed(3)), xr: f.xr.map(v => +v.toFixed(3)) })) };
+  try { const r = await fetch(SERVER + '/report', { method: 'POST', body: JSON.stringify(body), headers: { 'content-type': 'application/json', 'x-namma-key': KEY } }); $('msg').textContent = r.ok ? 'Report saved' : 'Report not saved (' + r.status + ')'; }
+  catch (e) { $('msg').textContent = 'Report not saved (' + e.message + ')'; }
+}
+</script></body></html>

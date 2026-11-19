@@ -25,6 +25,9 @@ class MainActivity : Activity() {
         root.addView(Ui.text(this, "NAMMA Capture", 26f, bold = true))
         root.addView(Ui.text(this, "Film a room the way the 3D model needs it; the app uploads it and brings back the tour link.", 14f, Ui.DIM))
         root.addView(Ui.wide(Ui.button(this, "●  Record a room", Ui.WARN) { startActivity(Intent(this, RecordActivity::class.java)) }, this, 16))
+        // live coverage (16 Nov): the scanned surfaces painted on the picture while filming; ARCore, main lens, 1080p
+        root.addView(Ui.wide(Ui.button(this, "◉  Record with live coverage (beta)", Ui.ACCENT) { startActivity(Intent(this, ScanActivity::class.java)) }, this, 8))
+        root.addView(Ui.wide(Ui.button(this, "See how live coverage looks (demo room)", Ui.CARD) { startActivity(Intent(this, ScanActivity::class.java).putExtra("demo", true)) }, this, 8))
         val r = Ui.row(this)
         r.addView(Ui.button(this, "Settings", Ui.CARD) { startActivity(Intent(this, SetupActivity::class.java)) })
         r.addView(Ui.gap(this, 0).apply { layoutParams = LinearLayout.LayoutParams(Ui.dp(this@MainActivity, 8), 1) })
@@ -32,7 +35,7 @@ class MainActivity : Activity() {
         root.addView(Ui.wide(r, this))
         root.addView(Ui.wide(Ui.text(this, "Your recordings", 18f, bold = true), this, 20))
         list = Ui.column(this, 0); root.addView(list)
-        setContentView(ScrollView(this).apply { setBackgroundColor(Ui.BG); addView(root) })
+        setContentView(ScrollView(this).apply { setBackgroundColor(Ui.BG); addView(root); Ui.insets(this, root) })
         if (Build.VERSION.SDK_INT >= 33) requestPermissions(arrayOf(Manifest.permission.POST_NOTIFICATIONS), 2)
         CheckJob.schedule(this)
     }

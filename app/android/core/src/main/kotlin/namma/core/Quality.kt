@@ -16,6 +16,9 @@ import kotlin.math.sqrt
  *   - dark frames, light jumps while holding still (blotchy walls), floor-filled frames (gyro), length
  *  Frames: the preview (or, in tests, the decoded video) at ~4 per second, about 1/4 of the video size. */
 object Quality {
+    /** The columns of Sample.json(), in order (meta.json quality_samples.columns). */
+    val COLUMNS = listOf("t", "sharp", "crisp", "luma", "texture", "shift", "ncc", "turn_deg", "elevation", "steps")
+
     class Sample(
         val t: Double,          // seconds
         val sharp: Double,      // variance of the Laplacian on the centre crop

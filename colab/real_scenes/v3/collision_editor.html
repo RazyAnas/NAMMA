@@ -15,12 +15,21 @@ T.BufferGeometry.prototype.disposeBoundsTree=disposeBoundsTree;
 import {OrbitControls} from "three/addons/controls/OrbitControls.js";
 import {GLTFLoader} from "three/addons/loaders/GLTFLoader.js";
 import {GLTFExporter} from "three/addons/exporters/GLTFExporter.js";
-const DATA={type:"dataset",name:"anasrazy/namma-v3-out"},SPACE={type:"space",name:"anasrazy/namma-tour"};
-const RUN="20261031-1528",FOLDER="20261031-1528-c83619ed2c647e9986fe";
-const MESH_PATH=RUN+"/mesh/mesh.glb",EDITED_PATH=RUN+"/mesh/mesh-edited.glb",PLAN_PATH=RUN+"/tour_v2/plan.json";
-const DATA_COLLISION_PATH=RUN+"/tour_v2/collision.glb",DATA_HTML_PATH=RUN+"/tour_v2/index.html";
+// Which tour: ?run=<run>&folder=<its folder in the Space>&dst=<its copy in the results dataset> (the tour page's admin panel
+// opens the editor with these, 16 Nov). Without them: the house tour this editor was first made for. The Hugging Face sign-in
+// comes back to this page without the query, so the choice is kept for that one round trip.
+const QS=new URLSearchParams(location.search),okName=v=>typeof v==="string"&&/^[\w.-]{1,80}$/.test(v)?v:null;
+let kept=null;if(QS.has("code")&&QS.has("state")){try{kept=JSON.parse(sessionStorage.getItem("nammaEditorTarget")||"null")}catch(e){}}
+const pick=(k,d)=>okName(QS.get(k))||(kept&&okName(kept[k]))||d;
+const RUN=pick("run","20261031-1528"),FOLDER=pick("folder","20261031-1528-c83619ed2c647e9986fe"),DST=pick("dst","tour_v2");
+try{sessionStorage.setItem("nammaEditorTarget",JSON.stringify({run:RUN,folder:FOLDER,dst:DST}))}catch(e){}
+const OWNER="anasrazy",HOSTNAME=location.hostname.split(".")[0];          // the Space this page is served from (namma-tour, namma-tour-2, ...)
+const DATA={type:"dataset",name:OWNER+"/namma-v3-out"},SPACE={type:"space",name:HOSTNAME.startsWith(OWNER+"-")?OWNER+"/"+HOSTNAME.slice(OWNER.length+1):OWNER+"/namma-tour"};
+const MESH_PATH=RUN+"/mesh/mesh.glb",EDITED_PATH=RUN+"/mesh/mesh-edited.glb",PLAN_PATH=RUN+"/"+DST+"/plan.json";
+const DATA_COLLISION_PATH=RUN+"/"+DST+"/collision.glb",DATA_HTML_PATH=RUN+"/"+DST+"/index.html";
+{const b=document.querySelector("#auth b");if(b)b.textContent=MESH_PATH}
 const COLLISION_PATH=FOLDER+"/collision.glb",HTML_PATH=FOLDER+"/index.html";
-const TOUR_URL="https://anasrazy-namma-tour.static.hf.space/"+FOLDER+"/index.html";
+const TOUR_URL=(location.hostname.endsWith(".hf.space")?location.origin:"https://anasrazy-namma-tour.static.hf.space")+"/"+FOLDER+"/index.html";
 const $=id=>document.getElementById(id);let token=null,meshRoot=null,boundaryRoot=null,pageHtml="",worldScale=1,mode="erase",dirty=false,busy=false,undo=[],redo=[],gesture=[],erasedTotal=0,states=[];
 const renderer=new T.WebGLRenderer({antialias:true});renderer.setPixelRatio(Math.min(devicePixelRatio||1,2));$("view").appendChild(renderer.domElement);
 const scene=new T.Scene();scene.background=new T.Color(0x11151a);const camera=new T.PerspectiveCamera(48,1,.01,5000);const controls=new OrbitControls(camera,renderer.domElement);controls.enableDamping=true;
@@ -176,7 +185,7 @@ renderer.setAnimationLoop(()=>{controls.update();renderer.render(scene,camera)})
 async function start(){
  try{
   const a=await oauthHandleRedirectIfPresent();
-  if(!a||!a.accessToken){$("login").onclick=async()=>{const scopes=window.huggingface?.variables?.OAUTH_SCOPES;location.href=await oauthLoginUrl({scopes})};return}
+  if(!a||!a.accessToken){$("login").onclick=async()=>{const scopes=window.huggingface?.variables?.OAUTH_SCOPES;location.href=await oauthLoginUrl({scopes,redirectUrl:location.origin+location.pathname})};return}
   const me=await whoAmI({accessToken:a.accessToken});if(!me||me.name.toLowerCase()!=="anasrazy")throw new Error("Sign in as anasrazy, the owner of this tour and dataset");
   token=a.accessToken;$("who").textContent="Signed in: "+me.name;$("auth").style.display="none";$("tour").href=TOUR_URL;await loadAssets();
  }catch(e){say(e.message||String(e))}

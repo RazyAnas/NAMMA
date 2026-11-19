@@ -90,17 +90,76 @@ def verify(api, say=print, state='publish_state.json', check='out/assert.json'):
     return False
 
 
+def merge_pois(live, built):
+    """Places of a tour being published again. `live` = pois.json in the Space now (the admin's edits in the page), `built` = the
+    one in the tour folder being uploaded (e.g. places the AI find wrote during the run). The live file wins: its entries stay
+    exactly as they are, built entries with a new id are added, and an id the admin deleted (live 'removed') does not come back."""
+    ok = lambda d: isinstance(d, dict) and isinstance(d.get('pois'), list)
+    if not ok(live): return built if ok(built) else None
+    if not ok(built): return live
+    have = {p.get('id') for p in live['pois'] if isinstance(p, dict)} | set(live.get('removed') or [])
+    return dict(live, pois=live['pois'] + [p for p in built['pois'] if isinstance(p, dict) and p.get('id') not in have])
+
+
+def _live_pois(api, sp, path):
+    from huggingface_hub import hf_hub_download
+    return json.load(open(hf_hub_download(sp, path, repo_type='space', token=api.token, force_download=True, local_dir='pois_live')))
+
+
+def keep_pois(api, sp, folder, tour_dir, say=print, fetch=_live_pois, repo_file=None):
+    """Before a tour folder is uploaded over a published one: bring the places that are live there (the admin's pois.json) into
+    the folder, so a republish never wipes them. Order: the live file, then a pois.json kept in the repo for this run
+    (v3/pois/<run>.json, the no-sign-in way to save), then what the build made. Returns how many places the folder now has, or
+    None when the live file exists but could not be read: then pois.json must not be uploaded at all (publish leaves it out)."""
+    local = os.path.join(tour_dir, 'pois.json'); built = None
+    for f in (local, repo_file):                                                           # the build's, then the repo's (it wins over the build's)
+        try: built = merge_pois(json.load(open(f)), built) if f and os.path.exists(f) else built
+        except (OSError, ValueError) as e: say('places file unreadable, skipped:', f, str(e)[:100])
+    live = None
+    try:
+        if api.file_exists(sp, f'{folder}/pois.json', repo_type='space'): live = fetch(api, sp, f'{folder}/pois.json')
+    except Exception as e:
+        say('the live places could not be read: pois.json is left untouched in the Space:', str(e)[:150]); return None
+    m = merge_pois(live, built)
+    if m is None: return 0
+    json.dump(m, open(local, 'w'), indent=1); say('places:', len(m['pois']), '(live', len(live['pois']) if isinstance(live, dict) and isinstance(live.get('pois'), list) else 0, 'kept)')
+    return len(m['pois'])
+
+
+def previous(api, user, results_repo, url_path):
+    """(space, folder) the run's link points to now, or None: a publish to a new random folder takes its places from there."""
+    try:
+        from huggingface_hub import hf_hub_download
+        u = open(hf_hub_download(results_repo, url_path, repo_type='dataset', token=api.token, force_download=True, local_dir='url_prev')).read().strip()
+        host, folder = u.split('/')[2].split('.')[0], u.split('/')[-2]
+        return (f'{user}/{host[len(user) + 1:]}', folder) if host.lower().startswith(user.lower() + '-') else None
+    except Exception: return None
+
+
 def publish(api, user, results_repo, run, tour_dir, say=print, url_path=None):
     sp = f'{user}/namma-tour'; api.create_repo(sp, repo_type='space', space_sdk='static', private=False, exist_ok=True)
+    if os.environ.get('TOUR_SAME') and not os.environ.get('TOUR_FOLDER'):                 # PUBLISH.json "same": update the tour the link
+        cur = previous(api, user, results_repo, url_path or f'{run}/tour_url.txt')        # (url_name) points to now, where it is (a tour
+        assert cur, 'same: this link does not exist yet'                                  # that spilled over lives in namma-tour-2, -3, ...)
+        sp, os.environ['TOUR_FOLDER'] = cur
     if os.environ.get('TOUR_PRUNE') == '1':                                               # deletes old tours: only with the owner's OK
         prune(api, sp, results_repo, url_path or f'{run}/tour_url.txt', say)
     for f in {x.split('/')[0] for x in api.list_repo_files(sp, repo_type='space') if '/' in x}:      # old guessable folders out
         if not re.fullmatch(r'\d{8}-\d{4}(-[a-z0-9]+)?-[0-9a-f]{20}', f): api.delete_folder(f, repo_id=sp, repo_type='space')   # (digits: 'world1')
     folder = os.environ.get('TOUR_FOLDER') or f'{run}-{secrets.token_hex(10)}'          # TOUR_FOLDER: update a published tour in place (same link)
+    # places the admin saved in the published page live only in the Space: take them along (same folder, or the folder the
+    # run's link pointed to until now), never upload over them blind
+    was = (sp, folder) if os.environ.get('TOUR_FOLDER') else previous(api, user, results_repo, url_path or f'{run}/tour_url.txt')
+    repo_pois = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'pois', run.replace('/', '_') + '.json')
+    try:                                           # the page's admin panel opens the collision editor on THIS tour: its run and its copy
+        ov = os.path.join(tour_dir, 'overlay.json'); o = json.load(open(ov)); o['src'] = dict(run=run, dst=os.environ.get('TOUR_DST', 'tour')); json.dump(o, open(ov, 'w'))
+    except (OSError, ValueError): pass             # (a generated world has no overlay.json)
+    kept = keep_pois(api, was[0], was[1], tour_dir, say, repo_file=repo_pois) if was else keep_pois(api, sp, folder, tour_dir, say, repo_file=repo_pois)
+    skip = ['plan.json'] + (['pois.json'] if kept is None else [])
     for k in range(1, 10):                         # a full free Space (1 GB) spills over to namma-tour-2, -3, ... (old links stay)
         try:
             lfs_rules(api, sp); remember(api, sp, folder, results_repo, url_path or f'{run}/tour_url.txt')     # for --verify / roll back
-            api.upload_folder(folder_path=tour_dir, path_in_repo=folder, repo_id=sp, repo_type='space', ignore_patterns=['plan.json'], delete_patterns=['walkpath.json']); break
+            api.upload_folder(folder_path=tour_dir, path_in_repo=folder, repo_id=sp, repo_type='space', ignore_patterns=skip, delete_patterns=['walkpath.json']); break
         except Exception as e:
             if 'Storage limit' not in str(e) or k == 9: raise
             sp = f'{user}/namma-tour-{k + 1}'; say('Space full, publishing to', sp)
@@ -139,6 +198,7 @@ if __name__ == '__main__':
         sys.exit(0)
     fp, co, rb, hd, rs = ('floorplan' in sys.argv[2:], 'collision' in sys.argv[2:], 'rebuild' in sys.argv[2:],
                           'head' in sys.argv[2:], 'respot' in sys.argv[2:])
+    co = co or fp                                                   # new walls are also what walk mode bumps into and routes go around
     rs = rs or ((hd or rb) and 'norespot' not in sys.argv[2:])      # every page update repairs spots + field of view itself (checked, safe)
     extra = ([f'{run}/full/{x}' for x in ('model.ply', 'level.json', 'nav.json')] if fp or rb else []) + ([f'{run}/mesh/{x}' for x in ('mesh.glb', 'mesh.json', 'mesh-edited.glb')] if co or rb else [])
     if rb and os.environ.get('TOUR_MODEL'): extra.append(f"{run}/{os.environ['TOUR_MODEL']}")
@@ -148,8 +208,12 @@ if __name__ == '__main__':
         while not api.file_exists(repo, f"{run}/{os.environ['TOUR_MODEL']}", repo_type='dataset'):
             assert time.time() - t0 < 5400, 'model never appeared'; print('waiting for', os.environ['TOUR_MODEL'], flush=True); time.sleep(30)
     src = os.environ.get('TOUR_DST', 'tour') if hd and not rb else 'tour'                # 'head': the stored tour it updates
-    d = snapshot_download(repo, repo_type='dataset', allow_patterns=[f'{run}/{src}/*', f'{run}/{src}/**'] + extra, local_dir='pub', token=tok)
-    tour = os.path.join(d, run, src); assert os.path.exists(f'{tour}/index.html'), f'no built tour in {repo}/{run}/{src}'
+    # TOUR_FROM (PUBLISH.json "from"): a trial of new page code on a copy. The stored tour <run>/<TOUR_FROM> is only read; the
+    # result is kept as <run>/<TOUR_DST> and published under its own link (url_name). Nothing of TOUR_FROM or its link changes.
+    frm = os.environ.get('TOUR_FROM'); get = src
+    if frm and frm != src and hd and not rb and not api.file_exists(repo, f'{run}/{src}/index.html', repo_type='dataset'): get = frm
+    d = snapshot_download(repo, repo_type='dataset', allow_patterns=[f'{run}/{get}/*', f'{run}/{get}/**'] + extra, local_dir='pub', token=tok)
+    tour = os.path.join(d, run, get); assert os.path.exists(f'{tour}/index.html'), f'no built tour in {repo}/{run}/{get}'
     if fp or co or rb or hd or rs: sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', 'final')); import make_tour
     if rs:                                                                                # spots at the exact filmed poses (make_tour.respot)
         import subprocess
@@ -163,6 +227,13 @@ if __name__ == '__main__':
     if co:
         make_tour.collision(os.path.join(d, run), tour)
         api.upload_file(path_or_fileobj=f'{tour}/collision.glb', path_in_repo=f'{run}/{src}/collision.glb', repo_id=repo, repo_type='dataset')   # the tour being updated (was always tour/)
+        try:                                                                              # the map on-site AR is located against
+            if make_tour.ar_map(os.path.join(d, run), tour):
+                for x in ('ar_map.bin', 'ar_shape.bin'):
+                    if os.path.exists(f'{tour}/{x}'): api.upload_file(path_or_fileobj=f'{tour}/{x}', path_in_repo=f'{run}/{src}/{x}', repo_id=repo, repo_type='dataset')
+        except Exception as e: print('AR map skipped:', type(e).__name__, str(e)[:120], flush=True)
+    if (co or hd) and not rb and (co or not os.path.exists(f'{tour}/nav.json')):         # routes to places: the walkable grid of this collision
+        if make_tour.navgrid(tour): api.upload_file(path_or_fileobj=f'{tour}/nav.json', path_in_repo=f'{run}/{src}/nav.json', repo_id=repo, repo_type='dataset')
     if rb:                                                                                # scene file again from the model (current settings)
         import subprocess; W = os.path.abspath('st')
         subprocess.run(f'mkdir -p {W} && cd {W} && npm init -y >/dev/null && npm i -s --no-audit --no-fund playcanvas@2.23.3 '
@@ -184,9 +255,14 @@ if __name__ == '__main__':
         open(f'{tour}/index.js', 'w').write(make_tour.patch_js(js))                       # read first, then write (never truncate before reading)
         assert os.path.getsize(f'{tour}/index.js') > 100000
         open(f'{tour}/index.html', 'w').write(h)
+        arp = make_tour.ar_page()                                                           # the on-site AR page beside it
+        if arp: open(f'{tour}/ar.html', 'w').write(arp)
         print('page start options updated', flush=True)
-        for x in ('index.html', 'index.js', 'settings.json', 'overlay.json', 'tour.json'):     # page + repaired spots / fov kept with the run
+        for x in ('index.html', 'ar.html', 'index.js', 'settings.json', 'overlay.json', 'tour.json'):     # page + repaired spots / fov kept with the run
             if os.path.exists(f'{tour}/{x}'): api.upload_file(path_or_fileobj=f'{tour}/{x}', path_in_repo=f'{run}/{src}/{x}', repo_id=repo, repo_type='dataset')
+    if get != src:                                                                        # the copy, whole, so it can be updated again later
+        api.upload_folder(folder_path=tour, path_in_repo=f'{run}/{src}', repo_id=repo, repo_type='dataset')   # with plan.json: the collision editor reads it
+        print(f'copy of {get} kept as {src}', flush=True)
     publish(api, user, repo, run, tour, url_path=f"{run}/{os.environ.get('TOUR_URL_NAME', 'tour_url.txt')}")   # a new name keeps the old link
     if os.environ.get('INBOX_JOB'):                                                       # finish an app job whose publish failed
         import inbox; inbox.set_status(os.environ['INBOX_JOB'], 'done', run=run, link=open('tour_url.txt').read().strip())

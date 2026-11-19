@@ -1,0 +1,11 @@
+{
+  "operation": "disable_collision_overlay_by_default_on_all_live_tours",
+  "scope": "all currently live tour URL records",
+  "default_quality": "performance",
+  "performance_mode": true,
+  "device_scope": "all devices",
+  "preserve_existing_tour_urls": true,
+  "run_revision": "432cd3f43007ef41721590a73d8fc486cd9af955",
+  "default_showcollision": false,
+  "explicit_override": "showcollision=1"
+}
