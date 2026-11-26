@@ -182,3 +182,37 @@ not match the video. Earlier notes calling its contents "real" were reported, ne
 - Clean-up (solidify, never-seen splats) dropped 69 % (580,850 kept of 1,889,189). Checked with final/model_compare.py
   (fidelity/20261101-0056): trained vs cleaned rendered from 40 held-out + 9 off-path cameras: >= 79 dB, 0 changed pixels.
   The dropped splats are invisible; the tour ships the cleaned model.
+
+## Fast training (26 Nov, branch `claude/fast-train`; owner: "6 hours is too much, do it in minutes")
+Switch room, same video as run 20261116-2207 (5.8 h in all, 67,549 steps, 1.5 M splats, 30.59 dB exposure-fair / SSIM 0.951).
+- **Speed run 1** (kernel `namma-speed`, `v3/SPEED.json`, GitHub run 45792182511): that run's 924 frames and cameras reused,
+  same 116 held-out frames for every row, cap 1 M splats. Tokens are `fast_patch.recipe` kinds.
+
+  | row | kind | steps | train min | PSNR ef | SSIM ef | LPIPS | needles |
+  |---|---|---|---|---|---|---|---|
+  | t0 | fbg (808 frames) | 15000 | 24.4 | 29.38 | 0.943 | 0.136 | 14.6 % |
+  | t1 | fbg+thin3 (270 frames) | 15000 | 22.7 | 29.16 | 0.942 | 0.135 | 15.3 % |
+  | t2 | t1 + res0.5_0.6 | 15000 | 18.8 | 28.95 | 0.942 | 0.133 | 15.8 % |
+  | t3 | t2 + dense | 15000 | 18.7 | 29.66 | 0.945 | 0.122 | 9.4 % |
+  | t4 | t2 + dense | 7000 | 8.3 | 29.22 | 0.937 | 0.138 | 2.1 % |
+
+  s/step over 700 steps: plain grid 0.205, fused grid 0.102, no grid 0.094, fused at 1 M 0.079, at half size 0.065.
+  The fused grid halves the step time; the dense start (DA3-BASE, 377 k points, 0.8 min) is worth +0.7 dB and far fewer
+  needles; three times the frames only +0.2 dB; the resolution schedule saves 4 min for -0.2 dB. The frame-cache check was
+  too short to mean anything. Two-GPU training still fails (CUDA illegal memory access with `--packed`), not used.
+- gsplat's fly-through (`render_traj`, scipy `splprep` "Invalid inputs") crashed after every training in that run, also the
+  row without any fast change; model and scores are written before it. SPEED/FAST runs pass `--disable-video`. Not checked
+  whether `best` runs on the production branch lose `walkthrough.mp4` the same way.
+- The token's Kaggle account cannot use the stored gsplat build (`anasrazy/namma-prep`): 322 s of compiling per run. FAST
+  runs compile behind the installs while the frames are read (`run.py`, `gsplat_warm.py`).
+- **End-to-end run** (`v3/FASTRUN.json`, workflow `fast`, GitHub run 45807293260, results `20261126-1119`), preset `fast`
+  from the video: Kaggle job 55 min (frames 2.1, cameras 21.5 against 7.5 predicted, dense start 1.3, training 19.1 with
+  17.6 of pure training, mesh 2.7, object layer 9.6), tour build + publish 4 min on GitHub, 14 min waiting in Kaggle's queue
+  before it. 300 frames picked, 304 of 308 registered, 266 trained on, 38 held out.
+  `full` (15k steps): 29.12 dB ef / SSIM 0.938 / LPIPS 0.120 / needles 8.4 %, QA pass. `quick` (10k, second T4, 11.7 min):
+  28.88 / 0.934 / 0.127 / 4.0 %. These 38 held-out frames are not the 116 of the table above.
+  Against the plan's marks: training <= 20 min yes; needles < 10 % yes; video-to-tour <= 45 min no (59); PSNR >= 29.6 no;
+  SSIM >= 0.94 no. Tour opened and looked at (5 of 6 spots): door, window, panels and cable trays are clean, slightly softer
+  than the 5.8 h model up close; not put side by side with the old tour.
+- Open: the camera stage took 21.5 min for 308 frames (the formula says 7.5); that is now the largest stage after training.
+  Not merged anywhere; `best` is unchanged.

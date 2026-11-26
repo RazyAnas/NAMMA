@@ -682,3 +682,12 @@ The one the owner remembered is the viewer's built-in button (`.sse-arMode`), wh
 the scan in front of the camera; it has nothing to do with `ar.html`. `OVERLAY` now has `#nm-ar` (top right): shown when
 `./ar_shape.bin` answers, opens `./ar.html` where `immersive-ar` is supported, and elsewhere says an Android phone with Chrome
 is needed. On such tours the viewer's own AR button is hidden (`body.nm-has-ar`), so "AR" means one thing.
+
+## Fast training (26 Nov, branch `claude/fast-train`, not merged)
+Preset `fast` in `v3/PIPELINE.json` (default stays `best`): 300 frames for a single room, fused colour grid, half size for the
+first 60 % of the steps, dense start from Depth Anything 3 Base depth, 15,000 steps, 1 M splats, mesh from 100 cameras at 384
+voxels beside the object layer on the second T4. Code: `final/fast_patch.py`, `final/dense_init.py`, `final/budget.py`
+(`fast_frame_cap`), `v3/run.py` (`FAST=1`), tests `tests/v3/test_fast.py`. Runs: `v3/SPEED.json` + workflow `speed` (recipes on
+stored frames), `v3/FASTRUN.json` + workflow `fast` (a video end to end); both start on a push to this branch only.
+Measured on the switch room: 55 min on Kaggle from video to model, mesh and objects (5.8 h before), training 17.6 min,
+29.12 dB exposure-fair / SSIM 0.938 (30.59 / 0.951 before). Tables and open points: `final/NOTES.md`, "Fast training".
