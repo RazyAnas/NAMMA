@@ -71,6 +71,10 @@ deps = (f'git clone -q --depth 1 -b v1.5.3 https://github.com/nerfstudio-project
 if os.environ.get('FAST_DEPS') == '1':      # fast recipe (26 Nov): the fused colour grid (MIT; the plain grid's maths in one CUDA kernel)
     deps += ('; TORCH_CUDA_ARCH_LIST=7.5 pip install -q --no-build-isolation '
              '"git+https://github.com/harry7557558/fused-bilagrid@3bd774b644c3194225a5a0ddf46157092511ba3d" || echo "fused-bilagrid did not build"')
+if os.environ.get('FAST') == '1' and not glob.glob('/kaggle/input/**/gsplat_ext.tgz', recursive=True):
+    # no stored build of gsplat's CUDA code (speed run 1: 322 s of compiling AFTER the camera solve): compile it here, behind the
+    # installs, while the frames are read and the cameras solved. The same call further down then takes seconds.
+    deps += f'; python {F}/gsplat_warm.py'
 dep_proc = subprocess.Popen(deps, shell=True, executable='/bin/bash', stdout=open(f'{W}/deps.log', 'w'), stderr=subprocess.STDOUT)
 # FAST=1 (preset 'fast', plan of 26 Nov): a room in minutes. At most FAST_FRAMES frames for a 5-minute walk, one short
 # training with the fast recipe (final/fast_patch.py), a mesh from 100 cameras, mesh and object layer side by side.
@@ -298,7 +302,7 @@ FBG = os.environ.get('FAST_DEPS') == '1' and sh('python -c "from fused_bilagrid 
 if os.environ.get('FAST_DEPS') == '1': say('fused colour grid:', 'installed' if FBG else 'NOT installed (the plain grid is used)')
 SPEED = os.environ.get('SPEED') == '1'; DENSE_NPZ = None; BENCH_OUT = {}; TIMES = {}      # SPEED: the speed check (v3/SPEED.json)
 if FAST and 'VARIANTS' not in os.environ:        # the fast recipe as the only model: it is done before a preview would be
-    VARIANTS = [['full', int(os.environ.get('FAST_STEPS', 15000)), int(os.environ.get('FAST_CAP', 1_000_000)), os.environ.get('FAST_KIND', 'fbg+res0.5_0.6')]]
+    VARIANTS = [['full', int(os.environ.get('FAST_STEPS', 15000)), int(os.environ.get('FAST_CAP', 1_000_000)), os.environ.get('FAST_KIND', 'fbg+res0.5_0.6+dense')]]
 if any(len(v) > 3 and 'geo' in v[3] for v in VARIANTS):                                  # DA3 depth per frame, before training
     sh(f'cd {EX} && PYTHONPATH={EX}:{F}:$PYTHONPATH python {F}/geo_prior.py {D} {W}/geo 2>&1 | grep -v "it/s" | tail -15')
     if os.path.exists(f'{W}/geo/geo_report.json'): shutil.copy(f'{W}/geo/geo_report.json', O); push(f'{O}/geo_report.json', 'geo_report.json')

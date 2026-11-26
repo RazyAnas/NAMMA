@@ -1,0 +1,18 @@
+{
+ "n": 1,
+ "source": "kaggle:namma-in-20261116-132659-2f21",
+ "kernel": "namma-speed",
+ "only_if_idle": true,
+ "env": {
+  "NAMMA_REF": "claude/fast-train",
+  "FAST": "1",
+  "FAST_DEPS": "1",
+  "NFRAMES": "auto",
+  "LONG": "1440",
+  "OBJECTS": "1",
+  "VARIANTS": "[[\"full\", 15000, 1000000, \"fbg+res0.5_0.6+dense\"], [\"quick\", 10000, 1000000, \"fbg+res0.5_0.6+dense\"]]"
+ },
+ "scene": "the switch room's own video (app job 20261116-132659-2f21, already on Kaggle as a private dataset), video to tour",
+ "how": "change n and push to claude/fast-train: .github/workflows/fast.yml -> gh_run.py (RUN_JSON) -> v3/run.py with preset fast's settings. The tour goes to a new folder; the old tours stay.",
+ "note": "run 1 (26 Nov): preset fast end to end, timed per stage (budget.json). 'full' is the preset's model (15k steps); 'quick' (10k steps) trains on the second T4 at the same time, as one more point between speed run 1's 7k and 15k"
+}

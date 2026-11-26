@@ -44,9 +44,9 @@
     "OBJECTS": "1",
     "FAST_STEPS": "15000",
     "FAST_CAP": "1000000",
-    "FAST_KIND": "fbg+res0.5_0.6"
+    "FAST_KIND": "fbg+res0.5_0.6+dense"
    },
-   "note": "a room in minutes (26 Nov, branch claude/fast-train; not the default): at most 300 frames for a 5-minute walk, one short training with the fast recipe (final/fast_patch.py: fused colour grid, resolution schedule), mesh from 100 cameras beside the object layer. Steps and recipe are set from the speed check (v3/SPEED.json); 'best' is unchanged."
+   "note": "a room in minutes (26 Nov, branch claude/fast-train; not the default): at most 300 frames for a 5-minute walk, one short training with the fast recipe (final/fast_patch.py: fused colour grid, half-size pictures for the first 60 % of the steps, dense start from depth maps: final/dense_init.py), mesh from 100 cameras beside the object layer. Measured on the switch room (speed run 1, v3/SPEED.json, 270 training frames, same 116 held-out frames as the 30.59 dB / 3.4 h model): 15,000 steps = 18.7 min of training, 29.66 dB, SSIM 0.945, 9 % needles; 7,000 steps = 8.5 min, 29.22 dB, SSIM 0.937, 2 % needles (FAST_STEPS). Without the dense start 15,000 steps gave 28.95 dB and 16 % needles. 'best' is unchanged."
   }
  }
 }

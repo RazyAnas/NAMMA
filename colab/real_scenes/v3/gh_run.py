@@ -140,7 +140,10 @@ else:
     elif src.startswith('reuse:'):                                                            # an earlier run's frames + camera model
         datasets, env['REUSE'] = [], '1'; info['reuse'] = src[6:]                                # (its Kaggle output; own account)
     elif src.startswith('kaggle:'):
-        datasets, env['SOURCE'] = [src[7:]], f'kaggle:{src[7:].split("/")[-1]}'
+        ds_ = src[7:] if '/' in src[7:] else f'{KU}/{src[7:]}'                                  # no owner named: the token's own account
+        rc, st = kg('datasets', 'status', ds_, check=False)                                     # (e.g. an inbox job's video, namma-in-<job>)
+        if rc or 'ready' not in st.lower(): sys.exit(f'dataset {ds_.split("/")[-1]} is not on this Kaggle account (status: {st[-120:]}): nothing started')
+        datasets, env['SOURCE'] = [ds_], f'kaggle:{ds_.split("/")[-1]}'
     else: sys.exit(f'unknown source {src}')
 
     if cfg.get('only_if_idle'):                # never beside another of the owner's Kaggle jobs (one GPU session at a time)

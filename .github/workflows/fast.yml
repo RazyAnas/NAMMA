@@ -1,0 +1,51 @@
+# Preset "fast" end to end (plan of 26 Nov): a recorded video -> frames -> cameras -> short training -> mesh, object layer -> tour.
+# Only on the branch claude/fast-train: nothing here runs for main or the production branch.
+# Start: change "n" in colab/real_scenes/v3/FASTRUN.json and push to claude/fast-train. Kaggle kernel namma-speed; not started
+# while another Kaggle job of the account runs ("only_if_idle"). The tour is published to a new folder (link: tour_url.txt in the
+# private results dataset, never in this log).
+name: fast
+on:
+  push:
+    branches: [claude/fast-train]
+    paths: [colab/real_scenes/v3/FASTRUN.json]
+concurrency:
+  group: kaggle-gpu
+  cancel-in-progress: false
+env:
+  KAGGLE_API_TOKEN: ${{ secrets.KAGGLE_API_TOKEN || secrets.KAGGLE_TOKEN }}
+  HF_TOKEN: ${{ secrets.HF_TOKEN || secrets.HUGGINGFACE_WRITE_TOKEN }}
+  RUN_JSON: colab/real_scenes/v3/FASTRUN.json
+jobs:
+  run:
+    runs-on: ubuntu-latest
+    timeout-minutes: 358
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          sparse-checkout: |
+            colab/real_scenes/v3
+            colab/real_scenes/final
+            tests/v3
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - run: pip install -q kaggle==2.2.5 six huggingface_hub pandas pillow numpy pytest
+      - name: Tests of the fast recipe (with PyTorch, which the laptop does not have)
+        run: |
+          pip install -q torch --index-url https://download.pytorch.org/whl/cpu
+          python -m pytest -q --confcutdir=tests/v3 tests/v3/test_fast.py -p no:cacheprovider
+      - name: Kaggle job (push -> wait -> outputs)
+        run: python colab/real_scenes/v3/gh_run.py
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: fast-out
+          path: |
+            out/*.json
+            out/*.log
+            out/*/metrics.json
+            out/*/qa_sheet.jpg
+            out/*/qa_detail.jpg
+            out/*/train.log
+            out/tour/tour.json
+          if-no-files-found: ignore
