@@ -143,6 +143,9 @@ else:
         datasets, env['SOURCE'] = [src[7:]], f'kaggle:{src[7:].split("/")[-1]}'
     else: sys.exit(f'unknown source {src}')
 
+    if cfg.get('only_if_idle'):                # never beside another of the owner's Kaggle jobs (one GPU session at a time)
+        b = kaggle_io.busy(KU, say)
+        if b: sys.exit(f'another Kaggle job is running or queued ({b}): nothing started. Push again when it has finished.')
     # the Kaggle job = v3/run.py with these settings in front, plus the input dataset
     os.makedirs('kern', exist_ok=True)
     meta = json.load(open(f'{V}/kernel-metadata.json')); meta.update(id=KID, title=KID.split('/')[1], dataset_sources=datasets)
@@ -172,7 +175,8 @@ if 'running' in s or 'queued' in s:                     # longer than one GitHub
 
 os.makedirs(OUT, exist_ok=True); kg('kernels', 'output', KID, '-p', OUT, '-o', '--page-size', '200', check=False)
 json.dump(info, open(f'{OUT}/github_run.json', 'w'))
-for f in ['sfm_report.json', 'precheck.json', 'v3_summary.json', 'preview/metrics.json', 'full/metrics.json']:
+for f in ['sfm_report.json', 'precheck.json', 'v3_summary.json', 'preview/metrics.json', 'full/metrics.json', 'budget.json', 'dense_report.json',
+          'speed_bench.json', 'speed_report.json']:
     if os.path.exists(f'{OUT}/{f}'): print(f'==== {f}\n' + open(f'{OUT}/{f}').read(), flush=True)
 for lg in glob.glob(f'{OUT}/*.log'): print(f'==== {os.path.basename(lg)} (last 120 lines)\n' + ''.join(open(lg, errors='ignore').readlines()[-120:]), flush=True)
 say('files:', sorted(os.path.relpath(f, OUT) for f in glob.glob(f'{OUT}/**/*', recursive=True) if os.path.isfile(f)))
@@ -241,6 +245,8 @@ if tok:
     except Exception as e: say('HF upload failed:', str(e)[:300])
 if cfg.get('env', {}).get('PREP_ONLY') == '1':                                       # whole-house pre-check: no model expected
     if ok and not os.path.exists(f'{OUT}/precheck.json'): ok, s = False, 'complete, but no precheck.json'
+elif cfg.get('env', {}).get('SPEED') == '1':                                         # speed check: a report, no deliverable model
+    if ok and not os.path.exists(f'{OUT}/speed_report.json'): ok, s = False, 'complete, but no speed_report.json'
 elif ok and not os.path.exists(f'{OUT}/full/metrics.json'): ok, s = False, 'complete, but no full model (metrics.json missing)'
 if not ok: stage('failed', reason=f'Kaggle job ended with: {s[-200:]}')
 elif os.environ.get('INBOX_JOB') and not os.path.exists('tour_url.txt'): stage('failed', reason='no tour was published (see the GitHub log)')

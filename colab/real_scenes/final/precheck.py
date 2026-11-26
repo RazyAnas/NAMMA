@@ -47,13 +47,14 @@ def chunks_from_rooms(rooms, order):
 DEPTH = '--depth-loss'                                                                         # as run.py: off when a frame has no SfM points
 
 
-def bench(name, gpus, cap, extra='', steps=700):
+def bench(name, gpus, cap, extra='', steps=700, env='', grid='--use-bilateral-grid'):
     """700 steps of run 4's trainer settings, splats grown to `cap` (per GPU) by step ~500: s/step over the last 200 steps
-    (at full size), peak memory per GPU (nvidia-smi every 2 s), splat count reached."""
+    (at full size), peak memory per GPU (nvidia-smi every 2 s), splat count reached. env: variables for the trainer
+    (fast_patch's NM_*); grid: the colour-grid flag ('' = none, '--use-fused-bilagrid' = the fused one)."""
     res = f'{W}/bench_{name}'; log = f'{res}.log'; big = 10 ** 7
-    cmd = (f'cd {EX} && CUDA_VISIBLE_DEVICES={gpus} PYTHONPATH={PP}:$PYTHONPATH python simple_trainer.py mcmc --data-dir {D} --data-factor 1 '
+    cmd = (f'cd {EX} && {env} CUDA_VISIBLE_DEVICES={gpus} PYTHONPATH={PP}:$PYTHONPATH python simple_trainer.py mcmc --data-dir {D} --data-factor 1 '
            f'--result-dir {res} --max-steps {steps} --eval-steps {big} --save-steps {big} --ply-steps {big} --disable-viewer '
-           f'--use-bilateral-grid {DEPTH} --strategy.cap-max {cap} --strategy.refine-start-iter 20 --strategy.refine-every 5 '
+           f'{grid} {DEPTH} --strategy.cap-max {cap} --strategy.refine-start-iter 20 --strategy.refine-every 5 '
            f'--strategy.refine-stop-iter 500 {extra}')
     say(name, cmd); peak = {}; marks = []; stop = threading.Event()
 

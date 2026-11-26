@@ -1,0 +1,22 @@
+{
+ "n": 1,
+ "source": "reuse:namma-job",
+ "kernel": "namma-speed",
+ "only_if_idle": true,
+ "env": {
+  "NAMMA_REF": "claude/fast-train",
+  "SPEED": "1",
+  "FAST_DEPS": "1",
+  "NO_MESH": "1",
+  "DEADLINE_H": "3.5",
+  "DENSE": "1",
+  "DENSE_EVERY": "12",
+  "DENSE_CAP": "600000",
+  "VARIANTS": "[[\"t1\", 15000, 1000000, \"fbg+thin3\"], [\"t2\", 15000, 1000000, \"fbg+thin3+res0.5_0.6\"], [\"t3\", 15000, 1000000, \"fbg+thin3+res0.5_0.6+dense\"], [\"t4\", 7000, 1000000, \"fbg+thin3+res0.5_0.6+dense\"], [\"t0\", 15000, 1000000, \"fbg\"]]",
+  "BENCH": "[[\"base\", \"gs\", 1500000], [\"fbg\", \"fbg\", 1500000], [\"nobg\", \"nobg\", 1500000], [\"fbg_1m\", \"fbg\", 1000000], [\"fbg_750k\", \"fbg\", 750000], [\"fbg_half\", \"fbg+res0.5_1\", 1000000], [\"fbg_two_thirds\", \"fbg+res0.67_1\", 1000000], [\"fbg_cache\", \"fbg+thin3+cache\", 1000000], [\"two_gpu\", \"fbg+2gpu\", 1000000]]",
+  "SPEED_REF": "the room's full model: all frames, 83.6 steps per frame, 1.5M splats (switch room: 67,549 steps, 30.59 dB exposure-fair PSNR, SSIM 0.951, about 3.4 h of training, 5.8 h in all)"
+ },
+ "scene": "the latest app job's frames + cameras (Kaggle output of namma-job; the switch room, app job 20261116-132659-2f21, unless a newer job ran since)",
+ "how": "change n and push to claude/fast-train: .github/workflows/speed.yml -> gh_run.py (RUN_JSON) -> v3/run.py with SPEED=1. BENCH = [name, kind, splat cap]: 700-step speed checks. VARIANTS = [name, steps, splat cap, kind]: short trainings, all scored on the same held-out frames (every 8th of all frames). Kinds: final/fast_patch.py recipe().",
+ "note": "run 1 (26 Nov): where the time goes per step, and how good 15k / 7k steps on a third of the frames are with the fused colour grid, a resolution schedule and a dense start"
+}

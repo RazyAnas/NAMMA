@@ -26,7 +26,7 @@ def scale_for(newz, d, j, refs):
     s = np.median(r); spread = np.median(np.abs(np.log(r / s)))
     return (s if spread < 0.1 else None), len(r)                                   # disagreement > ~10%: do not trust this frame
 
-def da3():
+def da3(name='depth-anything/DA3NESTED-GIANT-LARGE'):
     sh = lambda c: subprocess.call(c, shell=True)
     sh('pip -q install --no-deps --ignore-requires-python "git+https://github.com/ByteDance-Seed/Depth-Anything-3.git" 2>&1 | tail -3')
     sh('pip -q install einops omegaconf huggingface_hub safetensors pillow imageio plyfile trimesh scipy addict moviepy 2>&1 | tail -2')
@@ -35,7 +35,7 @@ def da3():
         except ModuleNotFoundError as e:
             pkg = {'cv2': 'opencv-python-headless', 'PIL': 'pillow', 'yaml': 'pyyaml', 'sklearn': 'scikit-learn'}.get(e.name.split('.')[0], e.name.split('.')[0])
             sh(f'pip -q install {pkg} 2>&1 | tail -1')
-    return DepthAnything3.from_pretrained('depth-anything/DA3NESTED-GIANT-LARGE').to('cuda').eval()
+    return DepthAnything3.from_pretrained(name).to('cuda').eval()
 
 def run(cache, keep, out, chunk=8):
     import torch, cv2

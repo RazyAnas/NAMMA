@@ -57,3 +57,15 @@ def wait_kernel(kid, out, say=print, minutes=240, already_running=False):
         if 'error' in s or 'cancel' in s: break
         if 'complete' in s and (seen or time.time() - t0 > 900): break
     os.makedirs(out, exist_ok=True); kg('kernels', 'output', kid, '-p', out, '-o', check=False); return s
+
+
+def busy(ku, say=print, most=40):
+    """The first of the account's own kernels that is running or queued right now (owner/slug), else None. Kernels whose
+    status cannot be read are skipped."""
+    rc, out = kg('kernels', 'list', '--mine', '--page-size', str(most), '--csv', check=False)
+    if rc: say('could not list kernels:', out[-150:]); return None
+    refs = [ln.split(',')[0].strip() for ln in out.splitlines()[1:] if ln.strip().startswith(ku + '/')]
+    for r in refs:
+        rc, st = kg('kernels', 'status', r, check=False); st = st.lower()
+        if rc == 0 and ('running' in st or 'queued' in st): return r
+    say('no Kaggle job of', ku, 'is running:', len(refs), 'kernels checked'); return None

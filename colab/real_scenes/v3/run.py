@@ -68,6 +68,9 @@ deps = (f'git clone -q --depth 1 -b v1.5.3 https://github.com/nerfstudio-project
         'sed -i "s/np.uint64(-1)/np.uint64(np.iinfo(np.uint64).max)/" $(python -c "import importlib.util as u; print(u.find_spec(\'pycolmap\').submodule_search_locations[0])")/scene_manager.py; '
         'TORCH_CUDA_ARCH_LIST=7.5 pip install -q --no-build-isolation "git+https://github.com/rahul-goel/fused-ssim@328dc9836f513d00c4b5bc38fe30478b4435cbb5" '
         '|| echo "fused-ssim did not build"')
+if os.environ.get('FAST_DEPS') == '1':      # fast recipe (26 Nov): the fused colour grid (MIT; the plain grid's maths in one CUDA kernel)
+    deps += ('; TORCH_CUDA_ARCH_LIST=7.5 pip install -q --no-build-isolation '
+             '"git+https://github.com/harry7557558/fused-bilagrid@3bd774b644c3194225a5a0ddf46157092511ba3d" || echo "fused-bilagrid did not build"')
 dep_proc = subprocess.Popen(deps, shell=True, executable='/bin/bash', stdout=open(f'{W}/deps.log', 'w'), stderr=subprocess.STDOUT)
 
 def hf_token():
@@ -279,6 +282,11 @@ import geo_prior                                                                
 say('geo prior patched in:', geo_prior.patch(f'{EX}/simple_trainer.py'))
 import budget_patch                                                                     # the trainer stops itself at NM_DEADLINE
 TIMED = budget_patch.patch(f'{EX}/simple_trainer.py'); say('deadline stop patched in:', TIMED)
+import fast_patch                                                                       # fast training (kinds fbg, thin<k>, res<s>_<f>, dense, cache)
+FASTP = fast_patch.patch(f'{EX}/simple_trainer.py'); say('fast training patched in:', FASTP)
+FBG = os.environ.get('FAST_DEPS') == '1' and sh('python -c "from fused_bilagrid import BilateralGrid, color_correct, slice, total_variation_loss"') == 0
+if os.environ.get('FAST_DEPS') == '1': say('fused colour grid:', 'installed' if FBG else 'NOT installed (the plain grid is used)')
+SPEED = os.environ.get('SPEED') == '1'; DENSE_NPZ = None; BENCH_OUT = {}; TIMES = {}      # SPEED: the speed check (v3/SPEED.json)
 if any(len(v) > 3 and 'geo' in v[3] for v in VARIANTS):                                  # DA3 depth per frame, before training
     sh(f'cd {EX} && PYTHONPATH={EX}:{F}:$PYTHONPATH python {F}/geo_prior.py {D} {W}/geo 2>&1 | grep -v "it/s" | tail -15')
     if os.path.exists(f'{W}/geo/geo_report.json'): shutil.copy(f'{W}/geo/geo_report.json', O); push(f'{O}/geo_report.json', 'geo_report.json')
@@ -296,6 +304,35 @@ if PREP_ONLY:                                    # plan of 30 Oct: prove a whole
         if os.path.exists(f'{O}/{f}'): push(f'{O}/{f}', f)
     assert os.path.exists(f'{O}/precheck.json'), 'pre-check failed (see its log above)'
     say('PRE-CHECK DONE', json.load(open(f'{O}/precheck.json')).get('decision')); raise SystemExit(0)
+
+if FASTP and (any(len(v) > 3 and 'dense' in v[3] for v in VARIANTS) or os.environ.get('DENSE') == '1'):   # dense start points, once
+    t_d = time.time()
+    sh(f"cd {EX} && PYTHONPATH={EX}:{F}:$PYTHONPATH python {F}/dense_init.py {D} {W}/dense {int(os.environ.get('DENSE_EVERY', 4))} 2>&1 | grep -v 'it/s' | tail -12")
+    if os.path.exists(f'{W}/dense/dense.npz'):
+        DENSE_NPZ = f'{W}/dense/dense.npz'; shutil.copy(f'{W}/dense/dense_report.json', O); push(f'{O}/dense_report.json', 'dense_report.json')
+    else: say('dense start: no points were made, variants that ask for them start sparse')
+    CLK.mark('dense start', t_d, ok=bool(DENSE_NPZ))
+
+if SPEED and FASTP:                              # speed per step of each change alone (precheck.bench: 700 steps, splats grown to
+    import math, threading, precheck             # the cap by step 500, s/step over the last 200), two at a time on the two T4s
+    precheck.setup(EX, D, W, O, {}, PP); precheck.DEPTH = DEPTH; t_b = time.time()
+    def bench_one(b, gpu):
+        name, kind, cap = b; two = '2gpu' in kind
+        fr = fast_patch.recipe(kind, 30000, FBG, DENSE_NPZ) or dict(env='', flags='', grid='--use-bilateral-grid', notes=[])
+        extra = fr['flags'] + (' --packed' if two or 'packed' in kind else '') + (' --visible-adam' if 'vadam' in kind else '')
+        try: r = precheck.bench(name, '0,1' if two else str(gpu), math.ceil(cap / 2) if two else cap, extra, env=fr['env'], grid=fr['grid'])
+        except Exception as e: r = dict(ok=False, exit=repr(e)[:200])
+        r.update(kind=kind, cap=cap, notes=fr['notes'], gpu='0,1' if two else gpu); BENCH_OUT[name] = r
+    todo = [b for b in json.loads(os.environ.get('BENCH', '[]')) if '2gpu' not in b[1]]
+    while todo:
+        batch, todo = todo[:max(1, min(NGPU, 2))], todo[max(1, min(NGPU, 2)):]
+        ths = [threading.Thread(target=bench_one, args=(b, g)) for g, b in enumerate(batch)]
+        [t.start() for t in ths]; [t.join() for t in ths]
+    for b in [b for b in json.loads(os.environ.get('BENCH', '[]')) if '2gpu' in b[1]]:
+        if NGPU >= 2: bench_one(b, 0)
+    json.dump(BENCH_OUT, open(f'{O}/speed_bench.json', 'w'), indent=1); push(f'{O}/speed_bench.json', 'speed_bench.json')
+    for b in glob.glob(f'{W}/bench_*.log'): shutil.copy(b, O)
+    CLK.mark('speed checks', t_b, n=len(BENCH_OUT)); say('SPEED CHECKS', json.dumps({k: v.get('s_per_step') for k, v in BENCH_OUT.items()}))
 
 SPS = {}                                                                                   # model name -> predicted s/step
 if os.environ.get('AUTO_STEPS') == '1':     # run 4's recipe for any size (~83.6 steps per training view, 1.5 M splats per 37 m2)
@@ -352,9 +389,16 @@ def start(name, steps, cap, gpu, kind='gs'):
         # MCMC refreshes splats until step 25k whatever the length: keep run 4's share (25k of 30k) on longer runs (the house's
         # 71.8k steps ran 47k without a refresh). Shorter runs keep the stock setting they were measured with.
         rs = f' --strategy.refine-stop-iter {budget.refine_stop(steps)}' if steps > 30000 else ''
+        fr = fast_patch.recipe(kind, steps, FBG, DENSE_NPZ) if FASTP else None
         cmd = (f'cd {EX} && NM_DEADLINE={TRAIN_END:.0f} CUDA_VISIBLE_DEVICES={gpu} {pr}{PP}:$PYTHONPATH python simple_trainer.py mcmc --data-dir {D} '
                f'--data-factor 1 --result-dir {res} --max-steps {steps} --eval-steps {steps} --save-steps {ss} --ply-steps {steps} --save-ply '
                f'--disable-viewer --use-bilateral-grid {DEPTH} --strategy.cap-max {cap}{po}{rs}')
+        if fr:                                 # fast recipe: gsplat's 30k-step schedules (colour detail, splat refresh, eval, save)
+            N = fast_patch.NOMINAL             # shrunk together to `steps` by --steps-scaler; one save at the end (short runs)
+            cmd = (f'cd {EX} && NM_DEADLINE={TRAIN_END:.0f} {fr["env"]} CUDA_VISIBLE_DEVICES={gpu} {pr}{PP}:$PYTHONPATH python simple_trainer.py mcmc --data-dir {D} '
+                   f'--data-factor 1 --result-dir {res} --max-steps {N} --eval-steps {N} --save-steps {N} --ply-steps {N} --save-ply '
+                   f'--steps-scaler {fr["scaler"]:.8f} --disable-viewer {fr["grid"]} {DEPTH} --strategy.cap-max {cap}{po} {fr["flags"]}')
+            if fr['notes']: say(name, 'recipe notes:', fr['notes'])
     say(cmd); return dict(name=name, gpu=gpu, res=res, kind=kind, t=time.time(), steps=steps, snap=-1,
                           p=subprocess.Popen(cmd, shell=True, executable='/bin/bash', stdout=open(f'{res}.log', 'w'), stderr=subprocess.STDOUT,
                                              start_new_session=True))                      # its own group: stop() ends the python too
@@ -417,6 +461,12 @@ def finish(j):
         st = sorted(glob.glob(f"{j['res']}/stats/val_step*.json"))
         if st: m = json.load(open(st[-1])); json.dump({k: round(v, 3) for k, v in m.items() if isinstance(v, float)}, open(f'{out}/metrics.json', 'w'))
     else: sh(f"cd {EX} && CUDA_VISIBLE_DEVICES={j['gpu']} python {F}/v3_qa.py {EX} {D} {j['res']} {out}")
+    st_ = sorted(glob.glob(f"{j['res']}/stats/train_step*_rank0.json"))                     # the trainer's own clock: training only,
+    try: tr = json.load(open(st_[-1])) if st_ else {}                                       # without loading, eval and the fly-through
+    except Exception: tr = {}
+    TIMES[j['name']] = dict(kind=j['kind'], steps=j['steps'], train_min=round(tr['ellipse_time'] / 60, 2) if tr.get('ellipse_time') else None,
+                            wall_min=round((time.time() - j['t']) / 60, 1), splats=tr.get('num_GS'), train_mem_gb=round(tr['mem'], 2) if tr.get('mem') else None)
+    if SPEED and os.path.exists(f'{out}/model.ply'): os.remove(f'{out}/model.ply')          # the speed check keeps the small .splat only
     v = sorted(glob.glob(f"{j['res']}/videos/traj_*.mp4"))
     if v: shutil.copy(v[-1], f'{out}/walkthrough.mp4')
     push(out, j['name'])
@@ -436,6 +486,12 @@ while running:
     if time.time() - last > 300: last = time.time(); [say(j['name'], progress(j), f'| {CLK.left_h():.1f} h left') for j in running]
 
 S = {n: json.load(open(f'{O}/{n}/metrics.json')) for n in [v[0] for v in VARIANTS] if os.path.exists(f'{O}/{n}/metrics.json')}
+if TIMES:                                        # minutes of pure training per model, beside its held-out scores
+    keys = ('heldout_psnr_exposure_fair', 'heldout_ssim_exposure_fair', 'heldout_psnr', 'heldout_ssim', 'heldout_lpips', 'needle_fraction', 'pass')
+    runs = {n: dict(t, **{k: S.get(n, {}).get(k) for k in keys}) for n, t in TIMES.items()}
+    json.dump(dict(frames=len(os.listdir(f'{D}/images')), fused_grid=FBG, dense=bool(DENSE_NPZ), bench=BENCH_OUT, runs=runs,
+                   reference=os.environ.get('SPEED_REF', '')), open(f'{O}/speed_report.json', 'w'), indent=1)
+    push(f'{O}/speed_report.json', 'speed_report.json'); say('SPEED REPORT', json.dumps(runs))
 BEST = 'full'                                    # CHALLENGER: the alternative replaces full only if it is clearly better on the
 if 'challenger' in S and 'full' in S:            # held-out frames (exposure-fair PSNR + 0.2 dB, LPIPS not worse); both stay on HF
     q = lambda m: (m.get('heldout_psnr_exposure_fair') or m.get('heldout_psnr') or 0, -(m.get('heldout_lpips') or 9))
@@ -480,4 +536,4 @@ push(f'{O}/v3_summary.json', 'v3_summary.json')
 CLK.note(done=True, minutes=round((time.time() - T0) / 60)); push(f'{O}/budget.json', 'budget.json')
 say(f'time: {CLK.elapsed_h():.2f} h used, {CLK.left_h():.2f} h before the deadline, {budget.HARD_H - CLK.elapsed_h():.2f} h before Kaggle stops the session')
 say('V3 DONE', json.dumps(S)); sh(f'ls -la {O} {O}/*/ | head -40')
-if 'full' not in S: raise SystemExit('V3 FAILED: no full model (see the trainer logs above)')
+if 'full' not in S and not SPEED: raise SystemExit('V3 FAILED: no full model (see the trainer logs above)')
