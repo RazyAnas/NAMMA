@@ -72,6 +72,18 @@ if os.environ.get('FAST_DEPS') == '1':      # fast recipe (26 Nov): the fused co
     deps += ('; TORCH_CUDA_ARCH_LIST=7.5 pip install -q --no-build-isolation '
              '"git+https://github.com/harry7557558/fused-bilagrid@3bd774b644c3194225a5a0ddf46157092511ba3d" || echo "fused-bilagrid did not build"')
 dep_proc = subprocess.Popen(deps, shell=True, executable='/bin/bash', stdout=open(f'{W}/deps.log', 'w'), stderr=subprocess.STDOUT)
+# FAST=1 (preset 'fast', plan of 26 Nov): a room in minutes. At most FAST_FRAMES frames for a 5-minute walk, one short
+# training with the fast recipe (final/fast_patch.py), a mesh from 100 cameras, mesh and object layer side by side.
+FAST = os.environ.get('FAST') == '1'
+if FAST: os.environ.setdefault('MESH_CAMS', '100'); os.environ.setdefault('MESH_VOXELS', '384')
+E = f'{W}/sfmenv/bin/python'; P = f'--python {E}'                                           # the camera solve's own Python (hloc)
+SFM_SETUP = (f'pip -q install uv 2>&1 | tail -1; unset UV_SYSTEM_PYTHON UV_PYTHON PIP_TARGET; uv venv -q -p 3.10 {W}/sfmenv && '
+             f'uv pip install -q {P} torch==2.1.2 torchvision==0.16.2 --index-url https://download.pytorch.org/whl/cu118 > {W}/sfm_pip.log 2>&1; '
+             f'git clone -q --recursive https://github.com/cvg/Hierarchical-Localization {W}/hloc && '
+             f'uv pip install -q {P} "numpy<2" -e {W}/hloc "lightglue @ git+https://github.com/cvg/LightGlue" >> {W}/sfm_pip.log 2>&1; tail -3 {W}/sfm_pip.log')
+SFM_ENV = None                                   # FAST: installed while the frames are read (it was ~8 min of waiting before each solve)
+if FAST and os.environ.get('REUSE') != '1':
+    SFM_ENV = subprocess.Popen(SFM_SETUP, shell=True, executable='/bin/bash', stdout=open(f'{W}/sfm_env.log', 'w'), stderr=subprocess.STDOUT)
 
 def hf_token():
     try:
@@ -165,6 +177,7 @@ else:
         # and never more than the solve is predicted to finish in its share of the session (budget.sfm_minutes)
         global FPS, CAP_N
         FPS = fps; CAP_N = min(int(os.environ.get('SFM_MAX', budget.SFM_MAX)), budget.sfm_max_frames(budget.sfm_budget_min(CLK.left_h())))
+        if FAST and VTOT > 0: CAP_N = min(CAP_N, budget.fast_frame_cap(VTOT / fps, int(os.environ.get('FAST_FRAMES', 300))))
         if NF.startswith('auto') and VTOT > 0: NFRAMES = budget.frame_count(VTOT / fps, CAP_N)
         say('video frames', VTOT, '-> frames to extract', NFRAMES, f'(camera solve: at most {CAP_N} frames)')
 
@@ -196,11 +209,8 @@ else:
     CLK.mark('frames', t_fr, frames=n, video_frames=VTOT, pick={k: v for k, v in (PICK or dict(mode='time')).items() if k != 'kept'}, bands=frames.BANDS)
 
     # 2 cameras (same hloc venv that solved 574/578 frames of the 22 Oct video)
-    E = f'{W}/sfmenv/bin/python'; P = f'--python {E}'
-    sh(f'pip -q install uv 2>&1 | tail -1; unset UV_SYSTEM_PYTHON UV_PYTHON PIP_TARGET; uv venv -q -p 3.10 {W}/sfmenv && '
-       f'uv pip install -q {P} torch==2.1.2 torchvision==0.16.2 --index-url https://download.pytorch.org/whl/cu118 > {W}/sfm_pip.log 2>&1; '
-       f'git clone -q --recursive https://github.com/cvg/Hierarchical-Localization {W}/hloc && '
-       f'uv pip install -q {P} "numpy<2" -e {W}/hloc "lightglue @ git+https://github.com/cvg/LightGlue" >> {W}/sfm_pip.log 2>&1; tail -3 {W}/sfm_pip.log')
+    if SFM_ENV is not None: say('camera-solve environment, installed while the frames were read: exit', SFM_ENV.wait()); sh(f'tail -3 {W}/sfm_env.log')
+    else: sh(SFM_SETUP)
     sh(f'{E} -c "import hloc, lightglue, pycolmap; print(\'hloc ok, pycolmap\', pycolmap.__version__)"', check=True)
     def solve(limit_min):
         """One camera solve with a time limit (30 Oct: 3,470 frames ran 7.6 h with nothing to stop it). hloc keeps its features
@@ -287,6 +297,8 @@ FASTP = fast_patch.patch(f'{EX}/simple_trainer.py'); say('fast training patched 
 FBG = os.environ.get('FAST_DEPS') == '1' and sh('python -c "from fused_bilagrid import BilateralGrid, color_correct, slice, total_variation_loss"') == 0
 if os.environ.get('FAST_DEPS') == '1': say('fused colour grid:', 'installed' if FBG else 'NOT installed (the plain grid is used)')
 SPEED = os.environ.get('SPEED') == '1'; DENSE_NPZ = None; BENCH_OUT = {}; TIMES = {}      # SPEED: the speed check (v3/SPEED.json)
+if FAST and 'VARIANTS' not in os.environ:        # the fast recipe as the only model: it is done before a preview would be
+    VARIANTS = [['full', int(os.environ.get('FAST_STEPS', 15000)), int(os.environ.get('FAST_CAP', 1_000_000)), os.environ.get('FAST_KIND', 'fbg+res0.5_0.6')]]
 if any(len(v) > 3 and 'geo' in v[3] for v in VARIANTS):                                  # DA3 depth per frame, before training
     sh(f'cd {EX} && PYTHONPATH={EX}:{F}:$PYTHONPATH python {F}/geo_prior.py {D} {W}/geo 2>&1 | grep -v "it/s" | tail -15')
     if os.path.exists(f'{W}/geo/geo_report.json'): shutil.copy(f'{W}/geo/geo_report.json', O); push(f'{O}/geo_report.json', 'geo_report.json')
@@ -504,15 +516,21 @@ if 'challenger' in S and 'full' in S:            # held-out frames (exposure-fai
 # what still fits before the deadline: QA is done; the mesh on the finest grid its predicted time allows (budget.mesh_minutes),
 # after the object layer's share if that was asked for (else the tour walks on the room box, make_tour.room_collision)
 NIMG = len(os.listdir(f'{D}/images'))
-TL = budget.tail(CLK.left_h() * 60, mesh=MESH, objects=os.environ.get('OBJECTS') == '1', frames=NIMG, voxels=int(os.environ.get('MESH_VOXELS', 512)))
+MCAM = min(NIMG, int(os.environ.get('MESH_CAMS') or NIMG))                                # cameras the mesh looks through (mesh_tsdf MESH_CAMS)
+TL = budget.tail(CLK.left_h() * 60, mesh=MESH, objects=os.environ.get('OBJECTS') == '1', frames=MCAM, voxels=int(os.environ.get('MESH_VOXELS', 512)))
 say(f'{CLK.left_h() * 60:.0f} min left, {NIMG} frames ->', TL)
 # the mould: a solid mesh in the same coordinates as full/model.splat, from the 2DGS model if one was trained, else the full model
 geo = next(([v[0], '2dgs'] for v in VARIANTS if len(v) > 3 and v[3] == '2dgs'), [BEST, '3dgs'])
-if os.path.isdir(f'{W}/{geo[0]}/ckpts') and TL['mesh']:
+def do_mesh():
     t_mesh = time.time()
     sh(f"cd {EX} && timeout -k 30 {int(TL['mesh_timeout_min'] * 60)} python {F}/mesh_tsdf.py {EX} {D} {W}/{geo[0]} {O}/mesh {O}/full/level.json {geo[1]} {TL['mesh_voxels']}")
     if os.path.exists(f'{O}/mesh/mesh.json'): S['mesh'] = json.load(open(f'{O}/mesh/mesh.json'))
-    CLK.mark('mesh', t_mesh, ok='mesh' in S, voxels=TL['mesh_voxels'], limit_min=TL['mesh_timeout_min'], predicted_min=round(budget.mesh_minutes(NIMG, TL['mesh_voxels']), 1))
+    CLK.mark('mesh', t_mesh, ok='mesh' in S, voxels=TL['mesh_voxels'], cameras=MCAM, limit_min=TL['mesh_timeout_min'], predicted_min=round(budget.mesh_minutes(MCAM, TL['mesh_voxels']), 1))
+MESH_TH = None                                   # FAST with two T4s: the mesh runs on GPU 0 while the object layer runs on GPU 1
+if os.path.isdir(f'{W}/{geo[0]}/ckpts') and TL['mesh']:
+    if FAST and NGPU >= 2 and TL['objects']:
+        import threading; MESH_TH = threading.Thread(target=do_mesh); MESH_TH.start()
+    else: do_mesh()
 elif MESH: say('mesh skipped: not enough time left (the tour uses the room box for walking)'); CLK.note(mesh_skipped=True)
 # the object layer + the search index for the tour's "find anything" (final/objects3d.py, ai_find.region_index; 14.5 min on a
 # T4, 27 Oct), only with OBJECTS=1 and 33 min still left, with a time limit, and never failing the run: the tour works without
@@ -521,7 +539,8 @@ if os.environ.get('OBJECTS') == '1' and os.path.exists(f'{O}/full/model.ply') an
         t_ob = time.time(); lim = int((min(budget.TAIL_MIN['objects'] + 15, CLK.left_h() * 60 - budget.TAIL_MIN['base'])) * 60); OB = f'{W}/objects'
         sh(f'pip install -q -c {W}/pin.txt plyfile open3d scipy accelerate 2>&1 | tail -2; '
            f'SAM2_BUILD_CUDA=0 pip install -q -c {W}/pin.txt "git+https://github.com/facebookresearch/sam2.git" 2>&1 | tail -2')
-        r_ob = sh(f"cd {EX} && PYTHONPATH={EX}:{F}:$PYTHONPATH timeout -k 30 {lim} python {F}/objects3d.py {D} {O}/full/model.ply {O}/full/level.json 0 {OB} "
+        g_ob = 'CUDA_VISIBLE_DEVICES=1 ' if MESH_TH is not None else ''
+        r_ob = sh(f"cd {EX} && {g_ob}PYTHONPATH={EX}:{F}:$PYTHONPATH timeout -k 30 {lim} python {F}/objects3d.py {D} {O}/full/model.ply {O}/full/level.json 0 {OB} "
                   f"{int(os.environ.get('OBJECT_FRAMES', 40))} 2>&1 | grep -v 'it/s' | tail -60")
         if os.path.exists(f'{OB}/objects.json'):                                            # not its tinted full/model.ply
             for x in ('objects.json', 'objects_sheet.jpg', 'regions.json', 'regions.f16'):
@@ -529,6 +548,7 @@ if os.environ.get('OBJECTS') == '1' and os.path.exists(f'{O}/full/model.ply') an
             shutil.copytree(f'{OB}/crops', f'{O}/crops', dirs_exist_ok=True); S['objects'] = len(json.load(open(f'{O}/objects.json'))['objects'])
         CLK.mark('objects', t_ob, ok=os.path.exists(f'{O}/objects.json'), objects=S.get('objects'), regions=os.path.exists(f'{O}/regions.f16'))
     else: say('object layer skipped: under 33 min left'); CLK.note(objects_skipped=True)
+if MESH_TH is not None: MESH_TH.join()
 shutil.copytree(f'{D}/sparse', f'{O}/sparse', dirs_exist_ok=True)                        # cameras, so QA can be redone later
 shutil.copytree(f'{D}/images', f'{O}/images', dirs_exist_ok=True)                        # frames, for the tour (cameras need them)
 json.dump(dict(source=SOURCE, sfm=rep, models=S, minutes=round((time.time() - T0) / 60)), open(f'{O}/v3_summary.json', 'w'), indent=1)

@@ -69,6 +69,15 @@ def splat_points(P, C, c2w, K, W, H, r=1):
             win = zz[m] <= zb[pix]; img[pix[win]] = cc[m][win].float() / 255
     return img.view(H, W, 3).cpu().numpy()
 
+def pick_cameras(items, most=0):
+    """Cameras for the fusion, in filming order: all of them, or (most > 0) `most` evenly spread ones. Every voxel is tested
+    against every camera, so time grows with their number (924 cameras: 61 min); a walking-collision mesh needs each surface
+    seen a few times, not hundreds. items: tuples that start with the frame's index."""
+    items = sorted(items)
+    if not most or len(items) <= most: return items
+    return [items[j] for j in np.unique(np.round(np.linspace(0, len(items) - 1, most)).astype(int))]
+
+
 def main(examples, data, result, out, level=None, kind='2dgs', nvox=512):
     sys.path.insert(0, examples); sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
     from datasets.colmap import Parser, Dataset
@@ -88,12 +97,12 @@ def main(examples, data, result, out, level=None, kind='2dgs', nvox=512):
             from gsplat.rendering import rasterization
             rc, alpha, _ = rasterization(*args, sh_degree=shd, render_mode='RGB+ED'); d = rc[0, ..., 3]
         return torch.where(alpha[0, ..., 0] > 0.5, d, torch.zeros_like(d))
-    frames = []
-    for split in ('train', 'val'):                                                     # every camera, real (undistorted) photos for colour
-        ds = Dataset(p, split=split)
-        for k in range(len(ds)):
-            x = ds[k]; im = x['image'].to(dev).to(torch.uint8); K = x['K'].numpy(); i = ds.indices[k]
-            with torch.no_grad(): frames.append((depth(C[i], K, im.shape[1], im.shape[0]), K, C[i], im))
+    frames = []; sets = {sp: Dataset(p, split=sp) for sp in ('train', 'val')}        # real (undistorted) photos for colour
+    todo = pick_cameras([(int(ds.indices[k]), sp, k) for sp, ds in sets.items() for k in range(len(ds))], int(os.environ.get('MESH_CAMS') or 0))
+    print('mesh cameras', len(todo), 'of', sum(len(d) for d in sets.values()), flush=True)
+    for i, sp, k in todo:
+        x = sets[sp][k]; im = x['image'].to(dev).to(torch.uint8); K = x['K'].numpy()
+        with torch.no_grad(): frames.append((depth(C[i], K, im.shape[1], im.shape[0]), K, C[i], im))
     # grid: the room box of v3_qa.dollhouse without the ceiling cut (+ margin), in the frame (main horizontal axes, up)
     pts = p.points; h = pts @ up; flat = pts - np.outer(h, up); m0 = flat.mean(0); ax = np.linalg.svd(flat - m0, full_matrices=False)[2][:2]
     R = np.stack([ax[0], ax[1], up]); q = pts @ R.T; lo, hi = np.percentile(q, 3, 0), np.percentile(q, 97, 0); pad = 0.12 * (hi - lo)   # not the view out of the window; lo, hi = lo - pad, hi + pad

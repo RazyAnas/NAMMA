@@ -54,6 +54,13 @@ def frame_count(active_s, cap, lo=50):
     return int(max(lo, min(cap, round(active_s * R4['per_second']))))
 
 
+def fast_frame_cap(active_s, base=300, base_s=300.0):
+    """Preset 'fast': at most `base` frames for a walk of up to `base_s` seconds (one room: Postshot and Polycam work with
+    100-300 photos; the switch room's 934 frames for 19 m2 were 3x what it needed), more in proportion for a longer walk.
+    Frames drive the training steps, the camera solve (their square) and the mesh, so this is the biggest single saving."""
+    return int(round(base * max(1.0, active_s / base_s)))
+
+
 # ---- splats
 def train_views(registered): return registered - math.ceil(registered / 8)        # every 8th frame is held out
 

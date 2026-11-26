@@ -5,6 +5,7 @@
  "other_kernels": [
   "namma-fixer",
   "namma-flashworld",
+  "namma-speed",
   "namma-v3",
   "namma-world"
  ],
@@ -33,6 +34,19 @@
     "OBJECTS": "1"
    },
    "note": "same rules as best (sized from the video); kept as a name the app may send"
+  },
+  "fast": {
+   "env": {
+    "FAST": "1",
+    "FAST_DEPS": "1",
+    "NFRAMES": "auto",
+    "LONG": "1440",
+    "OBJECTS": "1",
+    "FAST_STEPS": "15000",
+    "FAST_CAP": "1000000",
+    "FAST_KIND": "fbg+res0.5_0.6"
+   },
+   "note": "a room in minutes (26 Nov, branch claude/fast-train; not the default): at most 300 frames for a 5-minute walk, one short training with the fast recipe (final/fast_patch.py: fused colour grid, resolution schedule), mesh from 100 cameras beside the object layer. Steps and recipe are set from the speed check (v3/SPEED.json); 'best' is unchanged."
   }
  }
 }

@@ -149,3 +149,23 @@ def test_sfm_scale_recovers_the_scale():
     s, n, spread = dense_init.sfm_scale(z / 2.5, K[0], 160, 90, np.linalg.inv(c2w), pts)   # the network's depth is 2.5x too small
     assert n >= 150 and abs(s - 2.5) < 0.05 and spread < 0.02
     assert dense_init.sfm_scale(z, K[0], 160, 90, np.linalg.inv(c2w), pts[:10])[0] is None  # too few points to trust
+
+
+# ---- preset 'fast': frames and mesh cameras
+def test_fast_frame_cap_is_a_room_sized_number():
+    import budget
+    assert budget.fast_frame_cap(280) == 300                                              # the switch room's walk: 934 frames before
+    assert budget.fast_frame_cap(60) == 300 and budget.frame_count(60, budget.fast_frame_cap(60)) == 200   # a short walk keeps run 4's density
+    assert budget.fast_frame_cap(600) == 600                                              # a longer walk (more rooms) gets more
+    assert budget.sfm_minutes(300) < 8 < 30 < budget.sfm_minutes(934)                     # what that does to the camera solve
+    assert budget.mesh_minutes(100, 384) < 10 < 60 < budget.mesh_minutes(924, 512)        # and to the mesh (100 cameras, 384 voxels)
+
+
+def test_mesh_cameras_are_spread_over_the_whole_walk():
+    pytest.importorskip('torch')
+    import mesh_tsdf
+    allf = np.arange(924); items = [(int(i), 'train', k) for k, i in enumerate(allf[allf % 8 != 0])] + [(int(i), 'val', k) for k, i in enumerate(allf[allf % 8 == 0])]
+    assert mesh_tsdf.pick_cameras(items) == sorted(items) and mesh_tsdf.pick_cameras(items[:50], 100) == sorted(items[:50])
+    got = mesh_tsdf.pick_cameras(items, 100); idx = [g[0] for g in got]
+    assert len(got) == 100 and idx == sorted(idx) and idx[0] == 0 and idx[-1] == 923
+    assert max(np.diff(idx)) <= 10                                                        # no stretch of the walk is left out
