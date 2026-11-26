@@ -409,7 +409,7 @@ def start(name, steps, cap, gpu, kind='gs'):
             N = fast_patch.NOMINAL             # shrunk together to `steps` by --steps-scaler; one save at the end (short runs)
             cmd = (f'cd {EX} && NM_DEADLINE={TRAIN_END:.0f} {fr["env"]} CUDA_VISIBLE_DEVICES={gpu} {pr}{PP}:$PYTHONPATH python simple_trainer.py mcmc --data-dir {D} '
                    f'--data-factor 1 --result-dir {res} --max-steps {N} --eval-steps {N} --save-steps {N} --ply-steps {N} --save-ply '
-                   f'--steps-scaler {fr["scaler"]:.8f} --disable-viewer {fr["grid"]} {DEPTH} --strategy.cap-max {cap}{po} {fr["flags"]}')
+                   f'--steps-scaler {fr["scaler"]:.8f} --disable-viewer {fr["grid"]} {DEPTH} --strategy.cap-max {cap}{po} {fr["flags"]}' + (' --disable-video' if SPEED or FAST else ''))   # no fly-through video
             if fr['notes']: say(name, 'recipe notes:', fr['notes'])
     say(cmd); return dict(name=name, gpu=gpu, res=res, kind=kind, t=time.time(), steps=steps, snap=-1,
                           p=subprocess.Popen(cmd, shell=True, executable='/bin/bash', stdout=open(f'{res}.log', 'w'), stderr=subprocess.STDOUT,
