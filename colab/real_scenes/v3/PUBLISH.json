@@ -1,11 +1,12 @@
 {
  "run": "20261126-1119",
- "from": "tour",
- "dst": "tour_ux",
- "url_name": "tour_ux_url.txt",
- "head": true,
+ "rebuild": true,
+ "format": "lod",
+ "model": "solid/clean.ply",
+ "sh": 3,
+ "dst": "tour_lod",
+ "url_name": "tour_lod_url.txt",
  "check": true,
- "rebuild": false,
  "prune": false,
  "floorplan": false,
  "collision": false,
@@ -23,6 +24,6 @@
   "20261031-1528-c83619ed2c647e9986fe",
   "20261031-1528-eae460bf984645cbebc8"
  ],
- "n": 48,
- "note": "27 Nov, branch claude/fast-train: trial of the new page code (horizontal field of view, quality by device, Picture quality in Settings, search shows the view, 0.35 m from walls) on a copy of the fast switch-room tour, under its own link (tour_ux_url.txt). The tour of 26 Nov and its link are not changed. Started by hand: gh workflow run 'tour publish' --ref claude/fast-train"
+ "n": 49,
+ "note": "27 Nov, branch claude/fast-train: trial 2 on the fast switch-room tour: the streamed format (levels of detail, so a small device draws fewer splats) with viewer 1.42 and its quality levels, as its own copy and link (tour_lod_url.txt). Measures the build time and how it looks and runs against the single-file tour. Trial 1 (tour_ux, n 48): the new page on the old file."
 }
