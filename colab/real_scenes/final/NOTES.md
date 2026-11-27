@@ -216,3 +216,43 @@ Switch room, same video as run 20261116-2207 (5.8 h in all, 67,549 steps, 1.5 M 
   than the 5.8 h model up close; not put side by side with the old tour.
 - Open: the camera stage took 21.5 min for 308 frames (the formula says 7.5); that is now the largest stage after training.
   Not merged anywhere; `best` is unchanged.
+
+## The tour page lowered the picture for everyone; spots were zoomed (27 Nov, branch `claude/fast-train`)
+Owner, after the fast tour: patches, low frame rate on small devices, wrong views at spots. Measured on the live switch-room
+tour (`20261116-2207`) in Chrome on a 1512 x 862 window, device pixel ratio 2:
+- **Half resolution on every device.** `make_tour.head()` wrote `quality=performance` + `performanceMode=true` into every
+  visitor's browser (a 17 Nov default). The canvas was 1512 x 862; with performance mode off it is 3024 x 1724, at 85 fps on
+  this laptop. So part of "the tour looks soft" was the page, not the model.
+- **Spots 1.6x zoomed.** The camera had fov 43.6 with `horizontalFov` true: the frames' VERTICAL angle applied across the
+  window. The frames are 71.4 deg wide (1440 px, f 1001.9). The 1 Nov fix (63e52c0) was lost in the 2DGS revert (b40e616);
+  the live check compared only the part view and photo share, so it passed. `respot` could not repair walks over 420 frames
+  (it tried smoothing n//60 only; plan() caps it at 6).
+- Fixed: horizontal fov (`lens_fov`), `respot` accepts both smoothings and writes the one used, spot markers kept inside
+  the room (`look_inside`), walk eye height 1.35 m (the filmed height, was 1.5), walker 0.35 m from walls (was 0.2), a
+  search hit for a spot or a thing shows it (it started a route), walk starts on arrival (was a fixed 1.6 s), wall sight
+  on the grid in cells (`poi_core.hiddenParts` passed metres).
+- **Quality by device** (`head()`): low = half resolution (phones with <= 4 GB or <= 4 cores), balanced = full resolution,
+  high = the same + the viewer's high level (>= 8 cores and >= 8 GB, not a phone). Auto steps down to half resolution when
+  the frame rate stays under 24 fps while moving (kept for the browser session). Settings > Picture quality: Auto / Low /
+  Balanced / High; `?q=low` in a link. The splat budget stays above the splat count for the single-file format (30 Oct:
+  a lower budget left black patches); fewer splats on small devices needs the streamed format (trial 2 below).
+- Viewer pinned to 1.42.0 in `gh_run.py` too (it was 1.37 there and 1.42 in `tour_publish.py`, so tours behaved
+  differently by which script built them). 1.42 has quality levels; its performance mode is a softer, unsorted renderer
+  on WebGPU, so the level goes into `quality` there and performance mode stays off (`viewer_levels`).
+- Live check (`scripts/site_look/view_check.py`): a spot view's zoom (best-matching scale against its photo must be ~1.0)
+  and direction are now measured; warnings until they have run on a few tours. The check draws with `?q=low`.
+- Trial 1 (`PUBLISH.json` n 48, copy `tour_ux` of the fast tour, old viewer file): phone window 375 x 812 draws 750 x 1624,
+  fov 71.4 on the longer side; laptop window draws at full size, Auto: high; spot 1 shows the whole door wall as its photo.
+- Not fixed today: the help card still opens on every visit (owner's decision of 31 Oct), a tap still walks AND opens an
+  object card, the app's own checklist still says "keep the floor out".
+- **What the three screenshots were**: floor blob = floor never filmed (`CAPTURE_GUIDE.md` said keep it out of the frame:
+  now an eye-level loop, then one tilted ~20 deg down and one up); smeared panel = standing 20 cm from a wall filmed from
+  1 m; ceiling needles = trainable, the needle guard (`room_prior.py`) was off in both presets.
+
+## Preset `quality` and website jobs (27 Nov)
+- `PIPELINE.json` preset `quality`: 420 frames, 28,000 steps, 1.5 M splats, full size all the way, fused grid, dense start,
+  needle guard on (`FAST_KIND=fbg+dense+prior`). `FASTRUN.json` run 2 trains it with a no-guard twin on the second T4.
+  Results: see below when the run has reported.
+- `v3/site_tail.py` (SITE_JOB=1): the Kaggle job builds the tour (Node 22 installed in the kernel) and publishes it to the
+  visitor's own Hugging Face account, then writes `status.json` done + link and a row in `library.json`. `run.py` takes
+  `SOURCE=hf:<repo>:<job>/video.json`. Tested with fakes only; not yet run on Kaggle.
