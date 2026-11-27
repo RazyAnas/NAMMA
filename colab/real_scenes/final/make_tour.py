@@ -27,7 +27,8 @@ OVERLAY = """<style>
   .nm-btn:hover{color:var(--nm-light)} .nm-btn svg{display:block}
   .nm-btn svg>g.s{fill:none;stroke:#000;stroke-width:2;stroke-linejoin:round;opacity:.4} .nm-btn svg>g.f{fill:currentColor;stroke:none}
   .nm-group{display:flex;background:rgba(0,0,0,.3);border-radius:6px}
-  .nm-qrow button{flex:1;min-width:0;padding:0 4px;font-size:12px} .nm-qrow button.nm-on{background:var(--nm-acc);color:#111}
+  .nm-qrow button{flex:1;min-width:0;padding:0 4px;font-size:12px} .sse-settingsPanel .nm-qrow button.nm-on{background:var(--nm-acc)!important;color:#111!important;font-weight:600}
+  body:has(.sse-settingsPanel:not(.sse-hidden)) #nm-strip,body:has(.sse-settingsPanel:not(.sse-hidden)) #nm-find{display:none!important}   /* the open Settings panel lay under the photo bar and the search box */
   .nm-key{display:inline-flex;align-items:center;justify-content:center;min-width:20px;height:20px;padding:0 5px;border-radius:4px;border:1px solid rgba(255,255,255,.14);border-bottom-color:rgba(255,255,255,.26);background:rgba(255,255,255,.08);color:var(--nm-light);font-size:11px}
   .nm-pill{height:34px;padding:0 20px;border:1px solid rgba(255,255,255,.1);border-radius:8px;font-size:13px;cursor:pointer;color:var(--nm-dark);background:rgba(255,255,255,.04);transition:background-color 250ms ease,color 250ms ease}
   .nm-pill:hover,.nm-pill.on{color:var(--nm-light);background:rgba(255,255,255,.1)}
@@ -262,7 +263,8 @@ OVERLAY = """<style>
     b.textContent = NQ.pick === 'auto' ? 'Auto: ' + NQ.level : cap1(NQ.level); r1.append(a, b);
     ['auto', 'low', 'balanced', 'high'].forEach((p) => { const x = document.createElement('button'); x.textContent = cap1(p); x.title = { auto: 'Fits this device and keeps it smooth', low: 'Half resolution: for small phones', balanced: 'Full resolution', high: 'Full resolution, best detail: for strong computers' }[p];
       if (p === NQ.pick) x.className = 'nm-on'; x.onclick = (e) => { e.stopPropagation(); if (p !== NQ.pick) setLevel(p); }; r2.append(x); });
-    g.append(r1, r2); sp.insertBefore(g, sp.firstChild); };
+    g.append(r1, r2); sp.insertBefore(g, sp.firstChild);
+    sp.querySelectorAll('.sse-settingsRow').forEach((r) => { if (/^\s*Performance Mode/i.test(r.textContent || '')) r.style.display = 'none'; }); };   // one quality control, ours (the level sets that switch)
   qRow();
   // Auto keeps it smooth: frame rate over 2 s windows, only while the view moves (a still view is not drawn again) and the tab is
   // in front. Two slow windows in a row (< 24 fps) on full resolution -> half resolution, live where the viewer allows it, and
