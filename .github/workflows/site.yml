@@ -1,0 +1,36 @@
+# The NAMMA website (site/): checks, then deploy to the static Hugging Face Space <user>/namma with a fresh gallery.json
+# (scripts/site_deploy.py lists the tour Spaces named in site/gallery.src.json). No GPU, no Kaggle, a few minutes.
+# Start: push a change under site/ or to scripts/site_deploy.py on claude/fast-train, or run it by hand (Actions > site > Run workflow),
+# for example after a new tour was published and should appear in the gallery.
+name: site
+on:
+  push:
+    branches: [claude/fast-train]
+    paths:
+      - site/**
+      - scripts/site_deploy.py
+  workflow_dispatch:
+concurrency:
+  group: site-deploy
+  cancel-in-progress: false
+env:
+  HF_TOKEN: ${{ secrets.HF_TOKEN || secrets.HUGGINGFACE_WRITE_TOKEN }}
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          sparse-checkout: |
+            site
+            scripts
+            tests/v3
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - run: pip install -q huggingface_hub pytest
+      - name: Checks of the site (JS syntax, only local files, no HTML built from strings, gallery logic)
+        run: python -m pytest -q --confcutdir=tests/v3 tests/v3/test_site.py -p no:cacheprovider
+      - name: Deploy the site and its gallery
+        run: python scripts/site_deploy.py --make-gallery-repo

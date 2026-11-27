@@ -1,0 +1,58 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<!-- Hugging Face puts one small script with the Space's sign-in settings at the very top of the head, above this line. The
+     policy below applies to everything after it: only this site's own files run, and the page may talk only to Hugging Face
+     and Kaggle. Keep this meta tag first, and keep every script of the site in its own file. -->
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; img-src 'self' https: data: blob:; media-src 'self' blob:; style-src 'self' 'unsafe-inline'; connect-src 'self' https://huggingface.co https://*.huggingface.co https://*.hf.co https://*.hf.space https://*.amazonaws.com https://www.kaggle.com https://api.kaggle.com https://storage.googleapis.com; frame-src https://*.hf.space; script-src 'self'">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="referrer" content="strict-origin-when-cross-origin">
+<meta name="color-scheme" content="dark">
+<meta name="theme-color" content="#0a0a0b">
+<meta name="description" content="NAMMA turns a phone video of a room into a 3D tour you can walk through in the browser. Free: trained on your own Kaggle GPU, stored in your own Hugging Face account.">
+<title>NAMMA: walk through a place filmed on a phone</title>
+<link rel="stylesheet" href="css/site.css">
+<script type="module" src="js/app.js"></script>
+</head>
+<body>
+<a class="skip" href="#view">Skip to the content</a>
+<p id="embed-note" class="embed-note" hidden></p>
+
+<header class="top">
+  <div class="wrap top__in">
+    <a class="brand" href="#/" aria-label="NAMMA, start page">
+      <svg class="brand__mark" viewBox="0 0 24 24" width="22" height="22" aria-hidden="true" focusable="false"><path d="M4 19V5l8 9V5m0 14 8-9v9" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+      <span>NAMMA</span>
+    </a>
+    <nav class="nav" aria-label="Main">
+      <a href="#/explore" data-nav="explore">Explore</a>
+      <a href="#/library" data-nav="library">Library</a>
+      <a href="#/create" data-nav="create">Create</a>
+    </nav>
+    <div id="auth" class="auth"></div>
+  </div>
+</header>
+
+<main id="view" tabindex="-1">
+  <noscript>
+    <div class="wrap page">
+      <h1>NAMMA needs JavaScript</h1>
+      <p>This site runs entirely in your browser. Please turn JavaScript on and reload the page.</p>
+    </div>
+  </noscript>
+</main>
+
+<footer class="foot">
+  <div class="wrap foot__in">
+    <span>NAMMA <span id="year"></span>. Free and open source.</span>
+    <span class="foot__links">
+      <a href="#/privacy">Privacy note</a>
+      <a href="https://github.com/RazyAnas/NAMMA" target="_blank" rel="noopener noreferrer">Open source</a>
+    </span>
+  </div>
+</footer>
+
+<div id="toasts" class="toasts" aria-live="polite"></div>
+</body>
+</html>

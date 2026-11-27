@@ -1,0 +1,17 @@
+{
+  "spaces": ["namma-tour", "namma-tour-2"],
+  "titles": {
+    "20261025-2336": { "title": "Hotel room, first tour", "kind": "room", "public": true },
+    "20261026-0309": { "title": "Hotel room, second build", "kind": "room", "public": true },
+    "20261026-0327": { "title": "Hotel room", "kind": "room", "public": true },
+    "20261026-0610": { "title": "Hotel room, flat-floor test", "kind": "room", "public": true },
+    "20261027-1849-world": { "title": "Generated world", "kind": "experiment", "public": true },
+    "20261028-0513": { "title": "Hotel room, long training", "kind": "room", "public": true },
+    "20261030-0520": { "title": "Hotel room, tour test", "kind": "room", "public": true },
+    "20261031-1528": { "title": "Whole house", "kind": "house", "public": true },
+    "20261115-2250": { "title": "Hotel room, budget test 1", "kind": "room", "public": true },
+    "20261115-2345": { "title": "Hotel room, budget test 2", "kind": "room", "public": true },
+    "20261116-2207": { "title": "Switch room", "kind": "room", "public": true },
+    "20261126-1119": { "title": "Switch room, 55-minute build", "kind": "room", "public": true }
+  }
+}
