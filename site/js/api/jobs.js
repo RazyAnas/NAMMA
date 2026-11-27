@@ -59,7 +59,8 @@ function siteBase() {
 // page here can read the signed-in visitor's tokens, and a viewer opens files and settings other people made.
 function viewerBase() {
   const loc = globalThis.window?.location;
-  return loc && /\.static\.hf\.space$/.test(loc.host || '') ? `https://${loc.host.replace(/\.static\.hf\.space$/, '-viewer.static.hf.space')}/` : '';
+  const o = String((loc && loc.origin) || '');
+  return /^https:\/\/[a-z0-9-]+\.static\.hf\.space$/.test(o) ? o.replace(/\.static\.hf\.space$/, '-viewer.static.hf.space') + '/' : '';
 }
 function fullUrl(url) {
   if (!url) return url || null;
