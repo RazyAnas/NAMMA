@@ -231,7 +231,9 @@ OVERLAY = """<style>
   const hookWalk = () => { const v = window.viewer; if (!v || !v.events) return setTimeout(hookWalk, 300);
     v.events.on('cameraMode:changed', (m) => { if (m !== 'walk' || fixing) return; const c = camState(); if (inRoom(c)) return;
       fixing = true; v.state.cameraMode = 'orbit'; let best = 0, bd = 1e9; o.spots.forEach((s, i) => { const d = c ? Math.hypot(s.x - c.x, s.z - c.z) : i; if (d < bd) { bd = d; best = i; } });
-      go(best); setTimeout(() => { try { v.toggleWalk(); } catch (e) {} fixing = false; }, 1600); }); };
+      go(best); const sp = o.spots[best], t0 = Date.now(), k = setInterval(() => { const q = camState();          // there (or 4 s): walk
+        if (!(q && sp && Math.hypot(q.x - sp.x, q.z - sp.z) < 0.08) && Date.now() - t0 < 4000) return; clearInterval(k);
+        setTimeout(() => { try { v.toggleWalk(); } catch (e) {} fixing = false; }, 250); }, 100); }); };
   hookWalk();
   // walk mode. The viewer's walk controller is exposed as window.nammaWalk by make_tour.patch_js. Eye height (owner, 31 Oct:
   // inside the gear settings, not on screen): a group at the top of the viewer's own Settings panel, in its row/button style,
@@ -292,7 +294,8 @@ OVERLAY = """<style>
       if (o.y < 0 && this._velocity.y > 0 && -o.y > Math.hypot(o.x, o.z)) this._velocity.y = 0;
       if (!this._grounded && o.y > 0 && this._velocity.y < 0) { this._velocity.y = 0; this._grounded = true; } }; };
   document.getElementById('nm-jump').onpointerdown = (e) => { e.preventDefault(); e.stopPropagation(); const w = window.nammaWalk; if (w && w._pendingMove) w._pendingMove[1] = 1; };
-  const walkUi = (m) => { document.body.classList.toggle('nm-walk', m === 'walk' && !!window.nammaWalk); if (m === 'walk') { fixJump(window.nammaWalk); setEye(eye); } };
+  const walkUi = (m) => { document.body.classList.toggle('nm-walk', m === 'walk' && !!window.nammaWalk);
+    if (m === 'walk') { const w = window.nammaWalk; fixJump(w); setEye(eye); if (w && typeof w.capsuleRadius === 'number' && w.capsuleRadius < 0.35) w.capsuleRadius = 0.35; } };   // 0.35 m from walls: the video was filmed from ~1 m, 20 cm away is a smear; a 0.8 m door still passes
   const hookUi = () => { const v = window.viewer; if (!v || !v.events) return setTimeout(hookUi, 300); v.events.on('cameraMode:changed', walkUi); walkUi(v.state.cameraMode); };
   hookUi();
   addEventListener('keydown', (e) => { const v = window.viewer; if (!v || v.state.cameraMode !== 'walk' || /INPUT|TEXTAREA/.test((e.target || {}).tagName || '')) return;

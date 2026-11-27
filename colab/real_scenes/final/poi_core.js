@@ -220,7 +220,7 @@ export function behindWall(a, b, walls) { const dx = b[0] - a[0], dz = b[1] - a[
 // Which route points the camera at `cam` [x, z] cannot see: behind a wall (walls.json), or, without walls, with no free line
 // over the walkable grid. Points within `near` metres always count as seen (the band under the visitor's feet).
 export function hiddenParts(fine, cam, walls, nav, near = 0.8) { return fine.map((p) => { if (Math.hypot(p[0] - cam[0], p[2] - cam[1]) < near) return false;
-    if (walls && walls.length) return behindWall(cam, [p[0], p[2]], walls); return nav ? !sight(nav, cam, [p[0], p[2]]) : false; }); }
+    if (walls && walls.length) return behindWall(cam, [p[0], p[2]], walls); return nav ? !sight(nav, cellOf(nav, cam[0], cam[1]), cellOf(nav, p[0], p[2])) : false; }); }   // cells, not metres (27 Nov: every far point counted as hidden)
 // Walking time for a distance, in words ("20 s", "2 min"): 1.2 m/s, the usual indoor pace.
 export const walkTime = (m) => { const t = m / 1.2; return t < 55 ? Math.max(5, Math.round(t / 5) * 5) + ' s' : Math.round(t / 60) + ' min'; };
 

@@ -158,7 +158,7 @@ const hitOf = new Map(), catName = (p) => p.category.charAt(0).toUpperCase() + p
 const spotHits = (o.spots || []).map((sp, i) => ({ spot: i, label: esc(sp.title), size: 'Filmed spot', words: (sp.title + ' spot view').toLowerCase(), thumb: sp.thumb }));
 extra = () => pois.map((p) => { let h = hitOf.get(p); const size = catName(p) + (p.note ? ' · ' + esc(p.note).slice(0, 60) : '') + (p.source === 'ai' ? ' · found by AI' : '');
   if (!h || h.label !== esc(p.name) || h.size !== size) { h = { poi: p, label: esc(p.name), size, words: poiWords(p), thumb: p.thumb }; hitOf.set(p, h); } return h; }).concat(spotHits);
-pick = (x) => { if (x.ai) aiFind(x.ai); else if (x.poi) routeTo(x.poi.id); else if (x.spot != null) { const sp = o.spots[x.spot]; if (nav) routeToPoint(sp.title, [sp.x, 1, sp.z], x.spot); else go(x.spot); } else if (nav && x.lo && x.hi) routeToPoint(x.label, [(x.lo[0] + x.hi[0]) / 2, (x.lo[1] + x.hi[1]) / 2, (x.lo[2] + x.hi[2]) / 2], x.i); else go(x.i); };
+pick = (x) => { if (x.ai) aiFind(x.ai); else if (x.poi) routeTo(x.poi.id); else if (x.spot != null) go(x.spot); else go(x.i); };   // a spot or a thing: show it (27 Nov: it used to start a route, so the view asked for never came up)
 const searchOn = () => { find.style.display = 'block'; q.placeholder = aiMeta ? 'Search, or ask for anything ...' : obs.length ? 'Search places and things ...' : 'Search places and spots ...'; };
 
 // ---- AI find: type anything; the tour's own frames are searched for it (regions.json / regions.f16 from ai_find.py), and it
