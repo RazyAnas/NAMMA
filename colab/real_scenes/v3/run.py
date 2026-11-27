@@ -125,6 +125,10 @@ def source():
         return folder
     hf_setup(hf_token())                         # also for kaggle: sources (every run started from GitHub): without it nothing was
     if SOURCE.startswith('kaggle:'): return attached(SOURCE[7:])   # sent to HF while the job ran, the snapshots included (test 1, 16 Nov)
+    if SOURCE.startswith('hf:'):                                    # a website job (27 Nov): the video's parts in the visitor's own inbox
+        import inbox; rp, man = SOURCE[3:].split(':', 1); tok = hf_token(); assert tok, 'this job needs the Hugging Face sign-in token'
+        m = inbox.assemble(rp, man, f'{W}/video.tmp', tok); v = f"{W}/video{os.path.splitext(str(m.get('name') or 'v.mp4'))[1].lower() or '.mp4'}"
+        os.replace(f'{W}/video.tmp', v); json.dump(dict(source=SOURCE), open(f'{O}/source.json', 'w')); return v
     if SOURCE == 'kaggle':
         v = sorted(glob.glob('/kaggle/input/**/*.mp4', recursive=True) + glob.glob('/kaggle/input/**/*.mov', recursive=True)
                    + glob.glob('/kaggle/input/**/*.MOV', recursive=True))
@@ -560,4 +564,7 @@ push(f'{O}/v3_summary.json', 'v3_summary.json')
 CLK.note(done=True, minutes=round((time.time() - T0) / 60)); push(f'{O}/budget.json', 'budget.json')
 say(f'time: {CLK.elapsed_h():.2f} h used, {CLK.left_h():.2f} h before the deadline, {budget.HARD_H - CLK.elapsed_h():.2f} h before Kaggle stops the session')
 say('V3 DONE', json.dumps(S)); sh(f'ls -la {O} {O}/*/ | head -40')
+if os.environ.get('SITE_JOB') == '1':                                                       # started from the website: the tour is built and
+    import site_tail                                                                        # published here, to the visitor's own account
+    site_tail.run(W, O, D, EX, F, RUN, hf_token(), say, sh, S)
 if 'full' not in S and not SPEED: raise SystemExit('V3 FAILED: no full model (see the trainer logs above)')

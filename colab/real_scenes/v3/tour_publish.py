@@ -144,7 +144,8 @@ def publish(api, user, results_repo, run, tour_dir, say=print, url_path=None):
         sp, os.environ['TOUR_FOLDER'] = cur
     if os.environ.get('TOUR_PRUNE') == '1':                                               # deletes old tours: only with the owner's OK
         prune(api, sp, results_repo, url_path or f'{run}/tour_url.txt', say)
-    for f in {x.split('/')[0] for x in api.list_repo_files(sp, repo_type='space') if '/' in x}:      # old guessable folders out
+    for f in ({x.split('/')[0] for x in api.list_repo_files(sp, repo_type='space') if '/' in x}      # old guessable folders out
+              if os.environ.get('TOUR_KEEP_OTHER') != '1' else ()):   # (never in somebody else's Space: site_tail.py, their splat files live there)
         if not re.fullmatch(r'\d{8}-\d{4}(-[a-z0-9]+)?-[0-9a-f]{20}', f): api.delete_folder(f, repo_id=sp, repo_type='space')   # (digits: 'world1')
     folder = os.environ.get('TOUR_FOLDER') or f'{run}-{secrets.token_hex(10)}'          # TOUR_FOLDER: update a published tour in place (same link)
     # places the admin saved in the published page live only in the Space: take them along (same folder, or the folder the
