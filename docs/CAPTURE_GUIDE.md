@@ -30,7 +30,10 @@ stopping in the frame; walk hallways on the way.
 | **Walk, don't pan ("zoom with your feet")**: parallax comes only from moving the phone through space; walk loops around big furniture |
 | **Walk slowly, in a line; never orbit around one point** | Slow, steady motion is what lets every frame be placed |
 | **To change direction: stop, turn slowly (3 s for a quarter turn), keep walking** | A ~35 deg jump between frames breaks matching; 22 Oct: 4 of 9 gaps came from fast turns |
-| **Keep the floor out of the frame**: aim at eye level | Repetitive tiles filling the frame is the most common reason a room fails |
+| **First loop at eye level.** Never point straight down: the floor must not fill the frame | Repetitive tiles filling the frame is the most common reason a room fails |
+| **Then a second loop, the other way round, phone tilted about 20 degrees down** (floor in the lower half, walls still in the upper half; the app warns past 25) | 27 Nov, switch room: the floor beside the path was a dark smear in the tour because no frame ever showed it. What was never filmed cannot be trained |
+| **Then a third loop tilted about 20 degrees up, ceiling fans switched off** | Same reason for the ceiling: needle streaks around the fan. A turning fan can never come out sharp |
+| **Stay about 1 m from walls and cupboards; for small labels walk closer once, slowly** | The tour is sharp from where the video was filmed. From 20 cm a wall filmed from 1 m is a smear (the tour now keeps the walker 0.35 m away) |
 | **Pass look-alike places slowly with something unique in view** (a switch board, a bin, a sticker) | 22 Oct: both corridor ends looked alike and the solver put a window where a door is |
 | **One video per floor, never cut**: start at the entrance, stop after the last room | Rooms are linked by the walk between them; a cut loses that link |
 | **Every doorway twice: once walking in, once walking out, slowly** | Rooms are trained one by one and joined at the doors; both directions give the overlap that joins them |
