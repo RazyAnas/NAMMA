@@ -10,7 +10,7 @@ import json, os, re, subprocess, sys, time
 
 NODE = 'v22.12.0'                                   # splat-transform needs Node 22; Kaggle's image has none
 PKGS = 'playcanvas@2.23.2 @playcanvas/supersplat-viewer@1.42.0 @playcanvas/splat-transform@3.10.1'   # as v3/gh_run.py tour_step
-SKIP = ['images/*', 'sfm_work/*']
+SKIP = ['images/*', 'sfm_work/*', 'site_dl/*', 'inbox_dl/*', 'NAMMA/*', '.virtual_documents/*']   # not results: frames, work files, our own downloads
 
 
 def now(): return time.strftime('%Y-%m-%dT%H:%M:%SZ', time.gmtime())
