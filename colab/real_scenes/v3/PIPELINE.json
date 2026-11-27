@@ -47,6 +47,20 @@
     "FAST_KIND": "fbg+res0.5_0.6+dense"
    },
    "note": "a room in minutes (26 Nov, branch claude/fast-train; not the default): at most 300 frames for a 5-minute walk, one short training with the fast recipe (final/fast_patch.py: fused colour grid, half-size pictures for the first 60 % of the steps, dense start from depth maps: final/dense_init.py), mesh from 100 cameras beside the object layer. Measured on the switch room (speed run 1, v3/SPEED.json, 270 training frames, same 116 held-out frames as the 30.59 dB / 3.4 h model): 15,000 steps = 18.7 min of training, 29.66 dB, SSIM 0.945, 9 % needles; 7,000 steps = 8.5 min, 29.22 dB, SSIM 0.937, 2 % needles (FAST_STEPS). Without the dense start 15,000 steps gave 28.95 dB and 16 % needles. 'best' is unchanged."
+  },
+  "quality": {
+   "env": {
+    "FAST": "1",
+    "FAST_DEPS": "1",
+    "NFRAMES": "auto",
+    "LONG": "1440",
+    "OBJECTS": "1",
+    "FAST_FRAMES": "420",
+    "FAST_STEPS": "28000",
+    "FAST_CAP": "1500000",
+    "FAST_KIND": "fbg+dense+prior"
+   },
+   "note": "a room in about an hour and a half, for the picture (27 Nov, branch claude/fast-train; not the default): run 4's numbers (about 420 frames for a 5-minute walk, 1.5 M splats, 28,000 steps at full size all the way) with the fast recipe's fused colour grid and dense start, and the needle guard on (final/room_prior.py: run 5 took needles from 13 % to 0 % for -0.07 dB; needles grew with steps in speed run 1). No half-size start: it cost 0.2 dB to save 3 minutes. Estimate before the first run: about 50 min of training (0.102 s per step at 1.5 M). Unmeasured until v3/FASTRUN.json run 2 reports."
   }
  }
 }

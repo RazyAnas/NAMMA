@@ -49,14 +49,10 @@ def patch_supersplat(html: str) -> str:
             except ValueError:
                 pass
 
-    patched = make_tour.head(html, fmt, budget)
-    for setting in (
-        'localStorage.setItem("quality","performance")',
-        'localStorage.setItem("performanceMode","true")',
-        'localStorage.setItem("nammaQ","4")',
-    ):
+    patched = make_tour.head(html, fmt, budget)   # 27 Nov: quality by device (low / balanced / high), no longer the lowest for all
+    for setting in ('window.nammaQuality=', 'ls.setItem("nammaQ","5")'):
         if setting not in patched:
-            raise ValueError(f"missing performance default: {setting}")
+            raise ValueError(f"missing quality default: {setting}")
     return patched
 
 

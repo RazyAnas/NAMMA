@@ -1,5 +1,5 @@
 {
- "n": 1,
+ "n": 2,
  "source": "kaggle:namma-in-20261116-132659-2f21",
  "kernel": "namma-speed",
  "only_if_idle": true,
@@ -10,9 +10,10 @@
   "NFRAMES": "auto",
   "LONG": "1440",
   "OBJECTS": "1",
-  "VARIANTS": "[[\"full\", 15000, 1000000, \"fbg+res0.5_0.6+dense\"], [\"quick\", 10000, 1000000, \"fbg+res0.5_0.6+dense\"]]"
+  "FAST_FRAMES": "420",
+  "VARIANTS": "[[\"full\", 28000, 1500000, \"fbg+dense+prior\"], [\"plain\", 28000, 1500000, \"fbg+dense\"]]"
  },
  "scene": "the switch room's own video (app job 20261116-132659-2f21, already on Kaggle as a private dataset), video to tour",
  "how": "change n and push to claude/fast-train: .github/workflows/fast.yml -> gh_run.py (RUN_JSON) -> v3/run.py with preset fast's settings. The tour goes to a new folder; the old tours stay.",
- "note": "run 1 (26 Nov): preset fast end to end, timed per stage (budget.json). 'full' is the preset's model (15k steps); 'quick' (10k steps) trains on the second T4 at the same time, as one more point between speed run 1's 7k and 15k"
+ "note": "run 2 (27 Nov): preset quality end to end on the same video. 'full' is the preset's model (needle guard on) and makes the tour; 'plain' is the same recipe without the guard on the second T4 at the same time, so the guard's effect is measured, not assumed. The tour is built with viewer 1.42, horizontal field of view and quality by device. Run 1 (26 Nov): preset fast, 55 min, 29.12 dB (final/NOTES.md, 'Fast training')."
 }

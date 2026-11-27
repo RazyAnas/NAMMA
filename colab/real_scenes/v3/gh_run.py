@@ -194,7 +194,7 @@ def tour_step():
     run('pip install -q torch --index-url https://download.pytorch.org/whl/cpu && pip install -q opencv-python-headless imageio tqdm plyfile scipy trimesh fast-simplification '
         'typing_extensions "git+https://github.com/rmbrualla/pycolmap@cc7ea4b7301720ac29287dbe450952511b32125e" && sed -i '
         '"s/np.uint64(-1)/np.uint64(np.iinfo(np.uint64).max)/" $(python -c "import importlib.util as u; print(u.find_spec(\'pycolmap\').submodule_search_locations[0])")/scene_manager.py')
-    run(f'cd {T} && npm init -y >/dev/null && npm i -s --no-audit --no-fund playcanvas@2.23.2 @playcanvas/supersplat-viewer@1.37.0 @playcanvas/splat-transform@3.10.1 | tail -1')
+    run(f'cd {T} && npm init -y >/dev/null && npm i -s --no-audit --no-fund playcanvas@2.23.2 @playcanvas/supersplat-viewer@1.42.0 @playcanvas/splat-transform@3.10.1 | tail -1')
     data = f'{T}/data'; os.makedirs(data, exist_ok=True); shutil.copytree(f'{OUT}/sparse', f'{data}/sparse', dirs_exist_ok=True)
     if os.path.isdir(f'{OUT}/images'): os.symlink(f'{OUT}/images', f'{data}/images')
     else:                                                                                  # same frames as the job made (frames.py)

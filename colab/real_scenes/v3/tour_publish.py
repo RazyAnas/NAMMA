@@ -246,7 +246,8 @@ if __name__ == '__main__':
         api.upload_folder(folder_path=tour, path_in_repo=f"{run}/{os.environ.get('TOUR_DST', 'tour')}", repo_id=repo, repo_type='dataset', delete_patterns=['walkpath.json'])
     if hd and not rb:                                                                     # page only: current viewer start options
         h = open(f'{tour}/index.html').read(); b = re.search(r'q\.set\("budget","(\d+)"\)', h)
-        h = make_tour.head(h, 'lod' if os.path.isdir(f'{tour}/lod') else 'sog', int(b.group(1)) if b else 4)
+        jsl = open(f'{tour}/index.js').read() if os.path.exists(f'{tour}/index.js') else ''   # which quality settings this tour's viewer has
+        h = make_tour.head(h, 'lod' if os.path.isdir(f'{tour}/lod') else 'sog', int(b.group(1)) if b else 4, make_tour.viewer_levels(jsl))
         if os.path.exists(f'{tour}/overlay.json'): h = make_tour.overlay(h)                # current floor plan / spots / controls UI
         js_path = f'{tour}/index.js'
         if not os.path.exists(js_path) or os.path.getsize(js_path) == 0:                 # emptied by the 31 Oct publish bug: take it back

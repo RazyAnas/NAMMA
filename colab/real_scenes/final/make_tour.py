@@ -27,6 +27,7 @@ OVERLAY = """<style>
   .nm-btn:hover{color:var(--nm-light)} .nm-btn svg{display:block}
   .nm-btn svg>g.s{fill:none;stroke:#000;stroke-width:2;stroke-linejoin:round;opacity:.4} .nm-btn svg>g.f{fill:currentColor;stroke:none}
   .nm-group{display:flex;background:rgba(0,0,0,.3);border-radius:6px}
+  .nm-qrow button{flex:1;min-width:0;padding:0 4px;font-size:12px} .nm-qrow button.nm-on{background:var(--nm-acc);color:#111}
   .nm-key{display:inline-flex;align-items:center;justify-content:center;min-width:20px;height:20px;padding:0 5px;border-radius:4px;border:1px solid rgba(255,255,255,.14);border-bottom-color:rgba(255,255,255,.26);background:rgba(255,255,255,.08);color:var(--nm-light);font-size:11px}
   .nm-pill{height:34px;padding:0 20px;border:1px solid rgba(255,255,255,.1);border-radius:8px;font-size:13px;cursor:pointer;color:var(--nm-dark);background:rgba(255,255,255,.04);transition:background-color 250ms ease,color 250ms ease}
   .nm-pill:hover,.nm-pill.on{color:var(--nm-light);background:rgba(255,255,255,.1)}
@@ -235,9 +236,9 @@ OVERLAY = """<style>
   // walk mode. The viewer's walk controller is exposed as window.nammaWalk by make_tour.patch_js. Eye height (owner, 31 Oct:
   // inside the gear settings, not on screen): a group at the top of the viewer's own Settings panel, in its row/button style,
   // and Q / E; eye = camera above the floor (controller eyeHeight + its 0.2 m hover). Jump button on touch screens, walk only.
-  let eye = 1.5, hv = null; try { eye = parseFloat(localStorage.getItem('nammaEye')) || 1.5; } catch (e) {}
+  let eye = 1.35, hv = null; try { eye = parseFloat(localStorage.getItem('nammaEye2')) || 1.35; } catch (e) {}   // 1.35 m = the filmed height (plan(): the scale), so walk mode sees what the spots show (was 1.5)
   const setEye = (h) => { eye = Math.round(Math.max(0.9, Math.min(2.2, h)) * 10) / 10; if (hv) hv.textContent = eye.toFixed(1) + ' m';
-    const w = window.nammaWalk; if (w) w.eyeHeight = eye - 0.2; try { localStorage.setItem('nammaEye', String(eye)); } catch (e) {} };
+    const w = window.nammaWalk; if (w) w.eyeHeight = eye - 0.2; try { localStorage.setItem('nammaEye2', String(eye)); } catch (e) {} };
   const eyeRow = () => { const sp = document.querySelector('.sse-settingsPanel'); if (!sp || !window.nammaWalk) return setTimeout(eyeRow, 400);
     if (document.getElementById('nm-eyegrp')) return;
     const g = document.createElement('div'); g.className = 'sse-settingsGroup'; g.id = 'nm-eyegrp';
@@ -247,6 +248,38 @@ OVERLAY = """<style>
     document.getElementById('nm-up').onclick = (e) => { e.stopPropagation(); setEye(eye + 0.1); };
     document.getElementById('nm-down').onclick = (e) => { e.stopPropagation(); setEye(eye - 0.1); }; };
   eyeRow();
+  // Picture quality (owner, 27 Nov): Auto / Low / Balanced / High in the viewer's Settings panel. The level itself is applied by
+  // the head script before the viewer starts (make_tour.head), so a choice reloads the page once.
+  const NQ = window.nammaQuality || { pick: 'auto', level: 'balanced', device: 'balanced', levels: false }, cap1 = (t) => t[0].toUpperCase() + t.slice(1);
+  const setLevel = (p) => { try { localStorage.setItem('nammaLevel', p); sessionStorage.removeItem('nammaAuto'); } catch (e) {} location.reload(); };
+  const qRow = () => { const sp = document.querySelector('.sse-settingsPanel'); if (!sp) return setTimeout(qRow, 400);
+    if (document.getElementById('nm-qgrp')) return;
+    const g = document.createElement('div'), r1 = document.createElement('div'), r2 = document.createElement('div'), a = document.createElement('div'), b = document.createElement('div');
+    g.className = 'sse-settingsGroup'; g.id = 'nm-qgrp'; r1.className = 'sse-settingsRow'; r2.className = 'sse-settingsRow nm-qrow';
+    a.style.cursor = 'default'; a.textContent = 'Picture quality'; b.id = 'nm-qv'; b.style.cssText = 'cursor:default;font-size:12px';
+    b.textContent = NQ.pick === 'auto' ? 'Auto: ' + NQ.level : cap1(NQ.level); r1.append(a, b);
+    ['auto', 'low', 'balanced', 'high'].forEach((p) => { const x = document.createElement('button'); x.textContent = cap1(p); x.title = { auto: 'Fits this device and keeps it smooth', low: 'Half resolution: for small phones', balanced: 'Full resolution', high: 'Full resolution, best detail: for strong computers' }[p];
+      if (p === NQ.pick) x.className = 'nm-on'; x.onclick = (e) => { e.stopPropagation(); if (p !== NQ.pick) setLevel(p); }; r2.append(x); });
+    g.append(r1, r2); sp.insertBefore(g, sp.firstChild); };
+  qRow();
+  // Auto keeps it smooth: frame rate over 2 s windows, only while the view moves (a still view is not drawn again) and the tab is
+  // in front. Two slow windows in a row (< 24 fps) on full resolution -> half resolution, live where the viewer allows it, and
+  // for the rest of this browser session. A device started on Low that runs fast (> 50 fps for 10 s of moving) gets one try at
+  // full resolution; if that is slow it goes back and stays.
+  if (NQ.pick === 'auto') { let n = 0, t0 = 0, last = 0, bad = 0, good = 0, lc = null, level = NQ.level, tried = false, since = 0;
+    const half = (on) => { const v = window.viewer; try { if (NQ.levels) v.state.quality = on ? 'performance' : 'default'; else v.state.performanceMode = on; } catch (e) {} };
+    const say = (t) => { const e = document.getElementById('nm-toast'); if (!e) return; e.textContent = t; e.classList.add('ok'); e.style.display = 'block'; setTimeout(() => { e.style.display = 'none'; }, 6000); };
+    const to = (lv, msg) => { level = lv; bad = good = 0; half(lv === 'low'); try { sessionStorage.setItem('nammaAuto', lv); } catch (e) {} const q = document.getElementById('nm-qv'); if (q) q.textContent = 'Auto: ' + lv; if (msg) say(msg); };
+    const tick = (t) => { requestAnimationFrame(tick);
+      if (!document.body.classList.contains('namma-show') || document.visibilityState !== 'visible') { t0 = 0; return; }
+      if (!since) since = t; if (t - since < 3000) return;                                 // the first seconds: still loading
+      if (!t0 || t - last > 400) { t0 = t; n = 0; last = t; lc = camState(); return; }      // a pause: start a new window
+      n++; last = t; if (t - t0 < 2000) return;
+      const c = camState(), fps = n * 1000 / (t - t0), moved = !!(c && lc && (Math.hypot(c.x - lc.x, c.y - lc.y, c.z - lc.z) > 0.05 || Math.hypot(c.fx - lc.fx, c.fz - lc.fz) > 0.05));
+      t0 = t; n = 0; lc = c; if (!moved) return;
+      if (fps < 24) { good = 0; if (level !== 'low' && ++bad >= 2) to('low', 'Picture quality lowered to keep it smooth. Change it in Settings (gear).'); }
+      else { bad = 0; if (fps > 50 && level === 'low' && !tried) { if (++good >= 5) { tried = true; to('balanced'); } } else good = 0; } };
+    requestAnimationFrame(tick); }
   // Jump height (owner, 31 Oct: "on phone it sometimes jumps little"): while moving, the capsule brushes walls and furniture, and the
   // viewer reads any downward push-out as a ceiling and cancels the jump. Same check, but a ceiling only when the push is mostly
   // downward: a wall brushed while moving keeps the full jump (the jump itself, gravity and speed are the viewer's own).
@@ -651,6 +684,23 @@ def spot_frames(paths, n=6, score=detail):
     return out
 
 
+def lens_fov(width, fx):
+    """The frames' HORIZONTAL field of view, degrees. The viewer applies a camera's fov to the longer side of the window
+    (horizontal on a laptop or a phone held sideways), so the vertical angle showed every spot zoomed in ~1.5x."""
+    return float(np.clip(np.degrees(2 * np.arctan(width / 2 / fx)), 10, 140))
+
+
+def look_inside(pos, d, lo, hi, look, margin=0.3, least=0.6):
+    """How far ahead of `pos` along `d` a spot's look target (and its marker in the room) goes: `look`, but never through the
+    room box: `margin` short of the wall it would hit, at least `least` so the view direction stays well defined."""
+    pos, d, lo, hi = (np.asarray(x, float) for x in (pos, d, lo, hi)); far = np.inf
+    for a in (0, 2):                                                                      # the walls (x, z); floor and ceiling do not limit it
+        if abs(d[a]) > 1e-6:
+            w = (hi[a] - pos[a]) / d[a] if d[a] > 0 else (lo[a] - pos[a]) / d[a]
+            if w > 0: far = min(far, w)
+    return float(max(least, min(look, far - margin))) if np.isfinite(far) else float(look)
+
+
 def respot(run, tour, examples):
     """Spots of a built tour moved to the exact filmed camera poses (their thumbnails), and the guided walk smoothed over at
     most 6 frames (owner, 1 Nov, house: spots 3-5 sat ~1 m off the walk, inside furniture). plan() smoothed the path over
@@ -658,26 +708,37 @@ def respot(run, tour, examples):
     <run>/full/level.json and the tour's plan.json / settings.json / overlay.json; checks first that the cameras rebuilt here
     reproduce the tour's own walk track (same normalisation as the trainer) before changing anything."""
     C, _ = colmap_cameras(f'{run}/sparse/0', examples)
+    from thin_model import read_model
+    _, cw, _, prm = next(iter(read_model(f'{run}/sparse/0')[0].values()))                    # the lens: horizontal fov of the frames
+    fov_h = lens_fov(cw, prm[0])
     M = np.array(json.load(open(f'{run}/full/level.json'))['matrix']); R, t = M[:3, :3], M[:3, 3]
     pl = json.load(open(f'{tour}/plan.json')); sc = pl['scale']; lo, hi = np.array(pl['box'][:3]), np.array(pl['box'][3:])
     st = json.load(open(f'{tour}/settings.json')); ov = json.load(open(f'{tour}/overlay.json'))
     cam = (C[:, :3, 3] @ R.T + t) * sc; fwd = C[:, :3, 2] @ R.T; fn = fwd / np.linalg.norm(fwd, axis=1, keepdims=True)
-    tr = st['animTracks'][0]; fov = tr['keyframes']['values']['fov'][0]; n = len(cam)
+    tr = st['animTracks'][0]; fov0 = tr['keyframes']['values']['fov'][0]; fov = fov_h; n = len(cam)
     keys = np.unique(np.linspace(0, n - 1, min(n, 120)).astype(int)); old = np.array(tr['keyframes']['values']['position']).reshape(-1, 3)
-    r0 = max(2, n // 60); err = float(np.abs(smooth(cam, r0)[keys] - old).max())                 # the track as plan() made it
-    assert len(keys) == len(old) and err < 0.01, f'cameras do not match the tour (max {err:.3f} m): not changed'
+    assert len(keys) == len(old), f'{len(old)} walk keys in the tour, {len(keys)} from the cameras: not changed'
+    # the track as plan() made it: the smoothing it wrote down, else the two it has ever used (n//60 before 1 Nov, capped at 6 since;
+    # 27 Nov: only n//60 was tried here, so tours of walks over 420 frames were never repaired)
+    r0, err = min(((q, float(np.abs(smooth(cam, q)[keys] - old).max())) for q in ([pl['smooth']] if pl.get('smooth') else [max(2, n // 60), max(2, min(6, n // 60))])), key=lambda e: e[1])
+    assert err < 0.01, f'cameras do not match the tour (max {err:.3f} m): not changed'
     look = 0.25 * float(np.linalg.norm(hi[[0, 2]] - lo[[0, 2]])); r = max(2, min(6, n // 60))
     cs = smooth(cam, r); fs = smooth(fwd, r); fs /= np.linalg.norm(fs, axis=1, keepdims=True)
-    P = lambda a, b, i: dict(position=[round(float(x), 4) for x in a[i]], target=[round(float(x), 4) for x in a[i] + look * b[i]], fov=round(fov, 1))
+    P = lambda a, b, i, d=None: dict(position=[round(float(x), 4) for x in a[i]], target=[round(float(x), 4) for x in a[i] + (d or look) * b[i]], fov=round(fov, 1))
     tr['keyframes']['values']['position'] = [float(x) for k in keys for x in P(cs, fs, k)['position']]
     tr['keyframes']['values']['target'] = [float(x) for k in keys for x in P(cs, fs, k)['target']]
+    tr['keyframes']['values']['fov'] = [round(fov, 1)] * len(keys)
+    for c_ in [a_['camera']['initial'] for a_ in st['annotations'] if a_.get('camera', {}).get('initial')] + [c_['initial'] for c_ in st.get('cameras', [])]: c_['fov'] = round(fov, 1)
     spots = pl.get('spots') or np.linspace(0, n - 1, 8).astype(int)[1:-1]; moved = []           # the frames plan() chose (spot_frames)
     for k, i in enumerate(spots):
-        a = st['annotations'][k]; e = P(cam, fn, i); moved.append(round(float(np.linalg.norm(np.array(a['camera']['initial']['position']) - cam[i])), 2))
+        a = st['annotations'][k]; e = P(cam, fn, i, look_inside(cam[i], fn[i], lo, hi, look)); moved.append(round(float(np.linalg.norm(np.array(a['camera']['initial']['position']) - cam[i])), 2))
         a['camera']['initial'] = e; a['position'] = e['target']; ov['spots'][k].update(x=float(cam[i][0]), z=float(cam[i][2]))
     json.dump(st, open(f'{tour}/settings.json', 'w')); json.dump(ov, open(f'{tour}/overlay.json', 'w'))
-    print('respot: track check', round(err, 4), 'm; spots moved (m):', moved, '; walk smoothing', r0, '->', r, flush=True)
-    return dict(check_m=err, moved_m=moved, smoothing=[r0, r])
+    pl['smooth'] = r; json.dump(pl, open(f'{tour}/plan.json', 'w'))
+    if os.path.exists(f'{tour}/tour.json'):
+        ti = json.load(open(f'{tour}/tour.json')); ti.update(fov=round(fov, 1), fov_kind='horizontal'); json.dump(ti, open(f'{tour}/tour.json', 'w'), indent=1)
+    print('respot: track check', round(err, 4), 'm; spots moved (m):', moved, '; walk smoothing', r0, '->', r, '; fov', fov0, '->', round(fov, 1), 'horizontal', flush=True)
+    return dict(check_m=err, moved_m=moved, smoothing=[r0, r], fov=[fov0, round(fov, 1)])
 
 
 def plan(examples, data, run, tour):
@@ -701,15 +762,18 @@ def plan(examples, data, run, tour):
     h = np.percentile(pts[:, 1], 99); lo[1], hi[1] = -0.05 * h, 1.05 * h
     E = euler_xyz(R @ F)                                                                   # file' = F E F p + F t  ->  E = R F
     spots = spot_frames(p.image_paths)                                                     # evenly spaced, none facing a bare wall
-    json.dump(dict(rotate=E.tolist(), translate=t.tolist(), scale=s, box=lo.tolist() + hi.tolist(), spots=spots), open(f'{tour}/plan.json', 'w'))
+    r = max(2, min(6, len(cam) // 60))                                                     # walk smoothing, <= 6: see respot
+    json.dump(dict(rotate=E.tolist(), translate=t.tolist(), scale=s, box=lo.tolist() + hi.tolist(), spots=spots, smooth=r), open(f'{tour}/plan.json', 'w'))
     room_collision(pts, h, f'{tour}/room_collision.glb')
     # cameras in room coordinates, in walk order (Parser sorts the frame names = video order)
-    K = p.Ks_dict[p.camera_ids[0]]; Wd, Hd = p.imsize_dict[p.camera_ids[0]]; fov = float(np.clip(np.degrees(2 * np.arctan(Hd / 2 / K[1, 1])), 10, 120))
-    r = max(2, min(6, len(cam) // 60)); cs, fs = smooth(cam, r), smooth(fwd, r); fs /= np.linalg.norm(fs, axis=1, keepdims=True)   # <= 6: see respot
+    K = p.Ks_dict[p.camera_ids[0]]; Wd, Hd = p.imsize_dict[p.camera_ids[0]]
+    fov = lens_fov(Wd, K[0, 0])                                                            # HORIZONTAL (27 Nov: the 1 Nov fix was lost in a revert)
+    cs, fs = smooth(cam, r), smooth(fwd, r); fs /= np.linalg.norm(fs, axis=1, keepdims=True)
     look = 0.25 * float(np.linalg.norm(hi[[0, 2]] - lo[[0, 2]]))                            # look-at distance ~ quarter of the room
     pose = lambda i: dict(position=[round(float(x), 4) for x in cs[i]], target=[round(float(x), 4) for x in cs[i] + look * fs[i]], fov=round(fov, 1))
     fn = fwd / np.linalg.norm(fwd, axis=1, keepdims=True)                                 # spots: the exact filmed pose, as their thumbnail
-    exact = lambda i: dict(position=[round(float(x), 4) for x in cam[i]], target=[round(float(x), 4) for x in cam[i] + look * fn[i]], fov=round(fov, 1))
+    exact = lambda i: dict(position=[round(float(x), 4) for x in cam[i]], fov=round(fov, 1),   # the marker (= target) never behind a wall
+                           target=[round(float(x), 4) for x in cam[i] + look_inside(cam[i], fn[i], lo, hi, look) * fn[i]])
     centre = (lo + hi) / 2; start = int(np.argmin(np.linalg.norm((cam - centre)[:, [0, 2]], axis=1)))   # nearest to the middle
     keys = np.unique(np.linspace(0, len(cam) - 1, min(len(cam), 120)).astype(int)); dur = round(len(cam) / 6.0, 1)
     frames = [int(round(k / (len(cam) - 1) * dur * 30)) for k in keys]                        # keyframe times are frame numbers
@@ -734,7 +798,7 @@ def plan(examples, data, run, tour):
     overlay = dict(floor=dict(x0=float(lo[0]), z0=float(lo[2]), px=px, w=Wp, h=Hp),
                    spots=[dict(title=a_['title'], x=float(cam[i][0]), z=float(cam[i][2]), thumb=f'thumbs/spot{n + 1}.jpg') for n, (i, a_) in enumerate(zip(spots, ann))], objects=oitems)
     json.dump(overlay, open(f'{tour}/overlay.json', 'w'))
-    info = dict(metres_per_unit=round(s, 4), frames=len(cam), start_frame=start, fov=round(fov, 1), room_box=[lo.round(3).tolist(), hi.round(3).tolist()], walk_seconds=dur, spots=len(spots), objects=len(oitems))
+    info = dict(metres_per_unit=round(s, 4), frames=len(cam), start_frame=start, fov=round(fov, 1), fov_kind='horizontal', eye_m=1.35, room_box=[lo.round(3).tolist(), hi.round(3).tolist()], walk_seconds=dur, spots=len(spots), objects=len(oitems))
     json.dump(info, open(f'{tour}/tour.json', 'w'), indent=1); print('TOUR PLAN', json.dumps(info), flush=True)
     return info
 
@@ -883,8 +947,10 @@ def patch_js(js):
     return re.sub(r'WALK_MIN_HORIZONTAL_RANGE\s*=\s*5\b', 'WALK_MIN_HORIZONTAL_RANGE = 2', js)
 
 
-def head(html, fmt, bud=4):
-    """The viewer start options, put first in <head>. Also used to update a published tour's page (tour_publish.py head)."""
+def head(html, fmt, bud=4, levels=False):
+    """The viewer start options, put first in <head>. Also used to update a published tour's page (tour_publish.py head).
+    levels: the viewer has quality levels (1.42: localStorage 'quality' = performance / default / high); older ones (1.37-1.41)
+    only have 'performanceMode' (half resolution). viewer_levels(index.js) tells which."""
     html = re.sub(r'\n    <script>\(function\(\)\{var q=new URLSearchParams.*?</script>(<style>body:not\(\.namma-ready\).*?</script>)?', '',
                   html, count=1)                                                         # an earlier version
     # streamed LOD: no fixed budget (the viewer sizes it for the device), but 'fullload': the loading screen stays until full
@@ -893,13 +959,27 @@ def head(html, fmt, bud=4):
     # Collision geometry overlay is opt-in: leave it off unless a visitor explicitly asks for it.
     # This avoids showing the collision volume on first load across desktop and mobile browsers.
     pre += 'if(!q.has("showcollision"))q.set("showcollision","0");'
-    # NAMMA default: Performance quality + Performance Mode on for every device. Bump the marker so
-    # visitors who previously received the Android-only default also get the updated setting once.
-    # Touch devices still get gaming controls; desktop keyboard/mouse controls remain unchanged.
-    pre += ('try{if(localStorage.getItem("nammaQ")!=="4"){var m=/Mobi|Android|iPhone|iPad/.test(navigator.userAgent)||'
-            '(navigator.maxTouchPoints>1&&/Macintosh/.test(navigator.userAgent));localStorage.setItem("quality","performance");'
-            'localStorage.setItem("performanceMode","true");if(m)localStorage.setItem("gamingControls","true");'
-            'localStorage.setItem("controlsPanelOpen","false");localStorage.setItem("nammaQ","4");}}catch(e){}')   # one help card: ours
+    # Picture quality by device (owner, 27 Nov: "small devices cant handle this so for them quality can be reduced by default ...
+    # by default it should be balanced for all devices"). Until now EVERY device got the lowest setting (performance mode =
+    # half resolution; measured on the live switch-room tour: a 3024x1724 screen drew 1512x862). Three levels:
+    #   low       half resolution                          phones with <= 4 GB or <= 4 cores
+    #   balanced  full resolution, high precision          other phones and tablets, small laptops
+    #   high      the same + the viewer's 'high' level      desktops / laptops with >= 8 cores
+    # 'auto' (default) = the device's level, lowered by the page itself if the frame rate stays low (OVERLAY: governor, kept
+    # for the browser session). The visitor's own choice (Settings > Picture quality, or ?q=low|balanced|high|auto) is kept
+    # in localStorage 'nammaLevel'. Touch devices still get gaming controls; one help card: ours.
+    pre += ('var L="balanced",P="auto",D="balanced",M=false;try{var ls=localStorage,ua=navigator.userAgent;'
+            'M=/Mobi|Android|iPhone|iPad/.test(ua)||(navigator.maxTouchPoints>1&&/Macintosh/.test(ua));'
+            'var mem=navigator.deviceMemory||8,co=navigator.hardwareConcurrency||4;'
+            'D=M?((mem<=4||co<=4)?"low":"balanced"):((co>=8&&mem>=8)?"high":"balanced");'
+            'P=q.get("q")||ls.getItem("nammaLevel")||"auto";if(!/^(auto|low|balanced|high)$/.test(P))P="auto";'
+            'if(q.get("q")&&P!==ls.getItem("nammaLevel")){ls.setItem("nammaLevel",P);sessionStorage.removeItem("nammaAuto");}'
+            'L=P==="auto"?(sessionStorage.getItem("nammaAuto")||D):P;if(!/^(low|balanced|high)$/.test(L))L=D;'
+            'ls.setItem("quality",{low:"performance",balanced:"default",high:"high"}[L]);'
+            'ls.setItem("performanceMode",(L==="low"&&!%s)?"true":"false");'
+            'if(ls.getItem("nammaQ")!=="5"){if(M)ls.setItem("gamingControls","true");ls.setItem("controlsPanelOpen","false");ls.setItem("nammaQ","5");}'
+            '}catch(e){}window.nammaQuality={pick:P,level:L,device:D,mobile:M,levels:%s};q.delete("q");'
+            'if(!q.has("hpr"))q.set("hpr",L==="low"?"0":"1");') % (('true', 'true') if levels else ('false', 'false'))
     # The viewer draws the room while it streams in (pieces popping in behind the loading bar); hide the 3D view until the
     # viewer reports it loaded (all detail in, with fullload), at most 2 min; dark meanwhile. Owner, 31 Oct: a clear loading
     # state in the centre of the screen -> our spinner + the viewer's own percent, until loaded; a hint if it stalls.
@@ -925,8 +1005,13 @@ def head(html, fmt, bud=4):
     html = re.sub(r'("collisionUrl"\s*:\s*")\./collision\.glb(?:\?[^"]*)?(")',
                   lambda m: m.group(1) + f'./collision.glb?v={cache}' + m.group(2), html, count=1)
     return html.replace('<head>', '<head>\n    <script>(function(){var q=new URLSearchParams(location.search);' + pre +
-                        'if(!q.has("hpr"))q.set("hpr","1");history.replaceState(null,"",location.pathname+"?"+q.toString()+location.hash);})();</script>' +
+                        'history.replaceState(null,"",location.pathname+"?"+q.toString()+location.hash);})();</script>' +
                         cover, 1)
+
+
+def viewer_levels(js):
+    """True if this viewer script (index.js) has quality levels (1.42+), False for the older ones with performance mode only."""
+    return bool(re.search(r"""['"]quality['"]""", js)) and 'performance' in js and bool(re.search(r"""['"]high['"]""", js))
 
 
 def build(run, tour, public, st='npx --no-install splat-transform'):
@@ -986,7 +1071,7 @@ def build(run, tour, public, st='npx --no-install splat-transform'):
     html = open(f'{public}/index.html').read(); a = html.index('id="sse-bootstrap">') + len('id="sse-bootstrap">'); c = html.index('</script>', a)
     html = (html[:a] + '\n' + json.dumps(boot) + '\n        ' + html[c:]).replace('<title>SuperSplat Viewer</title>', '<title>NAMMA 3D tour</title>')
     nsp = len(v) - int(bad.sum()); bud = max(4, int(np.ceil(nsp / 1e6)) + 1)                 # the viewer's splat budget, millions
-    html = head(html, fmt, bud)
+    html = head(html, fmt, bud, viewer_levels(js))
     html = html.replace("createViewer({ container: document.body, settings, ...options });",
                         "window.viewer = await createViewer({ container: document.body, settings, ...options });")
     if os.path.exists(f'{tour}/overlay.json'): html = overlay(html)
