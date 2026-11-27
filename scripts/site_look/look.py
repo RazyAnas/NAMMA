@@ -2,7 +2,8 @@
 URLS.txt: one start URL per line. For each: full-page screenshot, page text, all links; links that look like tours/demos are
 opened too (up to MAX_TOURS): screenshot after load, then after dragging / pressing keys to move, so the viewer quality shows.
 Everything goes to out/ (+ the private HF dataset <user>/namma-v3-out/site_look/<time>/ if HF_TOKEN is set). Public pages only."""
-import json, os, re, time
+import json, os, re, sys, time
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__))); import view_check   # zoom + direction of a spot view (27 Nov)
 from playwright.sync_api import sync_playwright
 OUT = 'out'; os.makedirs(OUT, exist_ok=True); MAX_TOURS = int(os.environ.get('MAX_TOURS', 4))
 urls = [u.strip() for u in open(os.path.join(os.path.dirname(__file__), 'URLS.txt')) if u.strip() and not u.startswith('#')]
@@ -19,6 +20,8 @@ if os.environ.get('TOUR_RUN'):           # our own tour: link read from the priv
 hide = lambda x: x.replace(SECRET, '<folder>') if SECRET else x
 
 CAM = 'window.app ? (() => { const c = window.app.root.findComponents("camera")[0]; if (!c) return null; const p = c.entity.getPosition(); return [p.x, p.y, p.z].map(v => Math.round(v * 100) / 100); })() : null'
+
+FWD = 'window.app ? (() => { const c = window.app.root.findComponents("camera")[0]; if (!c) return null; const f = c.entity.forward; return [f.x, f.y, f.z]; })() : null'
 
 def shot(page, name):
     try: page.screenshot(path=f'{OUT}/{name}.jpg', type='jpeg', quality=85, timeout=240000); print('shot', name, flush=True)
@@ -115,6 +118,15 @@ def assert_tour(page, url, rec, k):
             v = view_shot(page, f'{OUT}/tour{k}_v{i + 1}.jpg'); m = match(v, th, fv, ff)
             r = dict(spot=i + 1, match=round(m, 3), camera=cam)
             if m < 0.6: fails.append(f"spot {i + 1}: the view does not show its photo (match {m:.2f} < 0.6)")
+            # 27 Nov: the match above compares only what view and photo share, so a 1.6x zoomed view passed for weeks, and nothing
+            # looked at the direction. Both are warnings for now (reported, the publish is not rolled back) until they have run on
+            # a few tours.
+            try:
+                ini = st['annotations'][i]['camera']['initial']; zw = view_check.zoom_wrong(v, th, fv, ff); r['zoom'] = view_check.zoom(v, th, fv, ff)[0]
+                if zw: warns.append(f'spot {i + 1}: {zw}')
+                fw = page.evaluate(FWD); r['off_deg'] = round(view_check.off_direction(ini['position'], ini['target'], fw), 1) if fw else None
+                if fw and r['off_deg'] > 5: warns.append(f"spot {i + 1}: the camera looks {r['off_deg']} deg away from the spot's direction")
+            except Exception as e: r['view_check_error'] = str(e)[:120]
             try:                                                                            # walk mode right there
                 page.evaluate("window.viewer.toggleWalk ? window.viewer.toggleWalk() : (window.viewer.state.cameraMode = 'walk')")
                 still(page, 40); w = view_shot(page, f'{OUT}/tour{k}_w{i + 1}.jpg'); ratio = sharp(w) / max(sharp(v), 1e-6)
