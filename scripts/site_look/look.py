@@ -16,7 +16,7 @@ for u in list(urls):                     # URLS.txt line 'namma <run> [url file]
 if os.environ.get('TOUR_RUN'):           # our own tour: link read from the private results dataset, never printed (public logs)
     from huggingface_hub import hf_hub_download
     t = open(hf_hub_download('anasrazy/namma-v3-out', f"{os.environ['TOUR_RUN']}/{os.environ.get('TOUR_URL_NAME') or 'tour_url.txt'}", repo_type='dataset', token=os.environ['HF_TOKEN'])).read().strip()
-    SECRET = t.split('/')[-2]; urls = ['tour ' + t + '?webgl']
+    SECRET = t.split('/')[-2]; urls = ['tour ' + t + '?webgl&q=low']   # q=low: half resolution, as every tour was drawn until 27 Nov (software WebGL here is slow at full size)
 hide = lambda x: x.replace(SECRET, '<folder>') if SECRET else x
 
 CAM = 'window.app ? (() => { const c = window.app.root.findComponents("camera")[0]; if (!c) return null; const p = c.entity.getPosition(); return [p.x, p.y, p.z].map(v => Math.round(v * 100) / 100); })() : null'
