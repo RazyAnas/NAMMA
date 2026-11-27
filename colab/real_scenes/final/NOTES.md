@@ -256,3 +256,9 @@ tour (`20261116-2207`) in Chrome on a 1512 x 862 window, device pixel ratio 2:
 - `v3/site_tail.py` (SITE_JOB=1): the Kaggle job builds the tour (Node 22 installed in the kernel) and publishes it to the
   visitor's own Hugging Face account, then writes `status.json` done + link and a row in `library.json`. `run.py` takes
   `SOURCE=hf:<repo>:<job>/video.json`. Tested with fakes only; not yet run on Kaggle.
+- Trial 2 (`PUBLISH.json` n 49, copy `tour_lod` of the fast tour, viewer 1.42, streamed format): built in 3 min 52 s on the
+  GitHub runner, 57.7 MB in 250 files (the single file is 54 MB), levels 884,976 / 265,493 / 88,498 / 26,549 splats, all 3
+  colour bands. Live check passed: the six spots match their photos 0.86-0.97, zoom 1.0, direction 0.0 deg, walk views
+  sharp (0.99-1.18). So the page code, respot (fov 43.5 -> 71.4) and the new view checks work on viewer 1.42. Not yet
+  done: a look at it on a real small phone, and its picture against the single file in dB (`tour-fidelity`), so the
+  single file stays the default (`TOUR_FORMAT`).
