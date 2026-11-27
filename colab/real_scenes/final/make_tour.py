@@ -352,6 +352,8 @@ OVERLAY = """<style>
         if (t0 <= t1 && t0 < bt) { bt = t0; best = x; } });
       if (!best) { card.style.display = 'none'; return; }
       card.innerHTML = row(best); card.style.display = 'flex'; card.onclick = () => { go(best.i); card.style.display = 'none'; };
+      { const ev = window.viewer && window.viewer.events;                                      // one meaning per tap (27 Nov): a tap on a thing shows what it
+        if (ev) [0, 60, 400].forEach((ms) => setTimeout(() => { try { ev.fire('navigateCancel'); } catch (x) {} }, ms)); }   // is; it no longer also walks there
       card.style.left = Math.min(e.clientX + 12, innerWidth - 270) + 'px'; card.style.top = Math.min(e.clientY + 12, innerHeight - 70) + 'px';
     });
   }
