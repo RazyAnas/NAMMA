@@ -691,3 +691,25 @@ voxels beside the object layer on the second T4. Code: `final/fast_patch.py`, `f
 stored frames), `v3/FASTRUN.json` + workflow `fast` (a video end to end); both start on a push to this branch only.
 Measured on the switch room: 55 min on Kaggle from video to model, mesh and objects (5.8 h before), training 17.6 min,
 29.12 dB exposure-fair / SSIM 0.938 (30.59 / 0.951 before). Tables and open points: `final/NOTES.md`, "Fast training".
+
+## Website, device quality, preset quality (27 Nov, branch `claude/fast-train`, not merged)
+**Website** (owner: "a full website where people can upload their work use their own api keys ... library and public works"):
+- Live: the static Space `<user>/namma` (`site/`, plain HTML / CSS / ES modules, no build step, no outside scripts). Deploy:
+  workflow `site` on a push under `site/` (`scripts/site_deploy.py`): it lists the tour Spaces named in
+  `site/gallery.src.json`, writes `gallery.json` (title, cover, splats, area; a run can be hidden with `"public": false`)
+  and uploads the folder. The stock viewer for uploaded splat files goes to its own Space `<user>/namma-viewer`.
+- No server. Sign-in is Hugging Face OAuth (PKCE) in the page; each person's data is in their own account: private datasets
+  `namma-inbox` (video parts, the app's format) and `namma-v3-out` (results + `library.json`), public Space `namma-tour`.
+  Their Kaggle key stays in the browser and goes only to Kaggle. The page pushes a private Kaggle notebook
+  (`site/js/api/boot.js`) that runs `v3/run.py` with `SITE_JOB=1`; `v3/site_tail.py` builds and publishes the tour there.
+  Contract and protocols: `site/api.md`.
+- Proven: the pages, the gallery of the owner's 15 tours, the sign-in redirect to Hugging Face, the viewer Space opening a
+  splat file. NOT yet proven with real accounts: sign-in back to the site, video upload from the browser, the Kaggle start
+  from a page, the in-Kaggle tour build (Node 22 there), gallery submissions (pull requests on `<user>/namma-gallery`).
+- Limits said on the site: link-only tours are not private (a public Space's folders can be listed); the person's 8-hour
+  sign-in token is placed in their own private Kaggle notebook (Kaggle has no way to set secrets from outside).
+**Tour page**: see NOTES "The tour page lowered the picture for everyone". Trials are started by hand:
+`gh workflow run "tour publish" --ref claude/fast-train` with this branch's `v3/PUBLISH.json` (`from` / `dst` / `url_name`
+= a copy under its own link).
+**Preset `quality`**: `PIPELINE.json`; first run = `FASTRUN.json` n 2. Numbers in NOTES "Preset quality".
+
