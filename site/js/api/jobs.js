@@ -55,9 +55,18 @@ function siteBase() {
   const loc = globalThis.window?.location;
   return loc && loc.origin ? loc.origin + loc.pathname.replace(/[^/]*$/, '') : '';
 }
+// The splat viewer lives in a Space of its own, <site Space>-viewer (scripts/site_deploy.py), never on the site's origin: a
+// page here can read the signed-in visitor's tokens, and a viewer opens files and settings other people made.
+function viewerBase() {
+  const loc = globalThis.window?.location;
+  return loc && /\.static\.hf\.space$/.test(loc.host || '') ? `https://${loc.host.replace(/\.static\.hf\.space$/, '-viewer.static.hf.space')}/` : '';
+}
 function fullUrl(url) {
   if (!url) return url || null;
-  try { return new URL(url, siteBase() || undefined).href; } catch { return url; }
+  try {
+    if (/^viewer\//.test(url) && viewerBase()) return new URL(url.slice(7), viewerBase()).href;
+    return new URL(url, siteBase() || undefined).href;
+  } catch { return url; }
 }
 
 async function pool(items, size, fn) {

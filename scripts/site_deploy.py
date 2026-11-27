@@ -224,8 +224,46 @@ def stage_site(site_dir, gallery, dst, viewer=None):
     return dst
 
 
+VIEWER_SETTINGS = dict(version=2, tonemapping='none', highPrecisionRendering=False, background=dict(color=[0.08, 0.08, 0.09]),
+                       postEffectSettings=dict(sharpness=dict(enabled=False, amount=0), bloom=dict(enabled=False, intensity=0.1, blurLevel=2),
+                                               grading=dict(enabled=False, brightness=1, contrast=1, saturation=1, tint=[1, 1, 1]),
+                                               vignette=dict(enabled=False, intensity=0.5, inner=0.3, outer=0.75, curvature=1),
+                                               fringing=dict(enabled=False, intensity=0.5)),
+                       animTracks=[], cameras=[dict(initial=dict(position=[0, 1, -3], target=[0, 0, 0], fov=60))], annotations=[], startMode='default')
+VIEWER_README = ('---\ntitle: NAMMA viewer\nemoji: 🧊\ncolorFrom: gray\ncolorTo: gray\nsdk: static\npinned: false\n---\n\n'
+                 'Shows a splat file people uploaded on the NAMMA site: index.html?content=<address of the file>. No sign-in, nothing stored.\n')
+
+
+def stage_viewer(viewer, dst):
+    """The stock SuperSplat viewer (the package's public/ folder) as its own page: the file to show comes from ?content=,
+    the settings are a plain default (settings.json). Tours have their own page (make_tour.py); this is for single files."""
+    assert os.path.isfile(os.path.join(viewer, 'index.html')), f'{viewer}: no index.html'
+    shutil.copytree(viewer, dst, dirs_exist_ok=True)
+    p = Path(dst) / 'index.html'; html = p.read_text(encoding='utf-8'); mark = 'id="sse-bootstrap">'
+    if mark in html:
+        a = html.index(mark) + len(mark); c = html.index('</script>', a)
+        html = html[:a] + '\n' + json.dumps(dict(settingsUrl='./settings.json')) + '\n        ' + html[c:]
+    p.write_text(html.replace('<title>SuperSplat Viewer</title>', '<title>NAMMA viewer</title>'), encoding='utf-8')
+    (Path(dst) / 'settings.json').write_text(json.dumps(VIEWER_SETTINGS), encoding='utf-8')
+    (Path(dst) / 'README.md').write_text(VIEWER_README, encoding='utf-8')
+    return dst
+
+
+def deploy_viewer(api, user, viewer, space='namma', say=print):
+    """<user>/<space>-viewer: a Space of its own, so the viewer never shares an origin (and so the visitor's tokens) with the site."""
+    repo = f'{user}/{space}-viewer'
+    api.create_repo(repo, repo_type='space', space_sdk='static', private=False, exist_ok=True)
+    with tempfile.TemporaryDirectory() as tmp:
+        api.upload_folder(folder_path=stage_viewer(viewer, os.path.join(tmp, 'viewer')), repo_id=repo, repo_type='space', delete_patterns='*',
+                          commit_message='Viewer for uploaded splat files')
+    say('viewer deployed:', space_url(repo)); return repo
+
+
 def deploy(api, user, site_dir, gallery, space='namma', force=False, make_gallery_repo=False, viewer=None, say=print):
     repo = f'{user}/{space}'
+    if viewer:
+        try: deploy_viewer(api, user, viewer, space, say)
+        except Exception as e: say(f'viewer not deployed ({type(e).__name__}: {str(e)[:120]}): uploaded splat files cannot be opened yet')
     api.create_repo(repo, repo_type='space', space_sdk='static', private=False, exist_ok=True)
     if make_gallery_repo: api.create_repo(f'{user}/{GALLERY_REPO}', repo_type='dataset', private=False, exist_ok=True)
     have = set(api.list_repo_files(repo, repo_type='space'))
@@ -233,7 +271,7 @@ def deploy(api, user, site_dir, gallery, space='namma', force=False, make_galler
     if 'gallery.src.json' not in have and have - FRESH_SPACE and not force:
         raise SystemExit(f'The Space {space} already holds files that are not this site. Nothing was changed. Use --force to replace them.')
     with tempfile.TemporaryDirectory() as tmp:
-        stage = stage_site(site_dir, gallery, os.path.join(tmp, 'site'), viewer=viewer)
+        stage = stage_site(site_dir, gallery, os.path.join(tmp, 'site'))
         api.upload_folder(folder_path=stage, repo_id=repo, repo_type='space', delete_patterns='*',
                           commit_message=f"Site deploy, {len(gallery['entries'])} tours in the gallery")
     try: api.update_repo_settings(repo, repo_type='space', private=False)

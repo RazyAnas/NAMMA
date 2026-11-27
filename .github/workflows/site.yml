@@ -33,4 +33,6 @@ jobs:
       - name: Checks of the site (JS syntax, only local files, no HTML built from strings, gallery logic)
         run: python -m pytest -q --confcutdir=tests/v3 tests/v3/test_site.py -p no:cacheprovider
       - name: Deploy the site and its gallery
-        run: python scripts/site_deploy.py --make-gallery-repo
+        run: |
+          npm init -y >/dev/null && npm i -s --no-audit --no-fund @playcanvas/supersplat-viewer@1.42.0 | tail -1
+          python scripts/site_deploy.py --make-gallery-repo --viewer node_modules/@playcanvas/supersplat-viewer/public

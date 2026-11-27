@@ -1,6 +1,7 @@
 """The website (site/) and its deploy script (scripts/site_deploy.py). Cheap checks, no network, no browser:
 every JS file parses (node --check, when node is installed), the page loads only its own local files, no HTML is ever built
 from a string that is not a literal (sign-in and Kaggle keys live in the page), and the gallery / deploy logic against a fake Hub."""
+import os
 import importlib.util, json, re, shutil, subprocess
 from datetime import datetime, timezone
 from html.parser import HTMLParser
@@ -296,7 +297,9 @@ def test_deploy_uploads_the_site_with_its_gallery(hub):
 def test_deploy_can_add_a_built_viewer(hub, tmp_path):
     v = tmp_path / 'viewer'; v.mkdir(); (v / 'index.html').write_text('<!doctype html>'); (v / 'index.js').write_text('1')
     site_deploy.deploy(hub, 'Some.User', str(SITE), dict(generated='now', entries=[]), viewer=str(v), say=lambda *a: None)
-    assert 'viewer/index.html' in hub.uploaded and 'viewer/index.js' in hub.uploaded and 'index.html' in hub.uploaded
+    assert [c for c in hub.calls if c[0] == 'create_repo' and c[1] == 'Some.User/namma-viewer'], 'the viewer goes to a Space of its own'
+    st = site_deploy.stage_viewer(str(v), str(tmp_path / 'staged')); assert {'index.html', 'index.js', 'settings.json', 'README.md'} <= set(os.listdir(st))
+    assert not [n for n in hub.uploaded if n.startswith('viewer/')], 'the viewer never shares the site origin'
     site_deploy.deploy(hub, 'Some.User', str(SITE), dict(generated='now', entries=[]), say=lambda *a: None)
     assert not [n for n in hub.uploaded if n.startswith('viewer/')], 'no viewer unless one is given'
 

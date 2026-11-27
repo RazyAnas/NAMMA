@@ -654,7 +654,7 @@ test('library, uploadSplat, setVisibility, remove', async () => {
   const bytes = randomBytes(3000);
   const entry = await jobs.uploadSplat(new File([bytes], 'my room (1).ply'), { title: 'Room' });
   const content = `${HUB}/spaces/${USER}/namma-tour/resolve/main/splats/${entry.id}/my_room_1_.ply`;
-  assert.equal(entry.url, `https://owner-namma.static.hf.space/viewer/index.html?content=${encodeURIComponent(content)}`);
+  assert.equal(entry.url, `https://owner-namma-viewer.static.hf.space/index.html?content=${encodeURIComponent(content)}`);   // its own Space, not the site's origin
   assert.deepEqual(net.files('space', `${USER}/namma-tour`).get(`splats/${entry.id}/my_room_1_.ply`).lfs, { oid: sha(bytes), size: 3000 });
   const [saved] = net.json('dataset', `${USER}/namma-v3-out`, 'library.json');
   assert.deepEqual(saved, {
