@@ -1,0 +1,83 @@
+/* NAMMA demo viewer — places, search, 3D help cards, floor-plan minimap, how-to and AR, styled like the production tour
+   (make_tour.py): Arial, panels of ~50% black + 20px blur, 16px corners, orange accent. pl- prefixed. */
+:root{--pl-text:#e0dcdd;--pl-light:#fff;--pl-dim:#aaa;--pl-acc:#e8a96b;--pl-help:#ffd36b;--pl-panel:rgba(0,0,0,.5);--pl-line:rgba(255,255,255,.08)}
+.pl-panel{background:var(--pl-panel);backdrop-filter:blur(20px);-webkit-backdrop-filter:blur(20px);border:1px solid var(--pl-line);color:var(--pl-text);border-radius:16px}
+.pl-btn{appearance:none;border:0;cursor:pointer;color:var(--pl-text);background:transparent;font:inherit}
+.pl-pill{height:34px;padding:0 18px;border:1px solid var(--pl-line);border-radius:9px;background:rgba(255,255,255,.05);color:var(--pl-dim);cursor:pointer;font:13px Arial,sans-serif;transition:background-color .2s,color .2s}
+.pl-pill:hover,.pl-pill.on{background:rgba(255,255,255,.1);color:var(--pl-light)}
+.pl-pill.warn:hover{background:rgba(255,120,120,.22);color:#fff}
+
+/* pins floating over the 3D view */
+#pl-pins{position:fixed;inset:0;z-index:9;pointer-events:none;overflow:hidden}
+.pl-pin{position:absolute;left:0;top:0;transform:translate(-9999px,0);display:flex;flex-direction:column;align-items:center;gap:3px;pointer-events:auto;cursor:pointer;border:0;background:none;padding:0;color:#fff;font:bold 12px Arial,sans-serif;will-change:transform}
+.pl-pin i{display:block;width:20px;height:20px;border-radius:50% 50% 50% 0;transform:rotate(-45deg);background:var(--pl-acc);border:2px solid #fff;box-shadow:0 2px 6px rgba(0,0,0,.5)}
+.pl-pin.help i{background:var(--pl-help);border-radius:50%;transform:none;position:relative}
+.pl-pin.help i::after{content:'?';position:absolute;inset:0;display:flex;align-items:center;justify-content:center;color:#3a2a10;font:900 14px Arial,sans-serif}
+.pl-pin span{order:-1;padding:2px 7px;border-radius:8px;background:rgba(0,0,0,.6);white-space:nowrap;max-width:160px;overflow:hidden;text-overflow:ellipsis}
+.pl-pin.far span{display:none}
+.pl-pin.sel i{outline:2px solid #fff;outline-offset:2px}
+
+/* the 3D help menu card, anchored above its help pin */
+#pl-card{position:fixed;left:0;top:0;z-index:12;display:none;flex-direction:column;gap:6px;width:min(300px,86vw);max-height:46vh;padding:12px 14px;pointer-events:auto;transform:translate(-9999px,0)}
+#pl-card h2{margin:0;padding-right:22px;font:700 15px Arial,sans-serif}
+#pl-card .bd{margin:0;overflow:auto;font:13px/1.45 Arial,sans-serif;white-space:pre-wrap;-webkit-user-select:text;user-select:text}
+#pl-card .x{position:absolute;top:7px;right:8px;width:22px;height:22px;border-radius:7px;color:var(--pl-dim);font-size:16px;line-height:20px}
+#pl-card .x:hover{color:#fff;background:rgba(255,255,255,.1)}
+#pl-card::after{content:'';position:absolute;left:24px;bottom:-9px;width:16px;height:16px;background:inherit;border:inherit;border-top:0;border-left:0;transform:rotate(45deg)}
+
+/* search (bottom centre, like the tour) */
+#pl-find{position:fixed;left:50%;bottom:22px;transform:translateX(-50%);z-index:11;width:min(440px,92vw);display:flex;flex-direction:column;gap:6px}
+#pl-find input{width:100%;height:42px;padding:0 16px;border-radius:14px;border:1px solid var(--pl-line);background:var(--pl-panel);backdrop-filter:blur(20px);-webkit-backdrop-filter:blur(20px);color:var(--pl-text);font:14px Arial,sans-serif;outline:none}
+#pl-find input::placeholder{color:var(--pl-dim)}
+#pl-hits{display:flex;flex-direction:column;gap:5px;max-height:40vh;overflow:auto}
+#pl-hits button{display:flex;align-items:center;gap:10px;padding:8px 12px;text-align:left;border-radius:10px;cursor:pointer;color:var(--pl-text)}
+#pl-hits button:hover,#pl-hits button.on{background:rgba(255,255,255,.08)}
+#pl-hits .tag{margin-left:auto;font-size:11px;color:var(--pl-dim);text-transform:capitalize}
+#pl-hits .dot{width:9px;height:9px;border-radius:50%;background:var(--pl-acc);flex:none}
+#pl-hits .dot.help{background:var(--pl-help)}
+#pl-hits .empty{padding:8px 12px;color:var(--pl-dim);font-size:13px}
+
+/* floor-plan minimap (top-left, like the tour) */
+#pl-plan{position:fixed;left:16px;top:16px;z-index:10;width:232px;overflow:hidden;padding:0}
+#pl-plan .wrap{position:relative;background:rgba(0,0,0,.35)}
+#pl-plan svg{display:block;width:100%;height:auto}
+#pl-plan .bar{display:flex;align-items:center;justify-content:space-between;padding:7px 10px;font:12px Arial,sans-serif;color:var(--pl-dim);border-top:1px solid var(--pl-line)}
+#pl-plan .floor{fill:rgba(255,255,255,.1);stroke:rgba(255,255,255,.22);stroke-width:.6}
+#pl-plan .poi{fill:var(--pl-acc);stroke:#fff;stroke-width:1.1}
+#pl-plan .poi.help{fill:var(--pl-help)}
+#pl-plan .me{fill:var(--pl-acc);stroke:#fff;stroke-width:1.2}
+#pl-plan .cone{fill:var(--pl-acc);opacity:.45}
+
+/* AR button (top-right, visual parity with the tour) */
+#pl-ar{position:fixed;right:16px;top:16px;z-index:10;display:flex;align-items:center;gap:7px;height:44px;padding:0 15px;border-radius:14px;font:600 14px Arial,sans-serif;color:var(--pl-text);cursor:pointer}
+#pl-ar svg{display:block}
+
+/* how-to card, shown once on entry */
+#pl-howto{position:fixed;inset:0;z-index:30;display:none;align-items:center;justify-content:center;background:rgba(0,0,0,.45)}
+#pl-howto .box{width:min(380px,90vw);max-height:86vh;overflow:auto;padding:22px 24px;position:relative}
+#pl-howto h1{margin:0 0 2px;font:700 20px Arial,sans-serif;color:var(--pl-light)}
+#pl-howto p.sub{margin:0 0 16px;color:var(--pl-dim);font:14px Arial,sans-serif}
+#pl-howto h3{margin:16px 0 8px;font:700 12px Arial,sans-serif;letter-spacing:.08em;text-transform:uppercase;color:var(--pl-acc)}
+#pl-howto .row{display:flex;justify-content:space-between;align-items:center;gap:12px;padding:5px 0;font:14px Arial,sans-serif}
+#pl-howto .row span:last-child{color:var(--pl-dim)}
+#pl-howto .keys{display:flex;gap:4px}
+#pl-howto kbd{min-width:22px;height:22px;padding:0 6px;display:inline-flex;align-items:center;justify-content:center;border-radius:5px;border:1px solid rgba(255,255,255,.18);background:rgba(255,255,255,.08);color:var(--pl-light);font:12px Arial,sans-serif}
+#pl-howto .go{margin-top:20px;width:100%;height:44px;border-radius:12px;background:rgba(255,255,255,.1);border:1px solid var(--pl-line);color:var(--pl-light);font:15px Arial,sans-serif;cursor:pointer}
+#pl-howto .go:hover{background:rgba(255,255,255,.16)}
+
+/* admin */
+#pl-admin{position:fixed;left:16px;top:270px;z-index:13;width:232px;max-height:66vh;overflow:auto;display:flex;flex-direction:column;gap:10px;padding:14px}
+#pl-admin h1{margin:0;font:700 15px Arial,sans-serif;display:flex;justify-content:space-between;align-items:center}
+#pl-admin small{color:var(--pl-acc);font-weight:400;font-size:12px}
+#pl-admin label{display:flex;flex-direction:column;gap:4px;font:12px Arial,sans-serif;color:var(--pl-dim)}
+#pl-admin input,#pl-admin textarea,#pl-admin select{width:100%;padding:7px 9px;border-radius:9px;border:1px solid var(--pl-line);background:rgba(0,0,0,.25);color:var(--pl-text);font:13px Arial,sans-serif;outline:none;resize:vertical}
+#pl-admin textarea{min-height:56px}
+#pl-admin .row{display:flex;gap:8px;flex-wrap:wrap}
+#pl-list{display:flex;flex-direction:column;gap:5px}
+#pl-list button{display:flex;justify-content:space-between;gap:8px;padding:7px 9px;text-align:left;border-radius:8px;cursor:pointer;font:13px Arial,sans-serif;color:var(--pl-text)}
+#pl-list button:hover,#pl-list button.on{background:rgba(255,255,255,.08)}
+#pl-list small{color:var(--pl-dim)}
+#pl-admin .hint{font:12px/1.4 Arial,sans-serif;color:var(--pl-dim);margin:0}
+body.pl-aim #pl-aim-ring{display:block}
+#pl-aim-ring{display:none;position:fixed;left:50%;top:50%;z-index:14;width:34px;height:34px;margin:-17px 0 0 -17px;border:2px solid var(--pl-help);border-radius:50%;pointer-events:none;box-shadow:0 0 0 2px rgba(0,0,0,.4)}
+#pl-aim-ring::after{content:'';position:absolute;inset:14px;border-radius:50%;background:var(--pl-help)}

@@ -581,3 +581,104 @@ check + the coverage line, then name and upload; `meta.json` gets `camera.mode: 
 - Also fixed: the recorder's text and `meta.json` now say what stabilisation really is (it has been ON since commit 3d95ed9 while
   both said off: decide which you want, the capture guide says off); Android 15+ insets; `quality_samples.columns` matches the rows.
 
+
+## Floor plan: a closed outline (17 Nov, branch `claude/smart-budget-poi`)
+Owner, on the switch room (app job `20261116-132659-2f21`, run `20261116-2207`): "this room is nearly rectangular but our model
+is making the floor plan weirdly", fix it without retraining. Cause: `walls2d` ran a line detector on the splats between 55 and
+92 % of the room height. In that room the band is full of cable trays, every tray became a wall, and nothing made the pieces a
+room (12 loose pieces, some crossing). The same `walls.json` feeds walk collision, the route grid and "behind a wall" on the
+route, so the wrong walls also blocked walking.
+New `make_tour.walls_cells` (replaces `walls2d`; nothing else is retrained or rebuilt):
+- wall = a 5 cm cell where at least 5 of 8 height slices (0.3 m to 0.9 x height) hold splats and one of the top two does.
+  Measured on that room's published splat: the four walls show as lines with 3.4-5.4 m of such cells, trays and lamps none.
+- direction = the turn at which those cells pile into the fewest rows and columns (the Hough direction gave 30 deg for a room
+  turned 4.75 deg).
+- inside = flood fill from the filmed walk (the tour's `settings.json` track, this storey only) over seen floor, stopped by walls.
+- wall lines along both axes cut the plan into rectangles; the outline is the border of the inside ones: closed and
+  right-angled by construction. From the edge of the seen floor a side goes on to the strongest wall line within 1 m (panel
+  fronts 2.1 m of evidence, the wall behind them 5.4 m; "outermost line" was tried and was 15 cm too far: the window's bars).
+- a side with no wall behind it (never filmed) is `open`: drawn dashed, still stops the walk; a line between two inside
+  rectangles is a wall only with seen floor on both sides (a row of tall panels is furniture); the walk cuts a 0.9 m door
+  into any wall it crosses, so a wall never stands where the recording walked.
+- too little to go on, or an outline that loses the walk: one rectangle; under 1000 splats: the room box. The raw line pieces
+  are never published.
+`walls.json` gains `open`, `outline`, `yaw`, `source: cells`. `collision()` with an outline uses a floor slab + the plan's
+sides instead of `room_collision.glb`'s four SfM-box walls. `tour_publish.py floorplan` now also redoes collision and the
+route grid. The page draws open sides dashed and tests "inside the room" against the outline.
+Results: switch room 4 walls, 4 corners, 5.60 x 3.40 m, turned -4.75 deg (was 12 pieces); the house (`20261031-1528`,
+measured on its published splat only, its tour was not republished) keeps its outline with 3 inner walls and 5 open sides.
+The switch-room tour was updated in place (same link; run 44065374818: floor plan, collision, route grid, current page code).
+Tests: `tests/v3/test_walls.py` (rectangle with trays and panels, turned rooms, L shape, two rooms with a door, a side never
+filmed, things outside a window, collision from the outline).
+`scripts/ar/tour_cloud.py` reads a published `scene.compressed.ply` back into room metres with numpy only; this is how the
+plans above were checked without the private data.
+Not done: the picture inside the outline is filled from the nearest splat, which looks blocky where the floor was not seen.
+
+## On-site AR with DRS-VPT (17 Nov, same branch; test only)
+Owner: "implement AR using github.com/ori-drs/drs-vpt for this particular model; if AR is accurate we use it for all models
+from the mobile app"; later: nothing may be downloaded to the laptop (no disk space). DRS-VPT (Oxford, ECCV 2026) takes one
+picture and a point cloud in metres and returns the camera pose; code Apache 2.0, **weights CC BY-NC 4.0 (non-commercial)**:
+fine for the competition test, not for a paid product.
+Built (nothing of it has run on a phone):
+- `.github/workflows/ar-check.yml` + `scripts/ar/check_drsvpt.py`: the accuracy check on a GitHub CPU runner (push
+  `colab/real_scenes/v3/ARCHECK.json`). Pictures with a known camera: the scan drawn from the exact pose and lens of 16 filmed
+  frames (the frames themselves are not kept after a job) and the six real 240 px spot thumbnails. Maps: the published splat's
+  centres and the mesh. Report: private `<run>/ar_check/report.json`; numbers in the log.
+- `colab/real_scenes/final/ar_core.js`: the join between the phone's AR world and the scan (one turn, one shift, one scale)
+  from pictures the server located; answers that would tilt the room are thrown out, the rest by agreement; scale held at 1
+  until the answers span 2.5 m. `tests/browser/ar_core_test.mjs`.
+- `ar_page.html` -> `ar.html` beside `index.html` (written by `build` and by a page update): Android Chrome AR with camera
+  access; draws the room outline, place posts and names, the route band with arrows, arrival within 1 m; status line with the
+  agreement in cm and degrees; "Save report" sends numbers only. Opened as `ar.html#s=<server>&k=<key>`.
+- `scripts/ar/serve_ar.py`: `/locate` (DRS-VPT against the tour's `ar_map.bin`, points on the room mesh written by
+  `make_tour.ar_map` with the collision step; a tour without one: its splat's centres), `/report`, key header. It needs a machine with
+  torch and about 8 GB of memory. **No such machine is chosen yet**: not the laptop; the choices are a free Hugging Face CPU
+  Space (slow, always on) or a Kaggle GPU session with a tunnel (fast, started before going on site). The owner decides.
+
+Measured on the switch room (ar-check runs 44065980869, 44071630168, 44080414402; CPU runner, 30-38 s per picture):
+- the room's own axes (y up) are right for the model; a cloud turned z up gave 0 of 6.
+- share of pictures placed within 10 cm / 5 deg, drawn views | 240 px photos: splat centres 2 cm 12 % | 0 of 6; splat centres
+  1 cm incl. faint 25 % | 0 of 6; walk-collision mesh 16 % | 0 of 6; full mesh 1 cm 28 % (9 of 32) | 1 of 6 (2 of 6 within
+  25 cm / 10 deg). A right answer is 2-8 cm and under 2 deg off.
+- the wrong answers: about half put the camera upside down (floor taken for ceiling), most others are turned about half
+  round; none is the exact half-turn twin of the true pose (tested), and they do not agree with each other.
+- what the AR page would do with all 38 answers (gravity test, then agreement; phone tracking and scale taken as exact):
+  full mesh: 17 upright, 12 agree, the room's corners end up 5.1 cm from where they are, and the join was within 15 cm after
+  every number of pictures from the first on; walk-collision mesh: 10 upright, 7 agree, 6.3 cm. Photos alone: one usable
+  answer (3.2 cm), so real photos are not proven: six thumbnails are too few and too small.
+So: one picture is not trustworthy (about 1 in 4 right), the agreement of several is. On a CPU that is minutes of standing
+around; the model wants a GPU. Not measured: real on-site photos at full size, the phone's own drift, the scan's guessed scale.
+
+## Shape lock: finding the phone in the room in the browser, no server (18 Nov, same branch)
+Owner: relocalisation must be real time and in the browser, no GPU; "gather what is already done by others, check what gap
+they left and try something different; try by doing experiments".
+What others do (survey, 18 Nov; sources in the session notes): every open method that finds a camera in a Gaussian splat
+(iComMa, 6DGS, GS-CPR, SplatLoc, GSplatLoc, STDLoc, GSFeatLoc, GSVisLoc) needs a CUDA GPU and solves the full pose from one
+picture, ignoring what an AR phone already knows; browser AR that is open stops at flat picture targets (MindAR, AR.js; 8th
+Wall's hosted service ended Feb 2026); positioning against a scan in a browser is a cloud service (MultiSet, Niantic) or
+closed (Immersal); floor-plan localisation uses trained depth networks on a GPU or an iPhone's LiDAR (PALMS: building scale,
+4.7 m RMSE). Nothing found that matches a phone's own depth to a self-made scan in a browser.
+What is different here: the phone already knows down, real metres and (depth API) the distance to what it looks at. Then only
+a turn, a shift and a scale are unknown, and that is 2D scan matching against the scan's own mesh: `ar_shape.py` (reference,
+explains the steps) = `ar_geo.js` (browser, in a Web Worker). The map is `ar_shape.bin` (256 kB, written with `ar_map.bin`).
+Experiment 1 (`scripts/ar/exp_geo.py`: the switch room's real mesh and filmed walk, SIMULATED depth: 27 x 60 pixels at 5 Hz,
+5 % noise, 30 % of pixels missing, 5 % wrong, 4.5 m range):
+- one match after looking round for 5 s is right 70-90 %, after 10 s 100 % (30 of 30 over three runs), 5-8 cm at the room's
+  corners; walking straight ahead without looking round: 50-65 % after 10 s. At 8-10 % depth noise it fails in 5 s.
+- no score of a single match tells right from wrong (tested: the margin over the next-best place does not). What works:
+  believe a position when three matches in a row, a second apart, agree within 15 cm: believed after 4-6 s, right in 31 of
+  36 visits (12 of 12 standing and looking round), 7-11 cm off; the rest were wrong at that moment.
+- scale: floor-to-ceiling seen by the phone over the scan's gives it directly, but from below the cable trays hide the
+  ceiling (the scan's levels: 2.23 m trays, 2.65 m ceiling), so every pairing of levels is tried and the match decides.
+- cost: 0.6 s per match in JavaScript on this laptop (5000 points, 10 deg steps, then a polish), 0.7 s in a real browser
+  worker; the made-up room of `tests/v3/test_ar_shape.py` is found to 2-9 cm by the browser code, same answer as Python.
+In the AR page: depth points every 6th frame (the unprojection that ran on the test phone), the last 25 s to the worker about
+once a second, three agreeing matches set the join; the picture server stays optional (`#s=`). The page now starts without one.
+NOT measured, and the real risk: ARCore's depth on a real phone (weak on blank white walls, which this room has), the phone's
+speed (a match may take 2-4 s there), and the page itself on a phone. Experiment 2 (appearance: features baked from views of
+the splat, matched on the phone with gravity known) is not started.
+The way in (17 Nov evening, owner: "there is no AR button, it used to be there"): the tour page had no AR button of its own.
+The one the owner remembered is the viewer's built-in button (`.sse-arMode`), which shows only on a phone with AR and floats
+the scan in front of the camera; it has nothing to do with `ar.html`. `OVERLAY` now has `#nm-ar` (top right): shown when
+`./ar_shape.bin` answers, opens `./ar.html` where `immersive-ar` is supported, and elsewhere says an Android phone with Chrome
+is needed. On such tours the viewer's own AR button is hidden (`body.nm-has-ar`), so "AR" means one thing.

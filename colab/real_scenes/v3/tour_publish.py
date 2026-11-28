@@ -198,6 +198,7 @@ if __name__ == '__main__':
         sys.exit(0)
     fp, co, rb, hd, rs = ('floorplan' in sys.argv[2:], 'collision' in sys.argv[2:], 'rebuild' in sys.argv[2:],
                           'head' in sys.argv[2:], 'respot' in sys.argv[2:])
+    co = co or fp                                                   # new walls are also what walk mode bumps into and routes go around
     rs = rs or ((hd or rb) and 'norespot' not in sys.argv[2:])      # every page update repairs spots + field of view itself (checked, safe)
     extra = ([f'{run}/full/{x}' for x in ('model.ply', 'level.json', 'nav.json')] if fp or rb else []) + ([f'{run}/mesh/{x}' for x in ('mesh.glb', 'mesh.json', 'mesh-edited.glb')] if co or rb else [])
     if rb and os.environ.get('TOUR_MODEL'): extra.append(f"{run}/{os.environ['TOUR_MODEL']}")
@@ -226,6 +227,11 @@ if __name__ == '__main__':
     if co:
         make_tour.collision(os.path.join(d, run), tour)
         api.upload_file(path_or_fileobj=f'{tour}/collision.glb', path_in_repo=f'{run}/{src}/collision.glb', repo_id=repo, repo_type='dataset')   # the tour being updated (was always tour/)
+        try:                                                                              # the map on-site AR is located against
+            if make_tour.ar_map(os.path.join(d, run), tour):
+                for x in ('ar_map.bin', 'ar_shape.bin'):
+                    if os.path.exists(f'{tour}/{x}'): api.upload_file(path_or_fileobj=f'{tour}/{x}', path_in_repo=f'{run}/{src}/{x}', repo_id=repo, repo_type='dataset')
+        except Exception as e: print('AR map skipped:', type(e).__name__, str(e)[:120], flush=True)
     if (co or hd) and not rb and (co or not os.path.exists(f'{tour}/nav.json')):         # routes to places: the walkable grid of this collision
         if make_tour.navgrid(tour): api.upload_file(path_or_fileobj=f'{tour}/nav.json', path_in_repo=f'{run}/{src}/nav.json', repo_id=repo, repo_type='dataset')
     if rb:                                                                                # scene file again from the model (current settings)
@@ -249,8 +255,10 @@ if __name__ == '__main__':
         open(f'{tour}/index.js', 'w').write(make_tour.patch_js(js))                       # read first, then write (never truncate before reading)
         assert os.path.getsize(f'{tour}/index.js') > 100000
         open(f'{tour}/index.html', 'w').write(h)
+        arp = make_tour.ar_page()                                                           # the on-site AR page beside it
+        if arp: open(f'{tour}/ar.html', 'w').write(arp)
         print('page start options updated', flush=True)
-        for x in ('index.html', 'index.js', 'settings.json', 'overlay.json', 'tour.json'):     # page + repaired spots / fov kept with the run
+        for x in ('index.html', 'ar.html', 'index.js', 'settings.json', 'overlay.json', 'tour.json'):     # page + repaired spots / fov kept with the run
             if os.path.exists(f'{tour}/{x}'): api.upload_file(path_or_fileobj=f'{tour}/{x}', path_in_repo=f'{run}/{src}/{x}', repo_id=repo, repo_type='dataset')
     if get != src:                                                                        # the copy, whole, so it can be updated again later
         api.upload_folder(folder_path=tour, path_in_repo=f'{run}/{src}', repo_id=repo, repo_type='dataset')   # with plan.json: the collision editor reads it

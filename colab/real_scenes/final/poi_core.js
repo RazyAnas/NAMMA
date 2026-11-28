@@ -139,7 +139,7 @@ export function route(nav, a, b, maxSnap = 3) { const s = snap(nav, a[0], a[1]),
   return { ok: true, points: pts, length: pathLength(pts), from: s.d, to: g.d, cells: cells.length }; }
 
 // ---- places ------------------------------------------------------------------------------------------------------------------
-export const CATEGORIES = ['place', 'room', 'exit', 'washroom', 'kitchen', 'furniture', 'appliance', 'safety', 'other'];
+export const CATEGORIES = ['place', 'room', 'exit', 'washroom', 'kitchen', 'furniture', 'appliance', 'safety', 'help', 'other'];
 const r3 = (v) => Math.round(v * 1000) / 1000;
 // a place as pois.json stores it. approach = the walkable spot beside it a route ends at (null: none within 3 m, or no grid).
 export function makePoi(p, nav, now = Date.now()) { const pos = [r3(p.pos[0]), r3(p.pos[1]), r3(p.pos[2])]; let approach = null;
@@ -147,6 +147,7 @@ export function makePoi(p, nav, now = Date.now()) { const pos = [r3(p.pos[0]), r
   return { id: p.id || 'p' + now.toString(36) + Math.random().toString(36).slice(2, 6), name: String(p.name || 'Place').slice(0, 80),
     category: CATEGORIES.includes(p.category) ? p.category : 'place', note: String(p.note || '').slice(0, 400), pos, approach, cell: cellKey(pos),
     source: p.source === 'ai' ? 'ai' : 'admin', confidence: p.source === 'ai' ? Math.max(0, Math.min(1, +p.confidence || 0)) : 1,
+    card: String(p.card || '').slice(0, 1500),                                       // help annotations: the menu-card body text (category 'help')
     thumb: p.thumb || null, created: p.created || new Date(now).toISOString() }; }
 // a pois.json read from anywhere: bad entries dropped, never a throw (a broken file must not break the tour)
 export function readPois(j) { const l = j && Array.isArray(j.pois) ? j.pois : [];

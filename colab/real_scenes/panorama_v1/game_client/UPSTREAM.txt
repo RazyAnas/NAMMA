@@ -1,0 +1,2 @@
+Vendored from https://github.com/icurtis1/third-person-controller-splat at a47742aafb00067c05522e366e451137cec7802b (MIT, see LICENSE).
+Demo assets (attic.spz, dog.glb, pano.jpg) are not vendored; NAMMA assets come from export_game.py.

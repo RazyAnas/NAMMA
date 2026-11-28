@@ -1,0 +1,91 @@
+name: Deploy NAMMA viewer demo to Hugging Face
+
+# Publishes the viewer/ walking demo (Three.js + gaussian-splats-3d, with the places / help-card / minimap overlay)
+# as a public Hugging Face *static* Space, the same host the production tours use (*.static.hf.space).
+#
+# Manual only (workflow_dispatch): it never fires on a push. To get the link:
+#   1. Add a repo secret HF_TOKEN  (a Hugging Face *write* token: huggingface.co/settings/tokens).
+#   2. Actions tab -> "Deploy NAMMA viewer demo to Hugging Face" -> Run workflow, set `space` to <your-hf-username>/namma-viewer-demo.
+#   3. The run's summary prints the public https://<owner>-<name>.static.hf.space/ link.
+on:
+  workflow_dispatch:
+    inputs:
+      space:
+        description: "Target static Space, owner/name (e.g. yourname/namma-viewer-demo)"
+        required: true
+      scene_dir:
+        description: "Scene folder in the repo to publish (has splat.ply + navmesh.json + collision.glb)"
+        required: false
+        default: "colab/real_scenes/walk_demo/data/icl_room"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: namma-viewer-demo-space
+  cancel-in-progress: true
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Build the static demo
+        working-directory: viewer
+        run: |
+          npm ci
+          mkdir -p public/data
+          cp "../${{ github.event.inputs.scene_dir }}/splat.ply" public/data/splat.ply
+          cp "../${{ github.event.inputs.scene_dir }}/navmesh.json" public/data/navmesh.json
+          # collision.glb is optional (walls); copy it if the scene has one
+          if [ -f "../${{ github.event.inputs.scene_dir }}/collision.glb" ]; then cp "../${{ github.event.inputs.scene_dir }}/collision.glb" public/data/collision.glb; fi
+          npm run build:demo
+          # a static Space serves index.html at the Space root; the build emits demo.html (same relative asset refs)
+          cp dist-demo/demo.html dist-demo/index.html
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install Hugging Face Hub client
+        run: pip install --disable-pip-version-check -q huggingface_hub
+
+      - name: Create the Space if needed and upload the demo
+        env:
+          HF_TOKEN: ${{ secrets.HF_TOKEN || secrets.HUGGINGFACE_WRITE_TOKEN }}
+          SPACE: ${{ github.event.inputs.space }}
+        run: |
+          python - <<'PY'
+          import os
+          from huggingface_hub import HfApi
+
+          token = os.environ.get("HF_TOKEN")
+          space = (os.environ.get("SPACE") or "").strip()
+          if not token:
+              raise SystemExit("Missing HF_TOKEN (or HUGGINGFACE_WRITE_TOKEN) repository secret.")
+          if "/" not in space:
+              raise SystemExit("`space` must be owner/name, e.g. yourname/namma-viewer-demo")
+
+          api = HfApi(token=token)
+          api.create_repo(repo_id=space, repo_type="space", space_sdk="static", exist_ok=True)
+          api.upload_folder(
+              folder_path="viewer/dist-demo",
+              repo_id=space,
+              repo_type="space",
+              commit_message="Deploy NAMMA viewer demo",
+          )
+          owner, name = space.split("/", 1)
+          slug = f"{owner}-{name}".lower()
+          url = f"https://{slug}.static.hf.space/"
+          print("PUBLIC LINK:", url)
+          with open(os.environ["GITHUB_STEP_SUMMARY"], "a") as f:
+              f.write(f"## NAMMA viewer demo is live\n\n**{url}**\n\nAdmin (add help points): `{url}?admin=1`\n")
+          PY

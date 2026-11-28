@@ -1,0 +1,72 @@
+# AR groundwork: how accurately DRS-VPT (github.com/ori-drs/drs-vpt) finds a camera inside one finished scan. CPU only, about
+# an hour; nothing runs on Kaggle or on the laptop. Start: set "run" in colab/real_scenes/v3/ARCHECK.json and push, or by hand
+# (gh workflow run ar-check.yml --ref <branch>). Numbers go to the log; the full report to the private <run>/ar_check/report.json.
+# The model's weights are CC BY-NC 4.0 (non-commercial): this is a test, not a part of the product.
+# The steps that hold the Hugging Face token never run the downloaded model code, and the model step has no token.
+name: ar check
+on:
+  push:
+    branches: [claude/wonderful-cori-i3fn41, claude/smart-budget-poi]
+    paths: [colab/real_scenes/v3/ARCHECK.json]
+  workflow_dispatch:
+concurrency:
+  group: ar-check
+  cancel-in-progress: true
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 300
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          sparse-checkout: |
+            colab/real_scenes/v3
+            colab/real_scenes/final
+            scripts/ar
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Fetch the scan
+        env:
+          HF_TOKEN: ${{ secrets.HF_TOKEN || secrets.HUGGINGFACE_WRITE_TOKEN }}
+        run: |
+          pip install -q huggingface_hub
+          python - <<'PY'
+          import json, os
+          from huggingface_hub import HfApi, snapshot_download
+          run = json.load(open('colab/real_scenes/v3/ARCHECK.json'))['run']; api = HfApi(token=os.environ['HF_TOKEN'])
+          repo = api.whoami()['name'] + '/namma-v3-out'
+          pats = [f'{run}/sparse/0/*', f'{run}/full/model.ply', f'{run}/full/level.json', f'{run}/mesh/mesh.glb'] + \
+                 [f'{run}/tour/{x}' for x in ('plan.json', 'walls.json', 'scene.compressed.ply', 'collision.glb', 'thumbs/*')]
+          snapshot_download(repo, repo_type='dataset', allow_patterns=pats, local_dir='scan', token=os.environ['HF_TOKEN'])
+          for d, _, fs in os.walk(os.path.join('scan', run)):
+              for f in fs: print(os.path.relpath(os.path.join(d, f), 'scan'), os.path.getsize(os.path.join(d, f)) // 1024, 'KB')
+          PY
+      - name: Install the model (no token in this step)
+        run: |
+          pip install -q torch==2.8.0 torchvision --index-url https://download.pytorch.org/whl/cpu
+          pip install -q spconv-cu126 torch-scatter -f https://data.pyg.org/whl/torch-2.8.0+cpu.html
+          git clone -q https://github.com/ori-drs/drs-vpt drs-vpt && git -C drs-vpt checkout -q a13d571c0906635f53d98bd6293c0378b61e9f7c
+          pip install -q -e drs-vpt
+          pip install -q numpy scipy pillow plyfile trimesh
+          git clone -q --depth 1 -b v1.5.3 https://github.com/nerfstudio-project/gsplat gsplat
+      - name: Check (no token in this step)
+        run: |
+          RUN="$(python -c "import json;print(json.load(open('colab/real_scenes/v3/ARCHECK.json'))['run'])")"
+          VIEWS="$(python -c "import json;print(json.load(open('colab/real_scenes/v3/ARCHECK.json')).get('views', 16))")"
+          python scripts/ar/check_drsvpt.py "scan/$RUN" gsplat/examples ar_out "$VIEWS"
+      - name: Keep the report
+        if: always()
+        env:
+          HF_TOKEN: ${{ secrets.HF_TOKEN || secrets.HUGGINGFACE_WRITE_TOKEN }}
+        run: |
+          python - <<'PY'
+          import json, os
+          from huggingface_hub import HfApi
+          if os.path.exists('ar_out/report.json'):
+              run = json.load(open('colab/real_scenes/v3/ARCHECK.json'))['run']; api = HfApi(token=os.environ['HF_TOKEN'])
+              api.upload_file(path_or_fileobj='ar_out/report.json', path_in_repo=f'{run}/ar_check/report.json', repo_id=api.whoami()['name'] + '/namma-v3-out', repo_type='dataset')
+              r = json.load(open('ar_out/report.json'))
+              for k, v in r['settings'].items(): print(k, {a: b for a, b in v.items() if a != 'rows'})
+          else: print('no report was written')
+          PY

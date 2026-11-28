@@ -1,0 +1,97 @@
+name: NAMMA panorama experiment (Kaggle, any stored account)
+
+# Push colab/real_scenes/panorama_v1/experiments/<tag>.json to launch it on Kaggle 2x T4.
+# Each stored Kaggle token is tried in turn (backup first), so a run still starts when one account's weekly GPU
+# quota is used up. The job waits for the kernel, then uploads its small outputs (json/log/jpg/png/txt) as the
+# artifact "exp-<tag>". The kernel id is printed and written to experiments/<tag>.kernel in the artifact.
+on:
+  push:
+    paths:
+      - "colab/real_scenes/panorama_v1/experiments/*.json"
+  workflow_dispatch:
+    inputs:
+      config:
+        description: "Repository path to an experiment config (experiments/<tag>.json)"
+        required: true
+      action:
+        description: "launch (push + wait + fetch) or fetch (an already launched tag)"
+        default: launch
+
+jobs:
+  run:
+    runs-on: ubuntu-latest
+    timeout-minutes: 355
+    env:
+      KAGGLE_TOKEN_A: ${{ secrets.KAGGLE_TOKEN_BACKUP }}
+      KAGGLE_TOKEN_B: ${{ secrets.KAGGLE_API_TOKEN }}
+      KAGGLE_TOKEN_C: ${{ secrets.KAGGLE_TOKEN }}
+      CODE: colab/real_scenes/panorama_v1
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 2
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - run: python -m pip install -q "kaggle==2.2.5" six
+      - name: Pick the config
+        run: |
+          CFG="${{ inputs.config }}"
+          if [ -z "$CFG" ]; then
+            CFG=$(git diff --name-only HEAD~1 HEAD -- "$CODE/experiments/*.json" | tail -1)
+          fi
+          test -n "$CFG" || { echo "no experiment config changed"; exit 1; }
+          TAG=$(basename "$CFG" .json)
+          echo "CFG=$CFG" >> "$GITHUB_ENV"; echo "TAG=$TAG" >> "$GITHUB_ENV"
+          echo "config $CFG tag $TAG"; cat "$CFG"
+      - name: Launch on the first account with GPU quota left
+        if: ${{ inputs.action != 'fetch' }}
+        run: |
+          cd "$CODE"
+          ok=""
+          for T in "$KAGGLE_TOKEN_A" "$KAGGLE_TOKEN_B" "$KAGGLE_TOKEN_C"; do
+            [ -n "$T" ] || continue
+            U=$(KAGGLE_API_TOKEN="$T" python -c "from kaggle.api.kaggle_api_extended import KaggleApi as K; a=K(); a.authenticate(); print(a.get_config_value('username'))" 2>/dev/null | tail -1)
+            echo "trying Kaggle account $U"
+            OUT=$(KAGGLE_API_TOKEN="$T" KAGGLE_USER="$U" python kaggle_exp.py push --tag "$TAG" --config "$GITHUB_WORKSPACE/$CFG" 2>&1 || true)
+            echo "$OUT" | tail -5
+            if echo "$OUT" | grep -qi "error\|quota\|denied\|forbidden"; then echo "account $U cannot run it, next"; continue; fi
+            ok=1
+            echo "KAGGLE_USER=$U" >> "$GITHUB_ENV"
+            break
+          done
+          test -n "$ok" || { echo "no stored Kaggle account could launch $TAG"; exit 1; }
+      - name: Find the account that owns the kernel
+        run: |
+          cd "$CODE"
+          for S in A B C; do
+            T=$(eval echo "\$KAGGLE_TOKEN_$S"); [ -n "$T" ] || continue
+            U=$(KAGGLE_API_TOKEN="$T" python -c "from kaggle.api.kaggle_api_extended import KaggleApi as K; a=K(); a.authenticate(); print(a.get_config_value('username'))" 2>/dev/null | tail -1)
+            if [ -n "$KAGGLE_USER" ] && [ "$U" != "$KAGGLE_USER" ]; then continue; fi
+            if KAGGLE_API_TOKEN="$T" KAGGLE_USER="$U" python kaggle_exp.py status --tag "$TAG" | grep -qi "has status"; then
+              echo "KSLOT=$S" >> "$GITHUB_ENV"; echo "KAGGLE_USER=$U" >> "$GITHUB_ENV"
+              echo "kernel $U/namma-pano-exp-$TAG"; break
+            fi
+          done
+      - name: Wait for the kernel
+        if: ${{ inputs.action != 'fetch' }}
+        run: |
+          cd "$CODE"
+          T=$(eval echo "\$KAGGLE_TOKEN_$KSLOT")
+          KAGGLE_API_TOKEN="$T" timeout 330m python kaggle_exp.py wait --tag "$TAG" || true
+      - name: Fetch small outputs
+        if: ${{ always() }}
+        run: |
+          cd "$CODE"
+          T=$(eval echo "\$KAGGLE_TOKEN_$KSLOT")
+          mkdir -p "$GITHUB_WORKSPACE/exp_out"
+          KAGGLE_API_TOKEN="$T" python kaggle_exp.py status --tag "$TAG" | tee "$GITHUB_WORKSPACE/exp_out/status.txt" || true
+          KAGGLE_API_TOKEN="$T" python kaggle_exp.py fetch --tag "$TAG" --dest "$GITHUB_WORKSPACE/exp_out" || true
+          echo "$KAGGLE_USER/namma-pano-exp-$TAG" > "$GITHUB_WORKSPACE/exp_out/$TAG.kernel"
+          find "$GITHUB_WORKSPACE/exp_out" -type f | head -50
+      - uses: actions/upload-artifact@v4
+        if: ${{ always() }}
+        with:
+          name: exp-${{ env.TAG }}
+          path: exp_out
+          retention-days: 14
