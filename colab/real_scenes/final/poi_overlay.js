@@ -47,8 +47,8 @@ const pinsEl = $('nm-pins'), pinEl = new Map(); let goal = null, sel = null;
 function drawPins() { const seen = new Set();
   pois.forEach((p) => { seen.add(p.id); let b = pinEl.get(p.id);
     if (!b) { b = document.createElement('button'); b.className = 'nm-pin'; b.innerHTML = '<span></span><i></i>'; pinsEl.appendChild(b); pinEl.set(p.id, b);
-      b.onclick = (e) => { e.stopPropagation(); if (admin && panel) panel.edit(p.id); else routeTo(p.id); }; }
-    b.firstChild.textContent = p.name; b.title = p.note || p.name; b.classList.toggle('ai', p.source === 'ai'); });
+      b.onclick = (e) => { e.stopPropagation(); if (admin && panel) panel.edit(p.id); else if (p.category === 'help') openCard(p); else routeTo(p.id); }; }
+    b.firstChild.textContent = p.name; b.title = p.category === 'help' ? (p.name + ' — tap for help') : (p.note || p.name); b.classList.toggle('ai', p.source === 'ai'); b.classList.toggle('help', p.category === 'help'); });
   pinEl.forEach((b, id) => { if (!seen.has(id)) { b.remove(); pinEl.delete(id); } }); }
 function placePins() { pinEl.forEach((b, id) => { const p = byId(id); const s = p && project(p.pos[0], p.pos[1], p.pos[2]);
     const isGoal = !!(goal && goal.id === id); b.classList.toggle('goal', isGoal || (arrived && arrived.id === id)); b.classList.toggle('sel', sel === id);
@@ -56,13 +56,26 @@ function placePins() { pinEl.forEach((b, id) => { const p = byId(id); const s = 
     b.classList.toggle('far', s[2] > 9 && !isGoal && sel !== id); b.style.opacity = isGoal ? 1 : Math.max(0.45, Math.min(1, 1.25 - s[2] / 20));
     b.style.transform = `translate(${Math.round(s[0] - b.offsetWidth / 2)}px,${Math.round(s[1] - b.offsetHeight)}px)`; }); }
 
+// ---- help annotation cards: a menu card anchored over its help pin (category 'help'), opened by tapping the pin ----
+const hcard = $('nm-hcard'), hcTitle = hcard && hcard.querySelector('h2'), hcBody = hcard && hcard.querySelector('.bd'); let cardId = null;
+function openCard(p) { if (!p || !hcard) return; cardId = p.id; hcTitle.textContent = p.name; hcBody.textContent = (p.card || p.note || '').trim() || 'No help text yet.'; hcard.style.display = 'flex'; positionCard(); }
+function closeCard() { cardId = null; if (hcard) { hcard.style.display = 'none'; hcard.style.transform = 'translate(-9999px,0)'; } }
+function positionCard() { if (cardId == null || !hcard) return; const p = byId(cardId); if (!p) return closeCard();
+  const s = project(p.pos[0], p.pos[1], p.pos[2]); if (!s || s[2] > 40) { hcard.style.transform = 'translate(-9999px,0)'; return; }
+  const w = hcard.offsetWidth, h = hcard.offsetHeight, m = 8;
+  let x = Math.max(m, Math.min(innerWidth - w - m, s[0] - 24)), y = Math.max(m, Math.min(innerHeight - h - m, s[1] - h - 22));   // sits above the pin, tail over it
+  hcard.style.transform = `translate(${Math.round(x)}px,${Math.round(y)}px)`; }
+if (hcard) { const hx = $('nm-hcx'); if (hx) hx.onclick = (e) => { e.stopPropagation(); closeCard(); };
+  ['pointerdown', 'pointerup', 'click', 'wheel'].forEach((t) => hcard.addEventListener(t, (e) => e.stopPropagation()));
+  addEventListener('keydown', (e) => { if (e.key === 'Escape' && cardId != null) closeCard(); }); }
+
 // ---- floor plan: dots for places, the route line (both the minimap and the big plan; the 3D plan through extra3d) ----
 const plans = [mini, big].map((m) => ({ m, g: el('g', {}, null), line: el('polyline', { class: 'route', 'stroke-width': Math.max(3, 0.09 * f.px) }, null) }));
 plans.forEach((pl) => { pl.m.sv.insertBefore(pl.line, pl.m.cone); pl.m.sv.insertBefore(pl.g, pl.m.cone); });
 function drawDots() { plans.forEach((pl, k) => { pl.g.textContent = ''; const r = Math.max(5, 0.11 * f.px) * (k ? 1 : 1.25);
     pois.forEach((p) => { const [x, y] = P(p.pos[0], p.pos[2]);
       const c = el('circle', { cx: x, cy: y, r, 'stroke-width': Math.max(2, r * 0.45), class: 'poi' + (p.source === 'ai' ? ' ai' : '') + (goal && goal.id === p.id ? ' goal' : '') }, pl.g);
-      c.onclick = (e) => { e.stopPropagation(); closeFp(); if (admin && panel) panel.edit(p.id); else routeTo(p.id); };
+      c.onclick = (e) => { e.stopPropagation(); closeFp(); if (admin && panel) panel.edit(p.id); else if (p.category === 'help') openCard(p); else routeTo(p.id); };
       const t = el('title', {}, c); t.textContent = p.name;
       if (k) { const lb = el('text', { x, y: y - r - 5, 'text-anchor': 'middle', class: 'lbl' }, pl.g); lb.textContent = p.name; } }); }); }
 extra3d = (g, pr) => { if (R && R.pts && R.pts.length > 1) { g.beginPath(); R.pts.forEach((p, i) => { const s = pr(p[0], 0.05, p[2]); i ? g.lineTo(s[0], s[1]) : g.moveTo(s[0], s[1]); }); g.lineWidth = 4; g.strokeStyle = '#e8a96b'; g.stroke(); }
@@ -144,7 +157,7 @@ function drawBand() { const { L, R: Rr, s: dist } = R.rb, n = R.fine.length, hid
     const d = 'M' + q.map(xy).join('L') + 'Z'; if (hid[c.i]) ch += d; else cv += d; }
   chV.setAttribute('d', cv); chH.setAttribute('d', ch);
   if (tag) { behind.style.display = 'block'; behind.style.transform = `translate(${tag[0].toFixed(0)}px,${tag[1].toFixed(0)}px) translate(-50%,-160%)`; } else behind.style.display = 'none'; }
-function frame() { try { placePins(); if (auto) autoStep(); if (R && R.fine && R.rb) drawBand(); } catch (e) {} requestAnimationFrame(frame); }
+function frame() { try { placePins(); if (cardId != null) positionCard(); if (auto) autoStep(); if (R && R.fine && R.rb) drawBand(); } catch (e) {} requestAnimationFrame(frame); }
 requestAnimationFrame(frame);
 
 function routeTo(id) { const p = byId(id); if (!p) return false; return startRoute(p); }
@@ -158,7 +171,7 @@ const hitOf = new Map(), catName = (p) => p.category.charAt(0).toUpperCase() + p
 const spotHits = (o.spots || []).map((sp, i) => ({ spot: i, label: esc(sp.title), size: 'Filmed spot', words: (sp.title + ' spot view').toLowerCase(), thumb: sp.thumb }));
 extra = () => pois.map((p) => { let h = hitOf.get(p); const size = catName(p) + (p.note ? ' · ' + esc(p.note).slice(0, 60) : '') + (p.source === 'ai' ? ' · found by AI' : '');
   if (!h || h.label !== esc(p.name) || h.size !== size) { h = { poi: p, label: esc(p.name), size, words: poiWords(p), thumb: p.thumb }; hitOf.set(p, h); } return h; }).concat(spotHits);
-pick = (x) => { if (x.ai) aiFind(x.ai); else if (x.poi) routeTo(x.poi.id); else if (x.spot != null) { const sp = o.spots[x.spot]; if (nav) routeToPoint(sp.title, [sp.x, 1, sp.z], x.spot); else go(x.spot); } else if (nav && x.lo && x.hi) routeToPoint(x.label, [(x.lo[0] + x.hi[0]) / 2, (x.lo[1] + x.hi[1]) / 2, (x.lo[2] + x.hi[2]) / 2], x.i); else go(x.i); };
+pick = (x) => { if (x.ai) aiFind(x.ai); else if (x.poi) { if (x.poi.category === 'help') openCard(x.poi); else routeTo(x.poi.id); } else if (x.spot != null) { const sp = o.spots[x.spot]; if (nav) routeToPoint(sp.title, [sp.x, 1, sp.z], x.spot); else go(x.spot); } else if (nav && x.lo && x.hi) routeToPoint(x.label, [(x.lo[0] + x.hi[0]) / 2, (x.lo[1] + x.hi[1]) / 2, (x.lo[2] + x.hi[2]) / 2], x.i); else go(x.i); };
 const searchOn = () => { find.style.display = 'block'; q.placeholder = aiMeta ? 'Search, or ask for anything ...' : obs.length ? 'Search places and things ...' : 'Search places and spots ...'; };
 
 // ---- AI find: type anything; the tour's own frames are searched for it (regions.json / regions.f16 from ai_find.py), and it
@@ -216,6 +229,7 @@ if (admin) {
     <div class="sec" id="nm-aform" style="display:none"><label>Name<input id="nm-aname" maxlength="80"></label>
       <label>Kind<select id="nm-acat">${CATEGORIES.map((c) => `<option value="${c}">${c.charAt(0).toUpperCase() + c.slice(1)}</option>`).join('')}</select></label>
       <label>Note<textarea id="nm-anote" maxlength="400"></textarea></label>
+      <label id="nm-acardl" style="display:none">Help card text (shown when a visitor taps this help point)<textarea id="nm-acard" maxlength="1500" placeholder="What this point explains ..."></textarea></label>
       <div class="r"><button class="nm-pill" id="nm-amove">Move</button><button class="nm-pill" id="nm-atest">Route</button><button class="nm-pill" id="nm-adel">Delete</button></div></div>
     <div class="sec"><b style="color:var(--nm-light)">Collision</b>
       <label style="flex-direction:row;align-items:center;gap:8px;cursor:pointer"><input type="checkbox" id="nm-acol" style="width:auto;flex:none">Show what walk mode bumps into (objects and walls)</label>
@@ -227,7 +241,8 @@ if (admin) {
       <label>Space<input id="nm-aspace" placeholder="owner/namma-tour"></label>
       <div class="st" id="nm-ast"></div></div>`;
   document.querySelector('.nm-ui').appendChild(d);
-  const st = $('nm-ast'), say = (s) => { st.textContent = s; }, form = $('nm-aform'), nameI = $('nm-aname'), catI = $('nm-acat'), noteI = $('nm-anote');
+  const st = $('nm-ast'), say = (s) => { st.textContent = s; }, form = $('nm-aform'), nameI = $('nm-aname'), catI = $('nm-acat'), noteI = $('nm-anote'), cardI = $('nm-acard'), cardL = $('nm-acardl');
+  const showCard = (cat) => { cardL.style.display = cat === 'help' ? '' : 'none'; const tb = $('nm-atest'); if (tb) tb.textContent = cat === 'help' ? 'Preview' : 'Route'; };
   d.querySelectorAll('input,select,textarea').forEach((x) => ['keydown', 'keyup', 'keypress'].forEach((t) => x.addEventListener(t, (e) => e.stopPropagation())));   // typing must not walk
   ['pointerdown', 'pointerup', 'click', 'wheel'].forEach((t) => d.addEventListener(t, (e) => e.stopPropagation()));
   const folder = location.pathname.split('/').filter(Boolean).filter((x) => !/\.html?$/.test(x)).join('/'), file = (folder ? folder + '/' : '') + 'pois.json';
@@ -262,10 +277,10 @@ if (admin) {
   const centre2 = () => { const c = view(); if (!c) return; const r = c.getBoundingClientRect(); dropAt(r.width / 2, r.height / 2); };
   $('nm-atap').onclick = () => setPlacing(!(placing && !moving)); $('nm-actr').onclick = centre2;
   addEventListener('keydown', (e) => { if (/INPUT|TEXTAREA|SELECT/.test((e.target || {}).tagName || '')) return; if (e.code === 'KeyP') centre2(); else if (e.key === 'Escape' && placing) setPlacing(false); });
-  const save = () => { const p = byId(sel); if (!p) return; const n = { ...p, name: nameI.value.trim() || 'Place', category: catI.value, note: noteI.value.trim() }; addPoi(n, true); changed(); mark(); };
-  nameI.oninput = save; catI.onchange = save; noteI.oninput = save;
+  const save = () => { const p = byId(sel); if (!p) return; const n = { ...p, name: nameI.value.trim() || 'Place', category: catI.value, note: noteI.value.trim(), card: cardI.value.trim() }; addPoi(n, true); changed(); mark(); };
+  nameI.oninput = save; catI.onchange = () => { showCard(catI.value); save(); }; noteI.oninput = save; cardI.oninput = save;
   $('nm-amove').onclick = () => { if (sel) setPlacing(!(placing && moving), sel); };
-  $('nm-atest').onclick = () => { if (sel) routeTo(sel); };
+  $('nm-atest').onclick = () => { const p = byId(sel); if (!p) return; if (p.category === 'help') openCard(p); else routeTo(sel); };
   $('nm-adel').onclick = () => { const p = byId(sel); if (p && confirm(`Delete "${p.name}"?`)) { removePoi(p.id); sel = null; form.style.display = 'none'; mark(); say('Deleted.'); } };
   $('nm-ax').onclick = () => { const u = new URL(location.href); u.searchParams.delete('admin'); location.href = u.toString(); };
   // collision: the view of what walk mode bumps into (off for visitors since 1 Nov; on for the admin, who edits against it) and the
@@ -281,7 +296,7 @@ if (admin) {
   panel = { list() { const L = $('nm-alist'); L.textContent = ''; pois.forEach((p) => { const b = document.createElement('button'); b.className = p.id === sel ? 'on' : '';
         b.innerHTML = `<span>${esc(p.name)}</span><small>${esc(p.category)}${p.source === 'ai' ? ' · AI' : ''}${nav && !p.approach ? ' · no route' : ''}</small>`; b.onclick = () => panel.edit(p.id); L.appendChild(b); });
       if (!pois.length) L.innerHTML = '<div class="st">No places yet. Tap to place the first one.</div>'; mark(); },
-    edit(id) { const p = byId(id); if (!p) return; sel = id; form.style.display = 'flex'; if (document.activeElement !== nameI) nameI.value = p.name; catI.value = p.category; if (document.activeElement !== noteI) noteI.value = p.note; panel.list(); } };
+    edit(id) { const p = byId(id); if (!p) return; sel = id; form.style.display = 'flex'; if (document.activeElement !== nameI) nameI.value = p.name; catI.value = p.category; if (document.activeElement !== noteI) noteI.value = p.note; if (document.activeElement !== cardI) cardI.value = p.card || ''; showCard(p.category); panel.list(); } };
   // save. 1) straight to the live tour: one commit of pois.json to the Space through the Hub API (@huggingface/hub in the page,
   //    the way v3/collision_editor.html applies collision edits), signed in with Hugging Face or with a pasted write token;
   // 2) always possible: download pois.json (see the note it shows).

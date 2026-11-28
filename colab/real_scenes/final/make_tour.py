@@ -79,8 +79,15 @@ OVERLAY = """<style>
   .nm-pin{position:absolute;left:0;top:0;transform:translate(-9999px,0);display:flex;flex-direction:column;align-items:center;gap:3px;pointer-events:auto;cursor:pointer;border:0;background:none;padding:0;margin:0;color:#fff;font:bold 12px Arial,sans-serif;will-change:transform}
   .nm-pin i{display:block;width:20px;height:20px;border-radius:50% 50% 50% 0;transform:rotate(-45deg);background:var(--nm-acc);border:2px solid #fff;box-shadow:0 2px 6px rgba(0,0,0,.5)}
   .nm-pin.ai i{background:#7fc8ff} .nm-pin.sel i{background:#fff;border-color:var(--nm-acc)}
+  .nm-pin.help i{background:#ffd36b;border-radius:50%;transform:none;position:relative} .nm-pin.help i::after{content:'?';position:absolute;inset:0;display:flex;align-items:center;justify-content:center;color:#3a2a10;font:900 14px Arial,sans-serif}
   .nm-pin span{order:-1;padding:2px 7px;border-radius:8px;background:rgba(0,0,0,.6);white-space:nowrap;max-width:160px;overflow:hidden;text-overflow:ellipsis}
   .nm-pin.far span{display:none} .nm-pin.goal i{animation:nmpulse 1s ease-in-out infinite}
+  /* help annotation menu card: anchored over its pin in the 3D view, opened by tapping the help pin */
+  #nm-hcard{position:fixed;left:0;top:0;z-index:12;display:none;flex-direction:column;gap:6px;width:min(300px,86vw);max-height:46vh;padding:12px 14px;pointer-events:auto;transform:translate(-9999px,0)}
+  #nm-hcard h2{margin:0;padding-right:22px;font:700 15px Arial,sans-serif;color:var(--nm-text)}
+  #nm-hcard .bd{margin:0;overflow:auto;font:13px/1.45 Arial,sans-serif;color:var(--nm-text);white-space:pre-wrap;-webkit-user-select:text;user-select:text}
+  #nm-hcard .nm-btn.x{position:absolute;top:6px;right:6px}
+  #nm-hcard::after{content:'';position:absolute;left:24px;bottom:-9px;width:16px;height:16px;background:inherit;border:inherit;border-top:0;border-left:0;transform:rotate(45deg)}
   @keyframes nmpulse{0%{box-shadow:0 0 0 0 rgba(232,169,107,.9)}100%{box-shadow:0 0 0 16px rgba(232,169,107,0)}}
   #nm-path{position:fixed;inset:0;width:100%;height:100%;z-index:8;pointer-events:none}
   /* the route: a semi-transparent white band on the floor with arrow heads (rv, cv); the part behind a wall is a dashed
@@ -131,6 +138,7 @@ OVERLAY = """<style>
 <div id="nm-toast" class="nm-panel" role="status"></div>
 <div id="nm-find"><div id="nm-hits"></div><input id="nm-q" type="search" placeholder="Search the room: sofa, lamp, bag ..." autocomplete="off"></div>
 <div id="nm-card" class="nm-panel"></div>
+<div id="nm-hcard" class="nm-panel"><button class="nm-btn x" id="nm-hcx" title="Close"><svg width="20" height="20" viewBox="0 0 24 24"><g class="s"><use href="#nmCloseIcon"/></g><g class="f"><use href="#nmCloseIcon"/></g></svg></button><h2></h2><div class="bd"></div></div>
 <div id="nm-plan" class="nm-panel"><div class="wrap" id="nm-mini"></div><div class="bar"><span>Floor plan</span><span class="nm-group">
   <button class="nm-btn" id="nm-adminbtn" title="Admin: places and collision"><svg width="20" height="20" viewBox="0 0 24 24"><path fill="currentColor" d="M3 17.2V21h3.8L17.8 9.9l-3.7-3.7L3 17.2zM20.7 7a1 1 0 000-1.4l-2.3-2.3a1 1 0 00-1.4 0l-1.8 1.8 3.7 3.7L20.7 7z"/></svg></button>
   <button class="nm-btn" id="nm-helpbtn" title="Controls (?)"><svg width="24" height="24"><g class="s"><use href="#nmKeysIcon"/></g><g class="f"><use href="#nmKeysIcon"/></g></svg></button>
