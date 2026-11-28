@@ -10,6 +10,7 @@ import { MeshoptDecoder } from 'three/examples/jsm/libs/meshopt_decoder.module.j
 import './style.css';
 import './demo.css';
 import { NavFrame, Walker, decodeMovementLayers, readGlbTriangles } from './walker.js';
+import { initPlaces } from './places.js';
 
 const $ = (id) => document.getElementById(id);
 const canvas = $('scene');
@@ -28,6 +29,7 @@ let viewer;
 let camera;
 let walker;
 let frame;
+let places = null;
 // Optional data/<room>/cameras.json: the capture's camera centres in splat coordinates. A splat is only
 // trustworthy near where the phone filmed from, so flying is kept inside a tube of radius_m around them.
 let corridor = null;
@@ -74,6 +76,8 @@ function blendSplatAndMesh() {
 async function loadRoomMesh(url) {
   const buffer = await fetch(url).then((r) => (r.ok ? r.arrayBuffer() : null)).catch(() => null);
   if (!buffer) return null;
+  // Not a GLB (e.g. a dev server that answers a missing mesh.glb with its index.html, or any non-model response): skip it.
+  if (buffer.byteLength < 4 || new DataView(buffer).getUint32(0, true) !== 0x46546c67) return null;
   // mesh.glb is packed with gltfpack (meshopt compression, ~5x smaller); plain GLBs load too.
   const gltf = await new GLTFLoader().setMeshoptDecoder(MeshoptDecoder).parseAsync(buffer, '');
   const scene = new THREE.Scene();
@@ -167,6 +171,26 @@ async function load() {
   syncCamera();
   viewer.update();
   viewer.render();
+
+  // Places, search and 3D help cards (places.js). A welcome help card seeds the scene so the feature shows on first open;
+  // ?admin=1 adds the editor (press P to drop a help point where you look). Points persist to this browser's localStorage.
+  const metersPerUnit = frame.navigation.viewer_units_to_meters;
+  const look = new THREE.Vector3(0, 0, -1).applyQuaternion(camera.quaternion);
+  const ahead = camera.position.clone().addScaledVector(look, 2.2 / metersPerUnit);
+  places = initPlaces({
+    camera,
+    canvas,
+    metersPerUnit,
+    frame,
+    layers,
+    goTo: (vec) => { const n = frame.viewerToNav(vec.toArray()); if (walker.standable(n[0], n[2])) { walker.placeFeet(n[0], n[2]); flying = false; $('mode').textContent = 'walking'; } },
+    seed: [{
+      name: 'Welcome', category: 'help',
+      card: 'This is a NAMMA walk-through of a reconstructed room.\n\nMove with W A S D (or the on-screen stick), click and drag to look. Tap any amber “?” point for help, or use the search box to find a place. Open ?admin=1 to add your own help points.',
+      pos: [ahead.x, ahead.y, ahead.z],
+    }],
+  });
+
   setProgress(touchDevice ? 'Left stick moves · drag to look' : 'Click to start, then use W A S D and the mouse');
   $('go').disabled = false;
   $('go').textContent = 'Start walking';
@@ -256,6 +280,7 @@ function loop(now) {
   previous = now;
   step(dt);
   syncCamera();
+  if (places) places.update();
   blendSplatAndMesh();
   viewer.update();
   viewer.render();
@@ -272,10 +297,8 @@ function start() {
   $('start').hidden = true;
   $('hud').hidden = false;
   if (touchDevice) $('touch-ui').hidden = false;
-  else {
-    $('keys-help').hidden = false;
-    canvas.requestPointerLock?.();
-  }
+  else canvas.requestPointerLock?.();      // the places "How to explore" card replaces the plain keys strip
+  if (places) places.showHowTo();
   requestAnimationFrame(loop);
 }
 
